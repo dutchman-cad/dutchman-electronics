@@ -10,6 +10,7 @@ publish = false
 
 [dependencies]
 board-model = { path = "../board-model" }
+board-step = { path = "../board-step" }
 altium-pcbdoc = { path = "../altium-pcbdoc", optional = true }
 # Writes the JSON replies Dutchman reads (info, detect, and later the parts manifest).
 # MIT or Apache-2.0.
