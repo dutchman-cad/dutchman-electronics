@@ -5,6 +5,8 @@
 //! This crate only gathers them, so it knows no format's details.
 
 pub use board_model;
+
+pub mod module;
 use board_model::{Detection, InputFormat};
 
 #[cfg(feature = "altium")]

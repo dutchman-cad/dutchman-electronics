@@ -1,8 +1,11 @@
 //! `dutchman-electronics`: the command Dutchman's launcher finds on the PATH.
-//! For now it has three sub-commands: `formats`, `streams <file>` and
+//! Module interface for Dutchman: `info --json` and `detect <file> --json`.
+//! For people: `formats`, `streams <file>` and
 //! `privacy-check <file> [--watch WORD]... [--all-text]`.
 
 use std::process::ExitCode;
+
+use dutchman_electronics::module;
 
 /// Reads a file, refusing one bigger than the model's limit before loading it.
 #[cfg(feature = "altium")]
@@ -17,7 +20,9 @@ fn read_board_file(path: &str) -> Result<Vec<u8>, String> {
     std::fs::read(path).map_err(|e| format!("cannot read {path}: {e}"))
 }
 
-const USAGE: &str = "usage: dutchman-electronics formats
+const USAGE: &str = "usage: dutchman-electronics info [--json]
+       dutchman-electronics detect <file> [--json]
+       dutchman-electronics formats
        dutchman-electronics streams <board.PcbDoc>
        dutchman-electronics privacy-check <board.PcbDoc> [--watch WORD]... [--all-text]";
 
@@ -71,10 +76,73 @@ fn privacy_check(path: &str, rest: &[&str]) -> ExitCode {
     }
 }
 
+/// How many bytes `detect` reads from the start of a file.
+const DETECT_HEAD_BYTES: u64 = 4096;
+
+/// Prints one JSON reply on stdout.
+fn print_json(value: &serde_json::Value) {
+    println!("{value}");
+}
+
+/// A text field of a JSON reply, or `default`.
+fn text<'a>(reply: &'a serde_json::Value, name: &str, default: &'a str) -> &'a str {
+    reply.get(name).and_then(|v| v.as_str()).unwrap_or(default)
+}
+
+fn info(json: bool) -> ExitCode {
+    let reply = module::info();
+    if json {
+        print_json(&reply);
+    } else {
+        println!(
+            "{} {} (module interface {})",
+            module::DISPLAY_NAME,
+            env!("CARGO_PKG_VERSION"),
+            module::INTERFACE
+        );
+        for f in dutchman_electronics::formats() {
+            println!("  {}  .{}", f.name(), f.extensions().join(", ."));
+        }
+    }
+    ExitCode::SUCCESS
+}
+
+fn detect(path: &str, json: bool) -> ExitCode {
+    use std::io::Read;
+    let mut head = Vec::new();
+    let read = std::fs::File::open(path)
+        .and_then(|f| f.take(DETECT_HEAD_BYTES).read_to_end(&mut head));
+    if let Err(e) = read {
+        let message = format!("cannot read {path}: {e}");
+        if json {
+            print_json(&module::error(module::DETECT_SCHEMA, &message));
+        } else {
+            eprintln!("{message}");
+        }
+        return ExitCode::FAILURE;
+    }
+    let extension = std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str());
+    let reply = module::detect(&head, extension);
+    if json {
+        print_json(&reply);
+    } else {
+        let format = text(&reply, "format", "none");
+        let detection = text(&reply, "detection", "no");
+        println!("{detection} ({format})");
+    }
+    ExitCode::SUCCESS
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let arg: Vec<&str> = args.iter().map(String::as_str).collect();
     match arg.as_slice() {
+        ["info"] => info(false),
+        ["info", "--json"] => info(true),
+        ["detect", path] => detect(path, false),
+        ["detect", path, "--json"] | ["detect", "--json", path] => detect(path, true),
         ["formats"] => {
             for f in dutchman_electronics::formats() {
                 println!("{}\t{}\t{}", f.id(), f.extensions().join(","), f.name());
