@@ -55,7 +55,7 @@ Altium, Altium Designer, KiCad, and the other product and format names mentioned
 
 If you believe something here came from a forbidden source, infringes a right you hold, or breaks this policy:
 
-- Open an issue for anything that can be discussed in public. For anything sensitive, contact the maintainer on GitHub, [@raykholo](https://github.com/raykholo).
+- Open an issue for anything that can be discussed in public. For anything private, use this repository's private reporting: [Security tab → Report a vulnerability](https://github.com/dutchman-cad/dutchman-electronics/security/advisories/new).
 - Name the files, commits or sections concerned and why.
 - We review every report. If a concern holds up, we remove or revert the material while its provenance is checked, and re-derive it from allowed sources if needed.
 
