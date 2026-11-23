@@ -125,7 +125,11 @@ fn check_topology(text: &str) {
 
 #[test]
 fn a_plain_rectangle_is_a_box() {
-    let out = write(&board(rect(0.0, 0.0, 50.0, 30.0), vec![], vec![]), "empty-outline").unwrap();
+    let out = write(
+        &board(rect(0.0, 0.0, 50.0, 30.0), vec![], vec![]),
+        "empty-outline",
+    )
+    .unwrap();
     assert_eq!(
         out.stats,
         Stats {
@@ -248,10 +252,18 @@ fn holes_that_cannot_be_cut_are_reported() {
     assert_eq!(out.stats.openings, 2, "the cutout and the first hole");
     let messages: Vec<&str> = out.notes.iter().map(|n| n.message.as_str()).collect();
     assert!(out.notes.iter().all(|n| n.severity == Severity::Dropped));
-    assert!(messages.iter().any(|m| m.starts_with("2 drilled hole(s) touch or cross the board edge")));
-    assert!(messages.iter().any(|m| m.starts_with("1 drilled hole(s) touch or fall inside a cutout")));
-    assert!(messages.iter().any(|m| m.starts_with("1 drilled hole(s) overlap another hole")));
-    assert!(messages.iter().any(|m| m.starts_with("1 drilled hole(s) with an unusable size")));
+    assert!(messages
+        .iter()
+        .any(|m| m.starts_with("2 drilled hole(s) touch or cross the board edge")));
+    assert!(messages
+        .iter()
+        .any(|m| m.starts_with("1 drilled hole(s) touch or fall inside a cutout")));
+    assert!(messages
+        .iter()
+        .any(|m| m.starts_with("1 drilled hole(s) overlap another hole")));
+    assert!(messages
+        .iter()
+        .any(|m| m.starts_with("1 drilled hole(s) with an unusable size")));
     check_topology(&out.text);
 }
 
@@ -332,7 +344,10 @@ fn the_same_board_gives_the_same_file() {
         vec![rect(30.0, 10.0, 40.0, 20.0)],
         vec![hole(10.0, 15.0, 3.0)],
     );
-    assert_eq!(write(&b, "same").unwrap().text, write(&b, "same").unwrap().text);
+    assert_eq!(
+        write(&b, "same").unwrap().text,
+        write(&b, "same").unwrap().text
+    );
 }
 
 #[test]

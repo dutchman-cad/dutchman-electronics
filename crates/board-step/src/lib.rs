@@ -80,7 +80,11 @@ struct Edge2 {
 enum Kind2 {
     Line,
     /// A circular arc around `center`, counter-clockwise when `ccw`.
-    Arc { center: Point, radius: f64, ccw: bool },
+    Arc {
+        center: Point,
+        radius: f64,
+        ccw: bool,
+    },
 }
 
 fn finite(p: Point) -> bool {
@@ -117,7 +121,12 @@ fn sweep(edge: &Edge2) -> f64 {
 /// Points along an edge, including the start and excluding the end.
 fn samples(edge: &Edge2, out: &mut Vec<Point>) {
     out.push(edge.start);
-    if let Kind2::Arc { center, radius, ccw } = edge.kind {
+    if let Kind2::Arc {
+        center,
+        radius,
+        ccw,
+    } = edge.kind
+    {
         let total = sweep(edge);
         let a0 = (edge.start.y - center.y).atan2(edge.start.x - center.x);
         let steps = (total / SAMPLE_STEP).ceil().clamp(1.0, 72.0) as usize;
@@ -429,9 +438,11 @@ fn profile(board: &Board, notes: &mut Vec<Note>) -> Result<Profile, StepError> {
         };
         let poly = polygon(&edges);
         let inside_outer = poly.iter().all(|p| inside(&outer_poly, *p))
-            && edges
-                .iter()
-                .all(|e| outer.iter().all(|o| distance_to_edge(o, e.start) > TOLERANCE));
+            && edges.iter().all(|e| {
+                outer
+                    .iter()
+                    .all(|o| distance_to_edge(o, e.start) > TOLERANCE)
+            });
         if !inside_outer {
             notes.push(Note {
                 severity: Severity::Dropped,
@@ -558,7 +569,12 @@ impl Writer {
     }
 
     fn direction(&mut self, x: f64, y: f64, z: f64) -> usize {
-        self.add(format!("DIRECTION('',({},{},{}))", real(x), real(y), real(z)))
+        self.add(format!(
+            "DIRECTION('',({},{},{}))",
+            real(x),
+            real(y),
+            real(z)
+        ))
     }
 
     fn placement(&mut self, origin: [f64; 3], axis: [f64; 3], reference: [f64; 3]) -> usize {
@@ -646,15 +662,15 @@ fn ring(w: &mut Writer, edges: Vec<Edge2>, thickness: f64, stats: &mut Stats) ->
                     center,
                     radius,
                     ccw,
-                } => (
-                    w.circle(center, z, radius),
-                    if ccw { ".T." } else { ".F." },
-                ),
+                } => (w.circle(center, z, radius), if ccw { ".T." } else { ".F." }),
             };
             let id = w.add(format!("EDGE_CURVE('',#{v0},#{v1},#{curve},{sense})"));
             list.push(Edge3 { id });
         }
-        let vertical = w.line([e.start.x, e.start.y, 0.0], [e.start.x, e.start.y, thickness]);
+        let vertical = w.line(
+            [e.start.x, e.start.y, 0.0],
+            [e.start.x, e.start.y, thickness],
+        );
         let id = w.add(format!("EDGE_CURVE('',#{b0},#{t0},#{vertical},.T.)"));
         up.push(Edge3 { id });
     }
@@ -710,7 +726,11 @@ pub fn write(board: &Board, name: &str) -> Result<BoardStep, StepError> {
     let mut notes = Vec::new();
     let thickness = match board.thickness {
         Some(t) if t.is_finite() && t > TOLERANCE => t,
-        Some(_) => return Err(StepError::Outline("the board thickness is not usable".into())),
+        Some(_) => {
+            return Err(StepError::Outline(
+                "the board thickness is not usable".into(),
+            ))
+        }
         None => {
             notes.push(Note {
                 severity: Severity::Warning,
@@ -801,7 +821,9 @@ pub fn write(board: &Board, name: &str) -> Result<BoardStep, StepError> {
         "PRODUCT({0},{0},'',(#{product_context}))",
         text(name)
     ));
-    w.add(format!("PRODUCT_RELATED_PRODUCT_CATEGORY('part',$,(#{product}))"));
+    w.add(format!(
+        "PRODUCT_RELATED_PRODUCT_CATEGORY('part',$,(#{product}))"
+    ));
     let formation = w.add(format!("PRODUCT_DEFINITION_FORMATION('','',#{product})"));
     let definition_context = w.add(format!(
         "PRODUCT_DEFINITION_CONTEXT('part definition',#{app},'design')"
