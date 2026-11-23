@@ -74,8 +74,17 @@ fn note(n: &Note) -> Value {
     json!({ "severity": severity, "message": n.message })
 }
 
-/// Reads a board file, refusing one bigger than the model's limit before loading it.
+/// Reads a board file's bytes. A tscircuit `.tsx` source is compiled to Circuit JSON first.
 pub fn read_input(path: &Path) -> Result<Vec<u8>, String> {
+    #[cfg(feature = "tscircuit")]
+    if crate::extension_of(path).as_deref() == Some("tsx") {
+        return crate::tsx::compile(path);
+    }
+    read_file(path)
+}
+
+/// Reads a file, refusing one bigger than the model's limit before loading it.
+pub fn read_file(path: &Path) -> Result<Vec<u8>, String> {
     let shown = path.display();
     let file = std::fs::File::open(path).map_err(|e| format!("cannot read {shown}: {e}"))?;
     let limit = u64::try_from(MAX_INPUT_BYTES).unwrap_or(u64::MAX);
@@ -292,9 +301,13 @@ pub fn build(
     model_folders: &[PathBuf],
     copper: crate::overlay::Copper,
 ) -> Result<Package, String> {
-    let extension = path.extension().and_then(|e| e.to_str());
+    // A .tsx source arrives here already compiled to Circuit JSON (see `read_input`).
+    let extension = crate::extension_of(path).map(|e| match e.as_str() {
+        "tsx" => "circuit.json".to_string(),
+        _ => e,
+    });
     let head = bytes.get(..bytes.len().min(4096)).unwrap_or_default();
-    let format = crate::detect(head, extension)
+    let format = crate::detect(head, extension.as_deref())
         .ok_or_else(|| "not a board file this module reads".to_string())?;
     let mut outcome = format.read(bytes).map_err(|e| e.to_string())?;
     #[cfg(feature = "altium")]
@@ -325,10 +338,8 @@ pub fn build(
         None
     };
     let name = if board.name.trim().is_empty() {
-        path.file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("board")
-            .to_string()
+        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("board");
+        stem.strip_suffix(".circuit").unwrap_or(stem).to_string()
     } else {
         board.name.clone()
     };
