@@ -8,6 +8,8 @@
 
 use std::io::Cursor;
 
+pub mod privacy;
+
 use board_model::{Detection, InputFormat, ReadError, ReadOutcome, MAX_INPUT_BYTES};
 
 /// The first eight bytes of every OLE / Compound File Binary file.

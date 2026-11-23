@@ -55,6 +55,25 @@ I made this board myself for testing. I release it under CC0 (public domain).
 
 CC0 means anyone may use it for anything with no conditions. Do not add a board without that line. Do not add 3D models you did not make or that you downloaded; use a simple box you modelled yourself.
 
+### Check a board for personal traces before sharing it
+
+A board file can carry more than the board: the folder it was saved in, a user or computer name,
+a company or licence name. Before a board leaves your computer (a pull request, a zip, a chat), run:
+
+```sh
+cargo run -- privacy-check path/to/board.PcbDoc --watch "Your Name" --watch "Your Company" --watch "your-login"
+```
+
+Add a `--watch` for anything that would point to you or your employer: your name, your Windows
+login, your computer's name, your company, your licence or serial number. It searches every part
+of the file, in both text encodings Altium uses, ignoring upper and lower case. It must end with
+`clean`. If it does not, it shows where the text is; tell us in #electronics-dev (without pasting
+the personal text itself) and we will work out how the builder script blanks it.
+
+`--all-text` also lists every piece of text in the file, so you can read through it yourself.
+The words you watch for are never saved. CI checks every committed board for paths, e-mail
+addresses and computer names as well.
+
 ### Scripted test boards (preferred)
 
 Making boards with a script inside Altium is better than by hand: the script holds the exact numbers, and changing one thing means changing one value. If you script a board:
