@@ -14,10 +14,6 @@
 /// The largest board file this module will open, in bytes. Anything bigger is refused up front.
 pub const MAX_INPUT_BYTES: usize = 256 << 20;
 
-/// The version of the module interface (see `modules-spec.md`). Dutchman refuses a module whose
-/// major number differs from its own.
-pub const MODULE_INTERFACE_VERSION: u32 = 1;
-
 // ---------------------------------------------------------------------------------------------
 // The neutral board model
 // ---------------------------------------------------------------------------------------------

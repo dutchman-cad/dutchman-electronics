@@ -39,6 +39,17 @@ Adding KiCad or another format later means one new crate that fills the same mod
 
 The Dutchman side of add-ons is specified in dutchman-cad/dutchman#1005.
 
+## Module interface
+
+Dutchman runs this program as `dutchman electronics ...` and reads one JSON object from stdout per call:
+
+| Command | Reply |
+|---|---|
+| `dutchman-electronics info --json` | `dutchman.module-info/1`: `name`, `display_name`, `version`, `interface` (1), `extensions`, and `formats` (`id`, `name`, `extension`, `extensions`) |
+| `dutchman-electronics detect <file> --json` | `dutchman.module-detect/1`: `detection` (`yes`, `maybe_by_name` or `no`) and `format` (the format id, or `null`) |
+
+A failure is `{"schema": ..., "ok": false, "error": "..."}` with a non-zero exit code. The `read` command that writes a parts package comes next.
+
 ## Roadmap
 
 Each step is its own small pull request. Each ends with something you can run and see.

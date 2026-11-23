@@ -11,6 +11,9 @@ publish = false
 [dependencies]
 board-model = { path = "../board-model" }
 altium-pcbdoc = { path = "../altium-pcbdoc", optional = true }
+# Writes the JSON replies Dutchman reads (info, detect, and later the parts manifest).
+# MIT or Apache-2.0.
+serde_json = "1"
 
 [features]
 default = ["altium"]
