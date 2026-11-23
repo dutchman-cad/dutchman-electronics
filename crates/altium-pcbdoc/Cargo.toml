@@ -1,0 +1,17 @@
+[package]
+name = "altium-pcbdoc"
+description = "Reads Altium .PcbDoc board files into the neutral board model"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+board-model = { path = "../board-model" }
+# Reads the OLE / Compound File Binary container a .PcbDoc is stored in. MIT licensed.
+cfb = "0.10"
+
+[lints]
+workspace = true

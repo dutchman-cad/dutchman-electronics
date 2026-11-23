@@ -1,4 +1,5 @@
-//! Altium `.PcbDoc` reader. Step 1 of the roadmap: open the container and list its streams.
+//! Altium `.PcbDoc` reader: reads a board file into the neutral model in the `board-model` crate.
+//! Step 1 of the roadmap is done: open the container and list its streams.
 //!
 //! A `.PcbDoc` is an OLE / Compound File Binary container: a small file system inside one file,
 //! with folders ("storages") and files ("streams"). The board's data lives in streams such as
@@ -7,7 +8,7 @@
 
 use std::io::Cursor;
 
-use crate::{Detection, InputFormat, ReadError, ReadOutcome, MAX_INPUT_BYTES};
+use board_model::{Detection, InputFormat, ReadError, ReadOutcome, MAX_INPUT_BYTES};
 
 /// The first eight bytes of every OLE / Compound File Binary file.
 pub const OLE_MAGIC: [u8; 8] = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
@@ -98,7 +99,8 @@ mod tests {
         cf.create_storage("/Board6")?;
         cf.create_storage("/Tracks6")?;
         cf.create_stream("/FileHeader")?.write_all(b"header")?;
-        cf.create_stream("/Board6/Data")?.write_all(b"board bytes")?;
+        cf.create_stream("/Board6/Data")?
+            .write_all(b"board bytes")?;
         cf.create_stream("/Tracks6/Data")?.write_all(&[0u8; 100])?;
         cf.flush()?;
         Ok(cf.into_inner().into_inner())
@@ -125,7 +127,10 @@ mod tests {
         let bytes = synthetic()?;
         assert_eq!(Altium.detect(&bytes, Some("PcbDoc")), Detection::Yes);
         assert_eq!(Altium.detect(&bytes, Some("doc")), Detection::No);
-        assert_eq!(Altium.detect(b"text", Some("PcbDoc")), Detection::MaybeByName);
+        assert_eq!(
+            Altium.detect(b"text", Some("PcbDoc")),
+            Detection::MaybeByName
+        );
         Ok(())
     }
 

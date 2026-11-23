@@ -1,0 +1,12 @@
+[package]
+name = "board-model"
+description = "The neutral circuit-board model (outline, layers, copper, text, components) and the InputFormat trait every board reader implements"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
