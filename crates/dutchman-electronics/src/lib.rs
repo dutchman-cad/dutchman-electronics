@@ -88,7 +88,10 @@ mod tests {
             extension_of(Path::new("a/b.circuit.json")).as_deref(),
             Some("circuit.json")
         );
-        assert_eq!(extension_of(Path::new("b.PcbDoc")).as_deref(), Some("pcbdoc"));
+        assert_eq!(
+            extension_of(Path::new("b.PcbDoc")).as_deref(),
+            Some("pcbdoc")
+        );
         assert_eq!(extension_of(Path::new("b.json")).as_deref(), Some("json"));
         assert_eq!(extension_of(Path::new("noext")), None);
     }

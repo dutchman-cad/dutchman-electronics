@@ -170,7 +170,11 @@ fn components_are_placed_by_designator() {
         .filter(|c| matches!(c, CopperItem::Pad { drill: Some(d), .. } if close(*d, 1.0)))
         .count();
     assert_eq!((openings, drilled_pads), (1, 3));
-    assert!(has_note(&o, "6 component(s) have no 3D model"), "{:?}", o.notes);
+    assert!(
+        has_note(&o, "6 component(s) have no 3D model"),
+        "{:?}",
+        o.notes
+    );
 }
 
 #[test]
@@ -223,7 +227,8 @@ fn hostile_input_is_an_error_not_a_panic() {
     assert!(CircuitJson.read(no_size).is_err());
     let huge = br#"[{"type":"pcb_board","center":{"x":0,"y":0},"width":1e300,"height":5}]"#;
     assert!(CircuitJson.read(huge).is_err());
-    let bad_hole = br#"[{"type":"pcb_board","center":{"x":0,"y":0},"width":5,"height":5,"thickness":1},
+    let bad_hole =
+        br#"[{"type":"pcb_board","center":{"x":0,"y":0},"width":5,"height":5,"thickness":1},
         {"type":"pcb_hole","hole_shape":"circle","x":"nope","y":0,"hole_diameter":1}]"#;
     let o = CircuitJson.read(bad_hole).unwrap();
     assert!(o.board.outline.cutouts.is_empty());

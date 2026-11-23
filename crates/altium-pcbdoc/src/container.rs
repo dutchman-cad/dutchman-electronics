@@ -16,11 +16,15 @@ const END_OF_CHAIN: u32 = 0xFFFF_FFFE;
 const HEADER_DIFAT: usize = 109;
 
 fn u16_at(b: &[u8], at: usize) -> Option<u16> {
-    Some(u16::from_le_bytes(b.get(at..at.checked_add(2)?)?.try_into().ok()?))
+    Some(u16::from_le_bytes(
+        b.get(at..at.checked_add(2)?)?.try_into().ok()?,
+    ))
 }
 
 fn u32_at(b: &[u8], at: usize) -> Option<u32> {
-    Some(u32::from_le_bytes(b.get(at..at.checked_add(4)?)?.try_into().ok()?))
+    Some(u32::from_le_bytes(
+        b.get(at..at.checked_add(4)?)?.try_into().ok()?,
+    ))
 }
 
 /// The container's bytes, with "end of chain" FAT entries for sectors past the end of the file
@@ -80,7 +84,10 @@ mod tests {
     /// writers spoil them.
     fn spoiled() -> (Vec<u8>, Vec<u8>) {
         let mut cf = cfb::CompoundFile::create(Cursor::new(Vec::new())).unwrap();
-        cf.create_stream("/Data").unwrap().write_all(b"hello").unwrap();
+        cf.create_stream("/Data")
+            .unwrap()
+            .write_all(b"hello")
+            .unwrap();
         cf.flush().unwrap();
         let good = cf.into_inner().into_inner();
         let mut bad = good.clone();

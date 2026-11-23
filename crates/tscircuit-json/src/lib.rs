@@ -54,8 +54,10 @@ impl InputFormat for CircuitJson {
         });
         let text = String::from_utf8_lossy(head);
         let looks = text.trim_start().starts_with('[')
-            && (text.contains("\"type\":\"source_") || text.contains("\"type\": \"source_")
-                || text.contains("\"type\":\"pcb_") || text.contains("\"type\": \"pcb_"));
+            && (text.contains("\"type\":\"source_")
+                || text.contains("\"type\": \"source_")
+                || text.contains("\"type\":\"pcb_")
+                || text.contains("\"type\": \"pcb_"));
         match (looks, named) {
             (true, _) => Detection::Yes,
             (false, true) => Detection::MaybeByName,
@@ -120,7 +122,12 @@ fn angle(e: &Value, key: &str) -> Option<f64> {
     let v = e.get(key)?;
     let n = match v {
         Value::Number(n) => n.as_f64()?,
-        Value::String(s) => s.trim().trim_end_matches("deg").trim().parse::<f64>().ok()?,
+        Value::String(s) => s
+            .trim()
+            .trim_end_matches("deg")
+            .trim()
+            .parse::<f64>()
+            .ok()?,
         _ => return None,
     };
     (n.is_finite() && n.abs() <= 3600.0).then_some(n)
@@ -528,7 +535,9 @@ impl Reader {
         for (kind, count) in std::mem::take(&mut self.unusable) {
             self.notes.push(Note {
                 severity: Severity::Dropped,
-                message: format!("{count} {kind} element(s) with a missing or unusable field were not read"),
+                message: format!(
+                    "{count} {kind} element(s) with a missing or unusable field were not read"
+                ),
             });
         }
 
@@ -631,7 +640,16 @@ fn plated_hole(e: &Value, multi: usize) -> Option<(CopperItem, Option<Contour>)>
     match shape {
         "circle" => {
             let d = length(e, "outer_diameter")?;
-            Some((pad(PadShape::Round, d, d, 0.0, Some(length(e, "hole_diameter")?)), None))
+            Some((
+                pad(
+                    PadShape::Round,
+                    d,
+                    d,
+                    0.0,
+                    Some(length(e, "hole_diameter")?),
+                ),
+                None,
+            ))
         }
         "oval" | "pill" => {
             let (w, h) = (length(e, "outer_width")?, length(e, "outer_height")?);
@@ -678,7 +696,12 @@ fn smt_pad(e: &Value, layer: Option<usize>) -> Option<CopperItem> {
     let layer = layer?;
     let at = xy(e)?;
     let (shape, size_x, size_y, rotation) = match text(e, "shape")? {
-        "rect" => (PadShape::Rectangle, length(e, "width")?, length(e, "height")?, 0.0),
+        "rect" => (
+            PadShape::Rectangle,
+            length(e, "width")?,
+            length(e, "height")?,
+            0.0,
+        ),
         "rotated_rect" => (
             PadShape::Rectangle,
             length(e, "width")?,
