@@ -37,6 +37,70 @@ fn committed_boards_carry_no_identifying_text() -> Result<(), Box<dyn std::error
     Ok(())
 }
 
+/// The line every test board's README.txt starts with (CONTRIBUTING.md).
+const DECLARATION: &str = "I made this board myself for testing. \
+My Altium licence permits me to share files I make with it. \
+I release it under CC0 (public domain).";
+
+#[test]
+fn committed_boards_carry_the_declaration() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/boards");
+    let problems: Vec<String> = walk(&dir)?
+        .iter()
+        .filter(|p| is_board(p))
+        .filter_map(|p| declaration_problem(p))
+        .collect();
+    assert!(problems.is_empty(), "{}", problems.join("\n"));
+    Ok(())
+}
+
+#[test]
+fn the_declaration_check_tells_good_from_missing() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = std::env::temp_dir().join(format!("de-declaration-{}", std::process::id()));
+    std::fs::create_dir_all(&dir)?;
+    let good = dir.join("good.PcbDoc");
+    let bad = dir.join("bad.PcbDoc");
+    std::fs::write(&good, b"")?;
+    std::fs::write(&bad, b"")?;
+    std::fs::write(
+        dir.join("good.README.txt"),
+        format!("{DECLARATION}\n\n50 x 30 mm, 1.6 mm thick.\n"),
+    )?;
+    std::fs::write(dir.join("bad.README.txt"), "50 x 30 mm\n")?;
+    let good_result = declaration_problem(&good);
+    let bad_result = declaration_problem(&bad);
+    std::fs::remove_dir_all(&dir)?;
+    assert_eq!(good_result, None);
+    assert!(bad_result.is_some_and(|p| p.contains("does not start with")));
+    Ok(())
+}
+
+fn is_board(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("pcbdoc"))
+}
+
+/// None when the board has a README.txt (`<name>.README.txt` beside it, or `README.txt` in
+/// its folder) whose first line is the declaration; otherwise what is wrong.
+fn declaration_problem(board: &Path) -> Option<String> {
+    let beside = board.with_extension("README.txt");
+    let folder = board.with_file_name("README.txt");
+    let readme = [beside, folder].into_iter().find(|p| p.exists());
+    let Some(readme) = readme else {
+        return Some(format!("{}: no README.txt", board.display()));
+    };
+    let text = std::fs::read_to_string(&readme).unwrap_or_default();
+    let first = text.lines().next().unwrap_or_default().trim();
+    if first == DECLARATION {
+        None
+    } else {
+        Some(format!(
+            "{}: does not start with the declaration line from CONTRIBUTING.md",
+            readme.display()
+        ))
+    }
+}
+
 fn walk(dir: &Path) -> std::io::Result<Vec<std::path::PathBuf>> {
     let mut files = Vec::new();
     if !dir.exists() {

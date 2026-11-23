@@ -1,7 +1,8 @@
 # Test boards
 
-Each board here is one its author designed for testing and released under CC0, with a
-`README.txt` beside it (see CONTRIBUTING.md). Before adding one, run:
+Each board here is one its author designed for testing, on a licence that permits sharing it,
+and released under CC0. Each has a README.txt that starts with the declaration in
+CONTRIBUTING.md; a test refuses a board without it. Before adding one, run:
 
 ```sh
 cargo run -- privacy-check path/to/board.PcbDoc --watch "Your Name" --watch "Your Company"
