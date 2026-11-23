@@ -48,8 +48,9 @@ Dutchman runs this program as `dutchman electronics ...` and reads one JSON obje
 |---|---|
 | `dutchman-electronics info --json` | `dutchman.module-info/1`: `name`, `display_name`, `version`, `repository`, `interface` (1), `extensions`, and `formats` (`id`, `name`, `extension`, `extensions`) |
 | `dutchman-electronics detect <file> --json` | `dutchman.module-detect/1`: `detection` (`yes`, `maybe_by_name` or `no`) and `format` (the format id, or `null`) |
+| `dutchman-electronics read <file> --out <dir> --json` | Writes a placed-parts package into `<dir>` and prints its manifest, `dutchman.parts/1`: `models` (`id`, `file`), `parts` (`name`, `model`, 3x4 `transform`, `notes`), `overlays` (reserved for copper and silkscreen), `notes` (`Info`, `Degraded`, `Dropped`). Today the package holds the board itself (`Board`, `board.step`: outline, cutouts and drilled holes, exact) and notes for what is not in it yet. |
 
-A failure is `{"schema": ..., "ok": false, "error": "..."}` with a non-zero exit code. The `read` command that writes a parts package comes next.
+A failure is `{"schema": ..., "ok": false, "error": "..."}` with a non-zero exit code.
 
 ## Roadmap
 

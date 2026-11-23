@@ -1,5 +1,6 @@
 //! `dutchman-electronics`: the command Dutchman's launcher finds on the PATH.
-//! Module interface for Dutchman: `info --json` and `detect <file> --json`.
+//! Module interface for Dutchman: `info --json`, `detect <file> --json` and
+//! `read <file> --out <dir> --json`.
 //! For people: `formats`, `streams <file>` and
 //! `privacy-check <file> [--watch WORD]... [--all-text]`.
 
@@ -22,6 +23,7 @@ fn read_board_file(path: &str) -> Result<Vec<u8>, String> {
 
 const USAGE: &str = "usage: dutchman-electronics info [--json]
        dutchman-electronics detect <file> [--json]
+       dutchman-electronics read <file> --out <dir> [--json]
        dutchman-electronics formats
        dutchman-electronics streams <board.PcbDoc>
        dutchman-electronics privacy-check <board.PcbDoc> [--watch WORD]... [--all-text]";
@@ -135,6 +137,36 @@ fn detect(path: &str, json: bool) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// Reads a board file into a parts package in `out`; prints the manifest.
+fn read(path: &str, out: &str, json: bool) -> ExitCode {
+    use dutchman_electronics::package;
+    let path = std::path::Path::new(path);
+    let built = package::read_input(path).and_then(|bytes| package::build(path, &bytes));
+    let written = built.and_then(|p| package::write(std::path::Path::new(out), &p).map(|()| p));
+    match (written, json) {
+        (Ok(p), true) => {
+            print_json(&p.manifest);
+            ExitCode::SUCCESS
+        }
+        (Ok(p), false) => {
+            println!("wrote {} file(s) into {out}", p.files.len());
+            let notes = p.manifest.get("notes").and_then(|n| n.as_array());
+            for n in notes.into_iter().flatten() {
+                println!("  {}: {}", text(n, "severity", ""), text(n, "message", ""));
+            }
+            ExitCode::SUCCESS
+        }
+        (Err(e), true) => {
+            print_json(&package::error(&e));
+            ExitCode::FAILURE
+        }
+        (Err(e), false) => {
+            eprintln!("{e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let arg: Vec<&str> = args.iter().map(String::as_str).collect();
@@ -143,6 +175,10 @@ fn main() -> ExitCode {
         ["info", "--json"] => info(true),
         ["detect", path] => detect(path, false),
         ["detect", path, "--json"] | ["detect", "--json", path] => detect(path, true),
+        ["read", path, "--out", out] => read(path, out, false),
+        ["read", path, "--out", out, "--json"] | ["read", path, "--json", "--out", out] => {
+            read(path, out, true)
+        }
         ["formats"] => {
             for f in dutchman_electronics::formats() {
                 println!("{}\t{}\t{}", f.id(), f.extensions().join(","), f.name());
