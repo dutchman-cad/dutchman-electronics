@@ -8,7 +8,7 @@ Reads circuit boards into [SolidCraft](https://github.com/tangency-labs/solidcra
 |---|---|
 | Altium (`.PcbDoc`) | In progress |
 | tscircuit | In progress |
-| KiCad | TBD |
+| KiCad | TBD; scope depends on the SolidCraft maintainers' answer on [tangency-labs/solidcraft#21320](https://github.com/tangency-labs/solidcraft/issues/21320) |
 | Fusion Electronics | TBD |
 
 It is an optional add-on. Dutchman works without it, and installing Dutchman does not install it. It is not part of cadmpeg: cadmpeg reads mechanical CAD, this reads electronics.
