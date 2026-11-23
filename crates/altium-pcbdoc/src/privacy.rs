@@ -113,7 +113,7 @@ pub fn check(bytes: &[u8], options: &Options) -> Result<Report, ReadError> {
     let mut report = Report::default();
     // The streams together can never be bigger than the file, which is already bounded.
     for path in paths {
-        let name = path.to_string_lossy().into_owned();
+        let name = crate::container_path(&path);
         let mut data = Vec::new();
         container
             .open_stream(&path)

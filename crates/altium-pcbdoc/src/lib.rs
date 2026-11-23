@@ -41,13 +41,29 @@ pub fn list_streams(bytes: &[u8]) -> Result<Vec<StreamInfo>, ReadError> {
         }
         if entry.is_stream() {
             streams.push(StreamInfo {
-                path: entry.path().to_string_lossy().into_owned(),
+                path: container_path(entry.path()),
                 len: entry.len(),
             });
         }
     }
     streams.sort();
     Ok(streams)
+}
+
+/// Writes a path inside the container with `/` between the parts on every operating system.
+/// (`Path::to_string_lossy` would give `\` on Windows, so `/Board6/Data` would not be found.)
+pub(crate) fn container_path(path: &std::path::Path) -> String {
+    let mut out = String::new();
+    for part in path.components() {
+        if let std::path::Component::Normal(name) = part {
+            out.push('/');
+            out.push_str(&name.to_string_lossy());
+        }
+    }
+    if out.is_empty() {
+        out.push('/');
+    }
+    out
 }
 
 /// The Altium `.PcbDoc` format.
@@ -141,5 +157,15 @@ mod tests {
         assert!(list_streams(b"not an ole file at all").is_err());
         assert!(list_streams(&[]).is_err());
         assert!(Altium.read(&OLE_MAGIC).is_err());
+    }
+
+    /// Paths built with the platform's own separator (`\` on Windows) still come out with `/`.
+    #[test]
+    fn container_paths_use_slashes_on_every_platform() {
+        let stream = std::path::PathBuf::from("/").join("Board6").join("Data");
+        assert_eq!(container_path(&stream), "/Board6/Data");
+        let top = std::path::PathBuf::from("/").join("FileHeader");
+        assert_eq!(container_path(&top), "/FileHeader");
+        assert_eq!(container_path(std::path::Path::new("/")), "/");
     }
 }
