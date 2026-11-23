@@ -19,6 +19,8 @@ jobs:
 
   # Altium runs on Windows, so the reader must work there too.
   test-windows:
+    # On main only: hosted Windows and macOS runners are slow, so pull requests test on Linux.
+    if: github.event_name == 'push'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -31,6 +33,8 @@ jobs:
 
   # Board files live anywhere, so the reader must work on macOS too.
   test-macos:
+    # On main only: hosted Windows and macOS runners are slow, so pull requests test on Linux.
+    if: github.event_name == 'push'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4

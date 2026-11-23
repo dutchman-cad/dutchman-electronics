@@ -15,7 +15,7 @@ Open an Altium board in SolidCraft and see what SolidCraft already shows for a K
 | Silkscreen | Text and lines as outlines, in white |
 | Components | Each one placed on the board with its 3D model (STEP) |
 
-It reads `.PcbDoc` files on Windows, macOS and Linux. Altium itself is only needed to make test boards.
+It reads `.PcbDoc` files on Windows, macOS and Linux. Altium itself is only needed to make test boards. Pull requests are tested on Linux; every change on `main` is also tested on Windows and macOS.
 
 ## How it plugs into Dutchman
 
