@@ -50,6 +50,8 @@ Dutchman runs this program as `dutchman electronics ...` and reads one JSON obje
 | `dutchman-electronics detect <file> --json` | `dutchman.module-detect/1`: `detection` (`yes`, `maybe_by_name` or `no`) and `format` (the format id, or `null`) |
 | `dutchman-electronics read <file> --out <dir> --json` | Writes a placed-parts package into `<dir>` and prints its manifest, `dutchman.parts/1`: `models` (`id`, `file`), `parts` (`name`, `model`, 3x4 `transform`, `notes`), `overlays` (reserved for copper and silkscreen), `notes` (`Info`, `Degraded`, `Dropped`). Today the package holds the board itself (`Board`, `board.step`: outline, cutouts and drilled holes, exact) and notes for what is not in it yet. |
 
+A part's `transform` is 3 rows of 4 numbers, row by row: the first three columns are the rotation, the last column the translation in mm, so a model point `p` lands at `R p + t`.
+
 A failure is `{"schema": ..., "ok": false, "error": "..."}` with a non-zero exit code.
 
 ## Roadmap
