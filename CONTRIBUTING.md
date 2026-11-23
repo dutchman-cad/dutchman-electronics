@@ -55,6 +55,15 @@ I made this board myself for testing. I release it under CC0 (public domain).
 
 CC0 means anyone may use it for anything with no conditions. Do not add a board without that line. Do not add 3D models you did not make or that you downloaded; use a simple box you modelled yourself.
 
+### Scripted test boards (preferred)
+
+Making boards with a script inside Altium is better than by hand: the script holds the exact numbers, and changing one thing means changing one value. If you script a board:
+
+- Put the script next to the board it makes, with the same name (`empty-outline.PcbDoc` and `empty-outline.pas`, or whatever extension your script language uses), so anyone with Altium can make it again.
+- The `README.txt` still lists the numbers in plain words; they should match the values in the script.
+- Write the script yourself. Do not copy Altium's example scripts or code from their documentation into this repository; using Altium's scripting to drive Altium is fine. The script is released under CC0 with its board (same line at the top of the README.txt).
+
+
 ## Make a change, step by step
 
 1. Pick one roadmap step in the README, or an open issue. Comment "I'll take this" so nobody doubles up.
