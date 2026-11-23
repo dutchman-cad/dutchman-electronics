@@ -41,13 +41,14 @@ fn privacy_check(path: &str, rest: &[&str]) -> ExitCode {
             }
         }
     }
-    let report = match read_board_file(path).and_then(|b| check(&b, &options).map_err(|e| e.to_string())) {
-        Ok(report) => report,
-        Err(e) => {
-            eprintln!("{e}");
-            return ExitCode::FAILURE;
-        }
-    };
+    let report =
+        match read_board_file(path).and_then(|b| check(&b, &options).map_err(|e| e.to_string())) {
+            Ok(report) => report,
+            Err(e) => {
+                eprintln!("{e}");
+                return ExitCode::FAILURE;
+            }
+        };
     for f in &report.findings {
         let kind = match &f.kind {
             Kind::Path => "path".to_string(),

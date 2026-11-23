@@ -322,7 +322,9 @@ fn looks_like_email(token: &str) -> bool {
     };
     let domain = domain.trim_end_matches('.');
     !local.is_empty()
-        && local.chars().all(|c| c.is_ascii_alphanumeric() || "._%+-".contains(c))
+        && local
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "._%+-".contains(c))
         && domain.contains('.')
         && !domain.starts_with('.')
         && domain
@@ -372,7 +374,10 @@ mod tests {
             .collect();
         assert!(kinds.contains(&("/FileHeader", &Kind::Path)), "{kinds:?}");
         assert!(kinds.contains(&("/FileHeader", &Kind::Email)), "{kinds:?}");
-        assert!(kinds.contains(&("/Board6/Data", &Kind::ComputerName)), "{kinds:?}");
+        assert!(
+            kinds.contains(&("/Board6/Data", &Kind::ComputerName)),
+            "{kinds:?}"
+        );
         assert!(!report.is_clean());
         Ok(())
     }
@@ -412,7 +417,10 @@ mod tests {
             all_text: true,
         };
         let report = check(&clean()?, &options)?;
-        assert!(report.findings.iter().any(|f| f.text.contains("WIDTH=10mil")));
+        assert!(report
+            .findings
+            .iter()
+            .any(|f| f.text.contains("WIDTH=10mil")));
         assert!(report.is_clean());
         Ok(())
     }

@@ -29,7 +29,11 @@ fn committed_boards_carry_no_identifying_text() -> Result<(), Box<dyn std::error
             ));
         }
     }
-    assert!(leaks.is_empty(), "identifying text in test boards:\n{}", leaks.join("\n"));
+    assert!(
+        leaks.is_empty(),
+        "identifying text in test boards:\n{}",
+        leaks.join("\n")
+    );
     Ok(())
 }
 
