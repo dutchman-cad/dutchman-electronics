@@ -1,1 +1,3 @@
 /target
+# Altium writes local backups next to a saved board
+History/
