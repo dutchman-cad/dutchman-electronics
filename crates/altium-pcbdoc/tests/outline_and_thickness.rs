@@ -76,11 +76,15 @@ fn outline_with_hole_has_the_10_by_10_cutout() -> Result<(), Box<dyn std::error:
         &out.board.outline.cutouts[0],
         &[(30.0, 10.0), (40.0, 10.0), (40.0, 20.0), (30.0, 20.0)]
     ));
-    // The 3 mm hole is a pad, read in roadmap step 3; until then it is reported, not lost.
-    assert!(out
-        .notes
-        .iter()
-        .any(|n| n.severity == Severity::Dropped && n.message.contains("/Pads6/Data")));
+    // The 3 mm hole is a pad; tests/copper.rs checks it. The only thing not read is the
+    // shape-based copy of the region, which is reported.
+    assert!(
+        out.notes
+            .iter()
+            .all(|n| n.message.contains("/ShapeBasedRegions6/Data")),
+        "{:?}",
+        out.notes
+    );
     Ok(())
 }
 
@@ -105,15 +109,17 @@ fn every_board_has_the_same_outline_and_thickness() -> Result<(), Box<dyn std::e
 
 #[test]
 fn what_is_not_read_yet_is_reported() -> Result<(), Box<dyn std::error::Error>> {
-    let track = read("one-track.PcbDoc")?;
-    assert!(track
-        .notes
-        .iter()
-        .any(|n| n.severity == Severity::Dropped && n.message.contains("/Tracks6/Data")));
     let resistor = read("one-resistor.PcbDoc")?;
-    for stream in ["/Components6/Data", "/Pads6/Data", "/ComponentBodies6/Data"] {
+    for stream in [
+        "/Components6/Data",
+        "/ComponentBodies6/Data",
+        "/Texts6/Data",
+    ] {
         assert!(
-            resistor.notes.iter().any(|n| n.message.contains(stream)),
+            resistor
+                .notes
+                .iter()
+                .any(|n| n.severity == Severity::Dropped && n.message.contains(stream)),
             "{stream} missing from {:?}",
             resistor.notes
         );
