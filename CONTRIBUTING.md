@@ -95,7 +95,7 @@ Keep one topic per pull request. Small is good.
 
 ## Rules that matter
 
-- **Clean-room.** We learn the format only from public information and from files you made. Read [LEGAL.md](LEGAL.md) before working on a reader: it lists the allowed and forbidden sources (no Altium SDK or scripting docs for reader code, no decompiled programs, no NDA material, no GPL code such as KiCad's Altium importer). A pull request that changes a reader carries the provenance sentence from LEGAL.md (a box in the pull-request template; CI checks it).
+- **Clean-room.** We learn the format only from public information and from files you made. We never copy code from other projects with restrictive licences, and we never use Altium's SDK or any of Altium's own code, documents under NDA, or libraries. Details in AGENTS.md.
 - **A bad file must never crash the program.** It returns an error with a clear message.
 - **Every change has a test.**
 - **English** for code, comments and messages.

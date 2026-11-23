@@ -9,12 +9,11 @@ This repository is Dutchman Electronics: it reads circuit boards (Altium `.PcbDo
 - `crates/altium-pcbdoc/src/lib.rs`: the Altium reader, its own crate.
 - `crates/dutchman-electronics/`: the command Dutchman runs; it only lists the formats and calls them.
 - `CONTRIBUTING.md`: how test boards are made.
-- `LEGAL.md`: allowed and forbidden sources, and the provenance sentence a reader pull request needs.
 
 ## Hard rules
 
 1. **Clean-room.** Learn the format only from (a) public format descriptions that carry no restrictive licence, and (b) test files the contributor made and says so, with exact numbers they wrote down. Work out each stream's layout by comparing small test boards that differ by one thing.
-2. **Allowed sources only (LEGAL.md).** For reader code, never use the Altium SDK, Altium's scripting API documentation, headers or samples, documents under NDA, or decompiled Altium programs. Never read, copy or translate GPL, LGPL or AGPL code, explicitly including KiCad's Altium importer (`pcbnew/plugins/altium`). MIT, Apache-2.0 or BSD code may be used with attribution: name the source in the pull request and keep its licence notice. Do not write down file layouts you cannot source. A pull request that changes a reader carries LEGAL.md's provenance sentence, ticked, and only if it is true. Test-board builder scripts may use Altium's scripting; reader code never learns from them.
+2. **No proprietary Altium code.** Never use or copy the Altium SDK, Altium's headers, documents under NDA, or decompiled Altium programs. Never read, copy or translate code that is GPL, LGPL or AGPL (this includes KiCad, FreeCAD, and similar). Reading MIT, Apache-2.0 or BSD code is allowed as a hint, but write your own code and note the source in the pull request. Do not paste file layouts you cannot source.
 3. **No customer data.** Never add or open a board the contributor did not design as a test. Test boards in the repository carry a CC0 line (see CONTRIBUTING.md). Never upload a board anywhere.
 4. **Rust only.** Pure Rust, no unsafe code (the workspace forbids it). Dependencies must be MIT, Apache-2.0 or BSD, and each new one needs a stated reason.
 5. **Never crash.** No `unwrap`, `expect`, `panic!`, `todo!`, indexing that can go out of range, or unchecked arithmetic on file values in shipped code. Input is hostile: bound sizes, counts and loops, return `ReadError`. Clippy denies these; tests may use them.
@@ -32,4 +31,4 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-Do not push, open pull requests or post anywhere unless your human asks. One topic per pull request; the first sentence of the description must make sense to someone who never saw the chat. Fill in the pull-request template's declarations.
+Do not push, open pull requests or post anywhere unless your human asks. One topic per pull request; the first sentence of the description must make sense to someone who never saw the chat.
