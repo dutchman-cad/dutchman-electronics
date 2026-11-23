@@ -20,8 +20,10 @@ Open an Altium board in SolidCraft and see what SolidCraft already shows for a K
 Dutchman finds add-ons by name. Any program called `dutchman-<something>` that sits next to `dutchman` or on your PATH is found by Dutchman's launcher (`crates/dutchman-launcher` in the Dutchman repository). This module builds one such program, `dutchman-electronics`. If it is not installed, Dutchman says so and links here; nothing else changes.
 
 ```
-board.PcbDoc --dutchman-electronics--> neutral board model --Dutchman--> board.sc
+board.PcbDoc --reader--> neutral board model --package writer--> parts package --Dutchman--> board.sc
 ```
+
+The parts package (`dutchman.parts/1`) is what Dutchman reads back from `dutchman-electronics read <file> --out <dir> --json`: one STEP file per distinct 3D model (the board itself included), a list of parts named by designator with their placement, and, later, copper and silkscreen as flat overlays. The contract is in dutchman-cad/dutchman#1005; a summary is in issue #1.
 
 The "neutral board model" is plain Rust types in `crates/board-model`: outline, layers, copper, text, component placements and model references. It does not know Altium and it does not know SolidCraft. That is the one boundary to keep clean.
 
@@ -33,7 +35,7 @@ The "neutral board model" is plain Rust types in `crates/board-model`: outline, 
 
 Adding KiCad or another format later means one new crate that fills the same model.
 
-The full plan for add-ons is in `modules-spec.md` (kept in the Dutchman repository's docs once agreed).
+The Dutchman side of add-ons is specified in dutchman-cad/dutchman#1005.
 
 ## Roadmap
 
@@ -44,7 +46,8 @@ Each step is its own small pull request. Each ends with something you can run an
 3. **Copper.** Tracks, arcs, pads, vias, pours into `Board::copper`.
 4. **Silkscreen.** Text and lines on the overlay layers into `Board::texts`.
 5. **Components.** Designator, footprint, position, rotation, side, and the 3D model reference, into `Board::components`.
-6. **Sync live link.** Dutchman Sync (dutchman-cad/dutchman#931) watches the `.PcbDoc` and re-converts it when you save in Altium, so SolidCraft follows your board.
+6. **Parts package.** Write `dutchman.parts/1`: the board as a STEP solid, each component's model (extracted from the `.PcbDoc` when embedded), and the manifest. `read` and `info --json` commands.
+7. **Sync live link.** Dutchman Sync (dutchman-cad/dutchman#931) watches the `.PcbDoc` and re-converts it when you save in Altium, so SolidCraft follows your board.
 
 ## Try it
 
