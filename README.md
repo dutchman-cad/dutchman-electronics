@@ -32,6 +32,7 @@ The "neutral board model" is plain Rust types in `crates/board-model`: outline, 
 | Crate | What it is |
 |---|---|
 | `crates/board-model` | The neutral board model and the `InputFormat` trait |
+| `crates/board-step` | Writes the board substrate (outline, cutouts, drilled holes, thickness) as an exact STEP solid |
 | `crates/altium-pcbdoc` | Reads `.PcbDoc` into the board model. No Dutchman dependencies |
 | `crates/dutchman-electronics` | The `dutchman-electronics` command; gathers the formats |
 

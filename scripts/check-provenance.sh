@@ -4,13 +4,13 @@
 #   usage: PR_BODY="..." scripts/check-provenance.sh <base-sha> <head-sha>
 set -euo pipefail
 base="$1"; head="$2"
-# Reader code: every crate's src/ except the board model and the command, which hold no format
-# knowledge. Format descriptions: docs/formats/.
+# Reader code: every crate's src/ except the ones that hold no format knowledge (the board
+# model, the STEP writer and the command). Format descriptions: docs/formats/.
 # Three dots: only what the pull request itself changed since it branched off, not what
 # others merged into main meanwhile.
 touched=$(git diff --name-only "$base...$head" \
   | grep -E '^(crates/[^/]+/src/|docs/formats/)' \
-  | grep -vE '^crates/(board-model|dutchman-electronics)/' || true)
+  | grep -vE '^crates/(board-model|board-step|dutchman-electronics)/' || true)
 if [ -z "$touched" ]; then
   echo "No reader or format-spec files changed; no provenance sentence needed."
   exit 0

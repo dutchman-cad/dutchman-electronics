@@ -1,0 +1,15 @@
+[package]
+name = "board-step"
+description = "Writes a board's substrate (outline, cutouts, drilled holes, thickness) as an exact STEP solid"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+board-model = { path = "../board-model" }
+
+[lints]
+workspace = true
