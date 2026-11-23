@@ -98,7 +98,8 @@ mod tests {
         cf.create_storage("/Board6")?;
         cf.create_storage("/Tracks6")?;
         cf.create_stream("/FileHeader")?.write_all(b"header")?;
-        cf.create_stream("/Board6/Data")?.write_all(b"board bytes")?;
+        cf.create_stream("/Board6/Data")?
+            .write_all(b"board bytes")?;
         cf.create_stream("/Tracks6/Data")?.write_all(&[0u8; 100])?;
         cf.flush()?;
         Ok(cf.into_inner().into_inner())
@@ -125,7 +126,10 @@ mod tests {
         let bytes = synthetic()?;
         assert_eq!(Altium.detect(&bytes, Some("PcbDoc")), Detection::Yes);
         assert_eq!(Altium.detect(&bytes, Some("doc")), Detection::No);
-        assert_eq!(Altium.detect(b"text", Some("PcbDoc")), Detection::MaybeByName);
+        assert_eq!(
+            Altium.detect(b"text", Some("PcbDoc")),
+            Detection::MaybeByName
+        );
         Ok(())
     }
 

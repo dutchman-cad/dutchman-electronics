@@ -62,7 +62,10 @@ pub struct Layer {
 /// One piece of a contour.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Segment {
-    Line { from: Point, to: Point },
+    Line {
+        from: Point,
+        to: Point,
+    },
     /// A circular arc from `start_deg` to `end_deg`, counter-clockwise.
     Arc {
         center: Point,
