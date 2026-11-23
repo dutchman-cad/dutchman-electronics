@@ -126,7 +126,9 @@ pub fn write(dir: &Path, package: &Package) -> Result<(), String> {
             .file_name()
             .is_some_and(|f| f == name.as_str());
         if !plain {
-            return Err(format!("refusing a package file name with a folder in it: {name}"));
+            return Err(format!(
+                "refusing a package file name with a folder in it: {name}"
+            ));
         }
         let target = dir.join(name);
         let partial = dir.join(format!(".{name}.partial"));
