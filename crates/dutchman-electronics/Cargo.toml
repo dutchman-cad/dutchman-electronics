@@ -1,6 +1,6 @@
 [package]
 name = "dutchman-electronics"
-description = "Dutchman Electronics: reads circuit boards (Altium .PcbDoc first) into a neutral board model for Dutchman"
+description = "Dutchman Electronics: the command Dutchman runs to read circuit boards (Altium .PcbDoc first) into a neutral board model"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,13 +9,13 @@ repository.workspace = true
 publish = false
 
 [dependencies]
-# Reads the OLE / Compound File Binary container a .PcbDoc is stored in. MIT licensed.
-cfb = "0.10"
+board-model = { path = "../board-model" }
+altium-pcbdoc = { path = "../altium-pcbdoc", optional = true }
 
 [features]
 default = ["altium"]
 # One feature per input format, so a build can leave a format out.
-altium = []
+altium = ["dep:altium-pcbdoc"]
 
 [lints]
 workspace = true

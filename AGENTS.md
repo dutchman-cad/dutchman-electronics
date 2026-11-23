@@ -5,8 +5,9 @@ This repository is Dutchman Electronics: it reads circuit boards (Altium `.PcbDo
 ## Read first
 
 - `README.md`: the goal and the roadmap. Work on one roadmap step at a time.
-- `crates/dutchman-electronics/src/lib.rs`: the module boundary (`InputFormat`, `Board`).
-- `crates/dutchman-electronics/src/altium/mod.rs`: the Altium reader.
+- `crates/board-model/src/lib.rs`: the module boundary (`InputFormat`, `Board`).
+- `crates/altium-pcbdoc/src/lib.rs`: the Altium reader, its own crate.
+- `crates/dutchman-electronics/`: the command Dutchman runs; it only lists the formats and calls them.
 - `CONTRIBUTING.md`: how test boards are made.
 
 ## Hard rules
@@ -18,7 +19,7 @@ This repository is Dutchman Electronics: it reads circuit boards (Altium `.PcbDo
 5. **Never crash.** No `unwrap`, `expect`, `panic!`, `todo!`, indexing that can go out of range, or unchecked arithmetic on file values in shipped code. Input is hostile: bound sizes, counts and loops, return `ReadError`. Clippy denies these; tests may use them.
 6. **Say what was dropped.** Anything the reader skips becomes a `Note`. Never lose data silently.
 7. **Tests are required.** Every change ships with a test. A reader step is tested against a test board with known numbers from its README.txt (a tolerance of 0.001 mm).
-8. **Keep the boundary.** `lib.rs` knows nothing about Altium and nothing about SolidCraft. Altium details stay in `src/altium/`. No Dutchman or SolidCraft types in this crate.
+8. **Keep the boundary.** `board-model` knows nothing about Altium and nothing about SolidCraft. Altium details stay in the `altium-pcbdoc` crate, which depends only on `board-model` (never on Dutchman). A new format is a new crate beside it. No Dutchman or SolidCraft types in this repository.
 9. **Units.** Millimetres and degrees, counter-clockwise, Y up, in the neutral model. Convert at the edge.
 10. **English** in code, comments, commit messages and docs.
 

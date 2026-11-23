@@ -47,7 +47,7 @@ Make boards that are as small and boring as possible, one new thing at a time:
 
 Write the exact numbers down in a `README.txt` beside each file (where you placed things, in millimetres). Those numbers are the "right answer" the tests check against.
 
-Then put each board in `crates/dutchman-electronics/tests/boards/` with its `README.txt`, and a line at the top of that file:
+Then put each board in `crates/altium-pcbdoc/tests/boards/` with its `README.txt`, and a line at the top of that file:
 
 ```
 I made this board myself for testing. I release it under CC0 (public domain).

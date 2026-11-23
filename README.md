@@ -23,7 +23,15 @@ Dutchman finds add-ons by name. Any program called `dutchman-<something>` that s
 board.PcbDoc --dutchman-electronics--> neutral board model --Dutchman--> board.sc
 ```
 
-The "neutral board model" is plain Rust types in `crates/dutchman-electronics/src/lib.rs`: outline, layers, copper, text, component placements and model references. It does not know Altium and it does not know SolidCraft. That is the one boundary to keep clean. Adding KiCad or another format later means one new file that fills the same model.
+The "neutral board model" is plain Rust types in `crates/board-model`: outline, layers, copper, text, component placements and model references. It does not know Altium and it does not know SolidCraft. That is the one boundary to keep clean.
+
+| Crate | What it is |
+|---|---|
+| `crates/board-model` | The neutral board model and the `InputFormat` trait |
+| `crates/altium-pcbdoc` | Reads `.PcbDoc` into the board model. No Dutchman dependencies |
+| `crates/dutchman-electronics` | The `dutchman-electronics` command; gathers the formats |
+
+Adding KiCad or another format later means one new crate that fills the same model.
 
 The full plan for add-ons is in `modules-spec.md` (kept in the Dutchman repository's docs once agreed).
 
