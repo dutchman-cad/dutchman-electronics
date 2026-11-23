@@ -41,11 +41,12 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
 
-  # The board STEP must open in the readers people will use: SolidCraft and cadmpeg.
+  # The board STEP must open in the readers people will use: SolidCraft (the current release
+  # most people have, and the newest one) and cadmpeg.
   board-step-readers:
     runs-on: ubuntu-latest
     env:
-      SOLIDCRAFT_VERSION: "0.47.0"
+      SOLIDCRAFT_VERSIONS: "0.46.2 0.47.0"
       CADMPEG_VERSION: "0.6.12"
     steps:
       - uses: actions/checkout@v4
@@ -57,7 +58,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: readers
-          key: readers-solidcraft-${{ env.SOLIDCRAFT_VERSION }}-cadmpeg-${{ env.CADMPEG_VERSION }}
+          key: readers-solidcraft-${{ env.SOLIDCRAFT_VERSIONS }}-cadmpeg-${{ env.CADMPEG_VERSION }}
       - name: Download the readers (checksums verified)
         if: steps.readers.outputs.cache-hit != 'true'
         env:
@@ -65,15 +66,22 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p readers && cd readers
-          sc="solidcraft-${SOLIDCRAFT_VERSION}-linux-x86_64.tar.gz"
-          gh release download "v${SOLIDCRAFT_VERSION}" -R tangency-labs/solidcraft -p "$sc" -p SHA256SUMS.txt
-          grep " ${sc}\$" SHA256SUMS.txt | sha256sum -c -
-          tar -xzf "$sc" && rm "$sc"
+          for v in $SOLIDCRAFT_VERSIONS; do
+            sc="solidcraft-${v}-linux-x86_64.tar.gz"
+            gh release download "v${v}" -R tangency-labs/solidcraft -p "$sc" -p SHA256SUMS.txt --clobber
+            grep " ${sc}\$" SHA256SUMS.txt | sha256sum -c -
+            tar -xzf "$sc" && rm "$sc" SHA256SUMS.txt
+          done
           cm="cadmpeg-x86_64-unknown-linux-gnu.tar.xz"
           gh release download "v${CADMPEG_VERSION}" -R cadmpeg/cadmpeg -p "$cm" -p "$cm.sha256"
           echo "$(cut -d' ' -f1 "$cm.sha256")  $cm" | sha256sum -c -
           tar -xf "$cm" && rm "$cm"
-      - run: >
-          scripts/check-board-step.sh target/release/dutchman-electronics
-          "readers/solidcraft-${SOLIDCRAFT_VERSION}-linux-x86_64/bin/solidcraft-cli"
-          readers/cadmpeg-x86_64-unknown-linux-gnu/cadmpeg
+      - name: Open every test board in each SolidCraft and in cadmpeg
+        run: |
+          set -euo pipefail
+          for v in $SOLIDCRAFT_VERSIONS; do
+            echo "=== SolidCraft $v"
+            scripts/check-board-step.sh target/release/dutchman-electronics \
+              "readers/solidcraft-${v}-linux-x86_64/bin/solidcraft-cli" \
+              readers/cadmpeg-x86_64-unknown-linux-gnu/cadmpeg
+          done
