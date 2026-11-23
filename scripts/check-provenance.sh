@@ -6,7 +6,9 @@ set -euo pipefail
 base="$1"; head="$2"
 # Reader code: every crate's src/ except the board model and the command, which hold no format
 # knowledge. Format descriptions: docs/formats/.
-touched=$(git diff --name-only "$base" "$head" \
+# Three dots: only what the pull request itself changed since it branched off, not what
+# others merged into main meanwhile.
+touched=$(git diff --name-only "$base...$head" \
   | grep -E '^(crates/[^/]+/src/|docs/formats/)' \
   | grep -vE '^crates/(board-model|dutchman-electronics)/' || true)
 if [ -z "$touched" ]; then

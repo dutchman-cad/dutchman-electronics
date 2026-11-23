@@ -15,6 +15,8 @@ Open an Altium board in SolidCraft and see what SolidCraft already shows for a K
 | Silkscreen | Text and lines as outlines, in white |
 | Components | Each one placed on the board with its 3D model (STEP) |
 
+It reads `.PcbDoc` files on Windows, macOS and Linux. Altium itself is only needed to make test boards.
+
 ## How it plugs into Dutchman
 
 Dutchman finds add-ons by name. Any program called `dutchman-<something>` that sits next to `dutchman` or on your PATH is found by Dutchman's launcher (`crates/dutchman-launcher` in the Dutchman repository). This module builds one such program, `dutchman-electronics`. If it is not installed, Dutchman says so and links here; nothing else changes.
