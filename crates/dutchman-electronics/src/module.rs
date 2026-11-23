@@ -98,7 +98,10 @@ mod tests {
     #[test]
     fn schema_major_equals_interface() {
         for schema in [INFO_SCHEMA, DETECT_SCHEMA] {
-            let major = schema.rsplit('/').next().and_then(|m| m.parse::<u32>().ok());
+            let major = schema
+                .rsplit('/')
+                .next()
+                .and_then(|m| m.parse::<u32>().ok());
             assert_eq!(major, Some(INTERFACE), "{schema}");
         }
     }

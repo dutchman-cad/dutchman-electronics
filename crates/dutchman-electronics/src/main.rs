@@ -110,8 +110,8 @@ fn info(json: bool) -> ExitCode {
 fn detect(path: &str, json: bool) -> ExitCode {
     use std::io::Read;
     let mut head = Vec::new();
-    let read = std::fs::File::open(path)
-        .and_then(|f| f.take(DETECT_HEAD_BYTES).read_to_end(&mut head));
+    let read =
+        std::fs::File::open(path).and_then(|f| f.take(DETECT_HEAD_BYTES).read_to_end(&mut head));
     if let Err(e) = read {
         let message = format!("cannot read {path}: {e}");
         if json {
