@@ -41,6 +41,7 @@ pub fn info() -> Value {
         "name": NAME,
         "display_name": DISPLAY_NAME,
         "version": env!("CARGO_PKG_VERSION"),
+        "repository": env!("CARGO_PKG_REPOSITORY"),
         "interface": INTERFACE,
         "extensions": extensions,
         "formats": formats,
@@ -93,6 +94,10 @@ mod tests {
         assert_eq!(v["display_name"], "Dutchman Electronics");
         assert_eq!(v["interface"], 1);
         assert_eq!(v["version"], env!("CARGO_PKG_VERSION"));
+        assert_eq!(
+            v["repository"],
+            "https://github.com/dutchman-cad/dutchman-electronics"
+        );
     }
 
     #[test]

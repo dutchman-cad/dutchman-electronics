@@ -45,7 +45,7 @@ Dutchman runs this program as `dutchman electronics ...` and reads one JSON obje
 
 | Command | Reply |
 |---|---|
-| `dutchman-electronics info --json` | `dutchman.module-info/1`: `name`, `display_name`, `version`, `interface` (1), `extensions`, and `formats` (`id`, `name`, `extension`, `extensions`) |
+| `dutchman-electronics info --json` | `dutchman.module-info/1`: `name`, `display_name`, `version`, `repository`, `interface` (1), `extensions`, and `formats` (`id`, `name`, `extension`, `extensions`) |
 | `dutchman-electronics detect <file> --json` | `dutchman.module-detect/1`: `detection` (`yes`, `maybe_by_name` or `no`) and `format` (the format id, or `null`) |
 
 A failure is `{"schema": ..., "ok": false, "error": "..."}` with a non-zero exit code. The `read` command that writes a parts package comes next.
