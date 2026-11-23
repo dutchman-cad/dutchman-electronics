@@ -1,22 +1,44 @@
-//! Roadmap step 3, first part: tracks and pads on copper layers.
+//! Roadmap step 3: tracks, track arcs, pads and vias on copper layers.
 //!
-//! Worked out from our own CC0 test boards (`one-track`, `outline-with-hole`, `one-resistor`) and
-//! the numbers in their README.txt (see LEGAL.md). Coordinates and sizes are little-endian `i32`
-//! in 1/10000 mil, absolute (the boards' origin is at 0, 0).
+//! Worked out from our own CC0 test boards (`one-track`, `outline-with-hole`, `one-resistor`,
+//! `one-via`, `one-plated-pad`, `one-rotated-pad`, `one-oval-pad`, `one-bottom-track`, `one-arc`)
+//! by comparing each with `empty-outline`, and from the numbers in their README.txt (see
+//! LEGAL.md). Coordinates and sizes are little-endian `i32` in 1/10000 mil, absolute (the boards'
+//! origin is at 0, 0).
+//!
+//! The file stores whole units, so a typed length can come out a fraction of a micrometre off
+//! (50 mm is 19685039.37 units, stored as 19685039, read as 49.99999906 mm). That is the file, not
+//! a rounding bug; tests allow 0.001 mm.
 //!
 //! - A layer is one byte `n`; `/Board6/Data` names it in a `LAYERnNAME` key (`LAYER1NAME=Top
-//!   Layer`, `LAYER74NAME=Multi-Layer` on our boards). A stack layer with a `COPTHICK` is copper.
+//!   Layer`, `LAYER32NAME=Bottom Layer`, `LAYER74NAME=Multi-Layer` on our boards). A stack layer
+//!   with a `COPTHICK` is copper.
 //! - `/Tracks6/Data`: records of type `0x04`, a `u32` length, then a body whose byte 0 is the
 //!   layer, bytes 3..5 the net index (`ff ff` for none), and from byte 13 the start x, start y,
-//!   end x, end y and width.
+//!   end x, end y and width. `one-bottom-track` differs from `one-track` in the layer byte (32
+//!   instead of 1) and in bytes 41..43, which are not read.
+//! - `/Arcs6/Data` (`one-arc`): records of type `0x01`, a `u32` length, then a body whose byte 0
+//!   is the layer, bytes 3..5 the net index, from byte 13 the centre x and y, at byte 21 the
+//!   radius, at bytes 25..33 and 33..41 two `f64` in degrees, and at byte 41 the width. Our arc
+//!   runs from 0 to 90 degrees: bytes 33..41 hold 90.0 (the end angle) and bytes 25..33 hold 0.0.
+//!   The start angle is taken to be the `f64` at byte 25; since it is 0 on our only arc, a
+//!   non-zero start gets a warning until a board confirms it.
+//! - `/Vias6/Data` (`one-via`): records of type `0x03`, a `u32` length, then a body whose byte 0
+//!   is the layer (74, Multi-Layer), bytes 3..5 the net index, from byte 13 the centre x and y, at
+//!   byte 21 the diameter and at byte 25 the hole diameter. Bytes 29 and 30 hold 1 and 32: the
+//!   via runs from Top Layer to Bottom Layer, as typed in. A via whose two layer bytes are not the
+//!   top and bottom copper layers is read as a through via, with a warning.
 //! - `/Pads6/Data`: records of type `0x02` followed by six blocks, each a `u32` length and its
 //!   bytes. Block 4 holds the geometry: byte 0 the layer, bytes 3..5 the net index, from byte 13
 //!   the centre x and y, then three (x, y) size pairs (top, middle, bottom), from byte 45 the hole
 //!   diameter (0 for a pad without a hole), and at bytes 49..52 the shapes of the three size pairs
-//!   (1 round, 2 rectangle). Bytes 52..60 are 0 on every pad we have; they are taken to be the
-//!   rotation as an `f64` in degrees, which no board of ours confirms yet, so a non-zero value
-//!   gets a warning. Bytes 7..9 are the index of the component the pad belongs to (see
-//!   `components.rs`); its designator becomes the pad's owner.
+//!   (1 round, 2 rectangle). Bytes 52..60 are the rotation as an `f64` in degrees: 30.0 on
+//!   `one-rotated-pad`, 0.0 on every other pad. Its sizes are stored before rotation (x 2.000,
+//!   y 1.000, as typed). Round with unequal sizes is the oval of `one-oval-pad` (2.000 x 1.000).
+//!   Byte 60 is 1 on the plated hole of `one-plated-pad` and 0 on the unplated hole of
+//!   `outline-with-hole` and on every SMD pad.
+//!   Bytes 7..9 are the index of the component the pad belongs to (see `components.rs`);
+//!   its designator becomes the pad's owner.
 //!
 //! The file stores whole units, so a typed length can come out a fraction of a micrometre off
 //! (50 mm is 19685039.37 units, stored as 19685039, read as 49.99999906 mm). That is the file, not
@@ -31,6 +53,10 @@ use crate::components::Components;
 const MM_PER_UNIT: f64 = 0.0254 / 10_000.0;
 const TRACK_RECORD: u8 = 0x04;
 const PAD_RECORD: u8 = 0x02;
+const ARC_RECORD: u8 = 0x01;
+const VIA_RECORD: u8 = 0x03;
+/// Angles beyond this many degrees (either way) are refused as not real.
+const MAX_ANGLE_DEG: f64 = 360.0;
 const PAD_BLOCKS: usize = 6;
 const PAD_GEOMETRY_BLOCK: usize = 4;
 /// The most records read from one stream before the file is treated as hostile.
@@ -100,6 +126,19 @@ impl CopperLayers {
         }
     }
 
+    /// Whether two layer bytes are the top and the bottom copper layer, in either order.
+    fn are_top_and_bottom(&self, a: u8, b: u8) -> bool {
+        let side = |n: u8| {
+            self.copper_index(n)
+                .and_then(|i| self.layers.get(i))
+                .and_then(|l| l.side)
+        };
+        matches!(
+            (side(a), side(b)),
+            (Some(Side::Top), Some(Side::Bottom)) | (Some(Side::Bottom), Some(Side::Top))
+        )
+    }
+
     fn copper_index(&self, number: u8) -> Option<usize> {
         self.by_number.get(usize::from(number)).copied().flatten()
     }
@@ -118,6 +157,8 @@ impl CopperLayers {
 struct Skipped {
     off_copper: std::collections::BTreeMap<String, usize>,
     with_net: usize,
+    /// Items left out because an angle in them is not a real angle.
+    bad_angle: usize,
 }
 
 impl Skipped {
@@ -126,6 +167,15 @@ impl Skipped {
             notes.push(Note {
                 severity: Severity::Dropped,
                 message: format!("{count} {what} on {layer} (not a copper layer) not read yet"),
+            });
+        }
+        if self.bad_angle > 0 {
+            notes.push(Note {
+                severity: Severity::Dropped,
+                message: format!(
+                    "{} {what} left out: an angle in them is not a number of degrees",
+                    self.bad_angle
+                ),
             });
         }
         if self.with_net > 0 {
@@ -185,7 +235,6 @@ pub(crate) fn pads(
 ) -> Result<Vec<CopperItem>, String> {
     let mut items = Vec::new();
     let mut skipped = Skipped::default();
-    let mut rotated = 0usize;
     let mut uneven = 0usize;
     let mut at = 0usize;
     let mut count = 0usize;
@@ -241,13 +290,11 @@ pub(crate) fn pads(
         ];
         let hole = length(g, 45)?;
         let shapes = g.get(49..52).ok_or("pad shapes cut short")?;
-        let rotation = read_f64(g, 52).ok_or("pad rotation cut short")?;
-        if !rotation.is_finite() || rotation.abs() > 360.0 {
-            return Err(format!("pad rotation {rotation} is out of range"));
-        }
-        if rotation != 0.0 {
-            rotated += 1;
-        }
+        let Some(rotation) = angle(g, 52)? else {
+            skipped.bad_angle += 1;
+            continue;
+        };
+        let plated = hole > 0.0 && g.get(60) == Some(&1);
         let [top, middle, bottom] = sizes;
         let (size_x, size_y) = top;
         if middle != top || bottom != top || shapes.iter().any(|s| Some(s) != shapes.first()) {
@@ -277,16 +324,8 @@ pub(crate) fn pads(
             size_y,
             rotation_deg: rotation,
             drill: (hole > 0.0).then_some(hole),
+            plated,
             owner: components.owner(g),
-        });
-    }
-    if rotated > 0 {
-        notes.push(Note {
-            severity: Severity::Warning,
-            message: format!(
-                "{rotated} pad(s) have a rotation; where the rotation is stored is not confirmed by \
-                 a test board yet"
-            ),
         });
     }
     if uneven > 0 {
@@ -300,6 +339,108 @@ pub(crate) fn pads(
     }
     skipped.into_notes("pad(s)", notes);
     Ok(items)
+}
+
+/// Reads the track arcs on copper layers from `/Arcs6/Data`.
+pub(crate) fn arcs(
+    data: &[u8],
+    layers: &CopperLayers,
+    notes: &mut Vec<Note>,
+) -> Result<Vec<CopperItem>, String> {
+    let mut items = Vec::new();
+    let mut skipped = Skipped::default();
+    let mut unconfirmed_start = 0usize;
+    for body in records(data, ARC_RECORD, "/Arcs6/Data", notes)? {
+        let layer_number = *body.first().ok_or("arc record is empty")?;
+        let center = point(body, 13)?;
+        let radius = length(body, 21)?;
+        let width = length(body, 41)?;
+        let (Some(start_deg), Some(end_deg)) = (angle(body, 25)?, angle(body, 33)?) else {
+            skipped.bad_angle += 1;
+            continue;
+        };
+        if read_u16(body, 3) != Some(NO_NET) {
+            skipped.with_net += 1;
+        }
+        let Some(layer) = layers.copper_index(layer_number) else {
+            *skipped
+                .off_copper
+                .entry(layers.name(layer_number))
+                .or_default() += 1;
+            continue;
+        };
+        if start_deg != 0.0 {
+            unconfirmed_start += 1;
+        }
+        items.push(CopperItem::TrackArc {
+            layer,
+            center,
+            radius,
+            start_deg,
+            end_deg,
+            width,
+            net: None,
+        });
+    }
+    if unconfirmed_start > 0 {
+        notes.push(Note {
+            severity: Severity::Warning,
+            message: format!(
+                "{unconfirmed_start} arc(s) do not start at 0 degrees; where the start angle is \
+                 stored is not confirmed by a test board yet"
+            ),
+        });
+    }
+    skipped.into_notes("arc(s)", notes);
+    Ok(items)
+}
+
+/// Reads the vias from `/Vias6/Data`. Every via is read as running through the whole board.
+pub(crate) fn vias(
+    data: &[u8],
+    layers: &CopperLayers,
+    notes: &mut Vec<Note>,
+) -> Result<Vec<CopperItem>, String> {
+    let mut items = Vec::new();
+    let mut skipped = Skipped::default();
+    let mut partial = 0usize;
+    for body in records(data, VIA_RECORD, "/Vias6/Data", notes)? {
+        let at = point(body, 13)?;
+        let diameter = length(body, 21)?;
+        let drill = length(body, 25)?;
+        let ends = body.get(29..31).ok_or("via layers cut short")?;
+        if let [a, b] = ends {
+            if !layers.are_top_and_bottom(*a, *b) {
+                partial += 1;
+            }
+        }
+        if read_u16(body, 3) != Some(NO_NET) {
+            skipped.with_net += 1;
+        }
+        items.push(CopperItem::Via {
+            at,
+            diameter,
+            drill,
+        });
+    }
+    if partial > 0 {
+        notes.push(Note {
+            severity: Severity::Warning,
+            message: format!(
+                "{partial} via(s) do not run from the top to the bottom copper layer (blind or \
+                 buried?); read as running through the whole board"
+            ),
+        });
+    }
+    skipped.into_notes("via(s)", notes);
+    Ok(items)
+}
+
+/// An `f64` angle in degrees at `at`: `None` when it is not a real angle (not finite, or more
+/// than a full turn either way), an error when the record is too short.
+fn angle(data: &[u8], at: usize) -> Result<Option<f64>, String> {
+    let value = read_f64(data, at).ok_or_else(|| format!("record cut short at byte {at}"))?;
+    Ok((value.is_finite() && value.abs() <= MAX_ANGLE_DEG).then_some(value))
 }
 
 /// Splits a stream of `[type byte][u32 length][body]` records into bodies.
@@ -409,6 +550,61 @@ mod tests {
         assert!(notes[0].message.contains("Top Overlay"));
     }
 
+    /// A record of `kind` whose body is `len` zero bytes, with `set` applied to the body.
+    fn record(kind: u8, len: usize, set: impl FnOnce(&mut Vec<u8>)) -> Vec<u8> {
+        let mut body = vec![0u8; len];
+        set(&mut body);
+        let mut data = vec![kind];
+        data.extend_from_slice(&(body.len() as u32).to_le_bytes());
+        data.extend_from_slice(&body);
+        data
+    }
+
+    fn with_bottom() -> CopperLayers {
+        CopperLayers::new(&board(
+            "|V9_STACK_LAYER0_NAME=Top Layer|V9_STACK_LAYER0_COPTHICK=1.4mil\
+             |V9_STACK_LAYER1_NAME=Bottom Layer|V9_STACK_LAYER1_COPTHICK=1.4mil\
+             |LAYER1NAME=Top Layer|LAYER32NAME=Bottom Layer|LAYER74NAME=Multi-Layer",
+        ))
+    }
+
+    #[test]
+    fn a_via_between_other_layers_is_read_through_with_a_warning() {
+        let l = with_bottom();
+        assert!(l.are_top_and_bottom(32, 1));
+        let data = record(VIA_RECORD, 31, |b| {
+            b[0] = 74;
+            b[3] = 0xff;
+            b[4] = 0xff;
+            b[29] = 1;
+            b[30] = 74;
+        });
+        let mut notes = Vec::new();
+        assert_eq!(vias(&data, &l, &mut notes).unwrap().len(), 1);
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].severity, Severity::Warning);
+    }
+
+    #[test]
+    fn an_arc_with_a_bad_angle_costs_that_arc_only() {
+        let l = with_bottom();
+        let mut data = record(ARC_RECORD, 45, |b| {
+            b[0] = 1;
+            b[25..33].copy_from_slice(&f64::NAN.to_le_bytes());
+        });
+        data.extend(record(ARC_RECORD, 45, |b| {
+            b[0] = 1;
+            b[25..33].copy_from_slice(&45.0f64.to_le_bytes());
+            b[33..41].copy_from_slice(&90.0f64.to_le_bytes());
+        }));
+        let mut notes = Vec::new();
+        let items = arcs(&data, &l, &mut notes).unwrap();
+        assert_eq!(items.len(), 1);
+        let severities: Vec<Severity> = notes.iter().map(|n| n.severity).collect();
+        assert!(severities.contains(&Severity::Warning), "{notes:?}");
+        assert!(severities.contains(&Severity::Dropped), "{notes:?}");
+    }
+
     #[test]
     fn hostile_streams_are_errors_not_panics() {
         let l = top_only();
@@ -420,6 +616,10 @@ mod tests {
         let mut few_blocks = vec![PAD_RECORD];
         few_blocks.extend_from_slice(&0u32.to_le_bytes());
         assert!(pads(&few_blocks, &l, &none, &mut notes).is_err());
+        assert!(arcs(&record(ARC_RECORD, 40, |_| ()), &l, &mut notes).is_err());
+        assert!(vias(&record(VIA_RECORD, 30, |_| ()), &l, &mut notes).is_err());
+        assert!(arcs(&[ARC_RECORD, 0xff, 0xff, 0xff, 0x7f], &l, &mut notes).is_err());
+        assert!(vias(&[VIA_RECORD, 1, 0, 0, 0], &l, &mut notes).is_err());
         assert!(tracks(&[0x42], &l, &mut notes).unwrap().is_empty());
         assert_eq!(notes.last().map(|n| n.severity), Some(Severity::Dropped));
     }
