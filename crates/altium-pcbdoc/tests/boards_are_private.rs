@@ -38,9 +38,8 @@ fn committed_boards_carry_no_identifying_text() -> Result<(), Box<dyn std::error
 }
 
 /// The line every test board's README.txt starts with (CONTRIBUTING.md).
-const DECLARATION: &str = "I made this board myself for testing. \
-My Altium licence permits me to share files I make with it. \
-I release it under CC0 (public domain).";
+const DECLARATION: &str = "Original test board made for Dutchman Electronics. \
+Released under CC0 1.0 (public domain): https://creativecommons.org/publicdomain/zero/1.0/";
 
 #[test]
 fn committed_boards_carry_the_declaration() -> Result<(), Box<dyn std::error::Error>> {

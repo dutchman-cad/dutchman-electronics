@@ -50,7 +50,7 @@ Write the exact numbers down in a `README.txt` beside each file (where you place
 Then put each board in `crates/altium-pcbdoc/tests/boards/` with its `README.txt` (either `README.txt` in the board's own folder, or `<board name>.README.txt` beside it), and this line at the top of that file:
 
 ```
-I made this board myself for testing. My Altium licence permits me to share files I make with it. I release it under CC0 (public domain).
+Original test board made for Dutchman Electronics. Released under CC0 1.0 (public domain): https://creativecommons.org/publicdomain/zero/1.0/
 ```
 
 CC0 means anyone may use it for anything with no conditions. Do not add a board without that line; a test refuses boards that lack it. Do not add 3D models you did not make or that you downloaded; use a simple box you modelled yourself.

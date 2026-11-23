@@ -1,7 +1,6 @@
 # Test boards
 
-Each board here is one its author designed for testing, on a licence that permits sharing it,
-and released under CC0. Each has a README.txt that starts with the declaration in
+Each board here is an original test board released under CC0. Each has a README.txt that starts with the declaration in
 CONTRIBUTING.md; a test refuses a board without it. Before adding one, run:
 
 ```sh
