@@ -1,0 +1,77 @@
+# Contributing to Dutchman Electronics
+
+You design boards. You do not have to be a programmer. This project is built to be worked on by a hardware engineer together with an AI assistant (Claude or similar), and everything here is written for that.
+
+## The idea in one minute
+
+An Altium `.PcbDoc` file is a box with labelled drawers inside (a "container"). Each drawer holds one kind of data: board settings, tracks, components, text. We:
+
+1. open the box and list the drawers (done),
+2. learn what is in each drawer by making tiny test boards and watching what changes,
+3. turn that into Rust code that fills a simple "board model",
+4. let Dutchman turn the board model into a SolidCraft design.
+
+You are the one who can make the test boards and say what they should look like. The AI writes most of the code from what you find. That is a real division of labour.
+
+## What you need (once, about 20 minutes)
+
+- Git and a GitHub account.
+- Rust: install from https://rustup.rs (it gives you `cargo`, the Rust build tool).
+- Altium Designer, to make your own test boards.
+- An AI assistant that can read and run commands in the project folder (for example Claude Code).
+
+## Build and test
+
+In the project folder:
+
+```sh
+cargo build                 # compiles everything
+cargo test                  # runs all tests; they must all pass
+cargo clippy --all-targets -- -D warnings   # Rust's style and bug checker; must be silent
+cargo fmt --all             # tidies the formatting
+cargo run -- streams my-board.PcbDoc        # lists the drawers in a board file
+```
+
+Run `cargo test` and `cargo clippy` before every pull request. The same checks run on GitHub when you open one.
+
+## Make a test board (the most useful thing you can do)
+
+The rule: **only boards you designed yourself, for testing. Never a customer's board, an employer's board, or anything under an NDA.** If you are not sure it is yours to share, it is not a test board.
+
+Make boards that are as small and boring as possible, one new thing at a time:
+
+1. `empty-outline.PcbDoc`: a 50 mm by 30 mm rectangle, 1.6 mm thick, nothing else.
+2. `outline-with-hole.PcbDoc`: the same, plus one 3 mm hole and one rectangular cutout.
+3. `one-track.PcbDoc`: the rectangle plus one top-layer track, 10 mm long, 0.5 mm wide.
+4. `one-resistor.PcbDoc`: a single 0603 resistor with a 3D model, designator `R1`, at a known position.
+
+Write the exact numbers down in a `README.txt` beside each file (where you placed things, in millimetres). Those numbers are the "right answer" the tests check against.
+
+Then put each board in `crates/dutchman-electronics/tests/boards/` with its `README.txt`, and a line at the top of that file:
+
+```
+I made this board myself for testing. I release it under CC0 (public domain).
+```
+
+CC0 means anyone may use it for anything with no conditions. Do not add a board without that line. Do not add 3D models you did not make or that you downloaded; use a simple box you modelled yourself.
+
+## Make a change, step by step
+
+1. Pick one roadmap step in the README, or an open issue. Comment "I'll take this" so nobody doubles up.
+2. Make a branch: `git switch -c outline`.
+3. Tell your AI: read AGENTS.md and the roadmap step, here is my test board and its README.txt, make the next step work with a test that checks the numbers.
+4. Run `cargo test` and `cargo clippy --all-targets -- -D warnings`.
+5. Push, open a pull request, say in the first sentence what changed in plain words.
+
+Keep one topic per pull request. Small is good.
+
+## Rules that matter
+
+- **Clean-room.** We learn the format only from public information and from files you made. We never copy code from other projects with restrictive licences, and we never use Altium's SDK or any of Altium's own code, documents under NDA, or libraries. Details in AGENTS.md.
+- **A bad file must never crash the program.** It returns an error with a clear message.
+- **Every change has a test.**
+- **English** for code, comments and messages.
+
+## Getting stuck
+
+Ask in the dev channel or open an issue with: what you tried, the command you ran, and what you saw. Pasting the exact error text helps more than describing it. There are no silly questions here.

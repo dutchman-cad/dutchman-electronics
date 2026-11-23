@@ -1,0 +1,24 @@
+[workspace]
+resolver = "2"
+members = ["crates/dutchman-electronics"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+# Dutchman itself is Apache-2.0 (its LICENSE and workspace Cargo.toml), so this module matches.
+license = "Apache-2.0"
+repository = "https://github.com/dutchman-cad/dutchman-electronics"
+
+# Never crash: a hostile board file must come back as an error, never as a panic.
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+indexing_slicing = "deny"
