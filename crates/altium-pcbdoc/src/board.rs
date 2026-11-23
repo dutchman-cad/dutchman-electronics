@@ -311,15 +311,14 @@ pub(crate) struct ShapeAndThickness {
     pub thickness: Option<f64>,
 }
 
-/// Reads the board shape, cutouts and thickness from the two streams.
+/// Reads the board shape, cutouts and thickness from the `/Board6/Data` record and the regions.
 pub(crate) fn read(
-    board6: &[u8],
+    board: &Properties,
     regions6: Option<&[u8]>,
     notes: &mut Vec<Note>,
 ) -> Result<ShapeAndThickness, String> {
-    let board = board_record(board6)?;
-    let outer = outline(&board, notes)?;
-    let thickness = thickness(&board, notes)?;
+    let outer = outline(board, notes)?;
+    let thickness = thickness(board, notes)?;
     let cutouts = match regions6 {
         Some(data) => cutouts(data, notes)?,
         None => Vec::new(),

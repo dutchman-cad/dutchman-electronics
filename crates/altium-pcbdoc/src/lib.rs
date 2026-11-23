@@ -1,7 +1,8 @@
 //! Altium `.PcbDoc` reader: reads a board file into the neutral model in the `board-model` crate.
 //! Roadmap steps 1 and 2 are done: open the container and list its streams; read the board
-//! outline, its cutouts and the board thickness (`board.rs`). Everything else in the file is
-//! reported as a "not read yet" note.
+//! outline, its cutouts and the board thickness (`board.rs`). Step 3 has started: tracks and pads
+//! on copper layers (`copper.rs`). Everything else in the file is reported as a "not read yet"
+//! note.
 //!
 //! A `.PcbDoc` is an OLE / Compound File Binary container: a small file system inside one file,
 //! with folders ("storages") and files ("streams"). The board's data lives in streams such as
@@ -11,6 +12,7 @@
 use std::io::{Cursor, Read};
 
 mod board;
+mod copper;
 pub mod privacy;
 
 use board_model::{
@@ -25,7 +27,6 @@ const NOT_READ_YET: &[(&str, &str)] = &[
     ("/Components6/Data", "components"),
     ("/Dimensions6/Data", "dimensions"),
     ("/Fills6/Data", "fills"),
-    ("/Pads6/Data", "pads and holes"),
     ("/Polygons6/Data", "polygon pours"),
     (
         "/ShapeBasedComponentBodies6/Data",
@@ -33,7 +34,6 @@ const NOT_READ_YET: &[(&str, &str)] = &[
     ),
     ("/ShapeBasedRegions6/Data", "shape-based regions"),
     ("/Texts6/Data", "texts"),
-    ("/Tracks6/Data", "tracks"),
     ("/Vias6/Data", "vias"),
 ];
 
@@ -127,10 +127,21 @@ impl InputFormat for Altium {
         let board6 = read_stream(&mut container, "/Board6/Data")?
             .ok_or_else(|| ReadError::Invalid("no /Board6/Data stream".into()))?;
         let regions6 = read_stream(&mut container, "/Regions6/Data")?;
+        let tracks6 = read_stream(&mut container, "/Tracks6/Data")?;
+        let pads6 = read_stream(&mut container, "/Pads6/Data")?;
 
         let mut notes = Vec::new();
+        let record = board::board_record(&board6).map_err(ReadError::Invalid)?;
         let shape =
-            board::read(&board6, regions6.as_deref(), &mut notes).map_err(ReadError::Invalid)?;
+            board::read(&record, regions6.as_deref(), &mut notes).map_err(ReadError::Invalid)?;
+        let layers = copper::CopperLayers::new(&record);
+        let mut copper = Vec::new();
+        if let Some(data) = &tracks6 {
+            copper.extend(copper::tracks(data, &layers, &mut notes).map_err(ReadError::Invalid)?);
+        }
+        if let Some(data) = &pads6 {
+            copper.extend(copper::pads(data, &layers, &mut notes).map_err(ReadError::Invalid)?);
+        }
         for (path, what) in NOT_READ_YET {
             if let Some(s) = streams.iter().find(|s| s.path == *path && s.len > 0) {
                 notes.push(Note {
@@ -143,6 +154,8 @@ impl InputFormat for Altium {
             board: Board {
                 outline: shape.outline,
                 thickness: shape.thickness,
+                layers: layers.layers,
+                copper,
                 ..Board::default()
             },
             notes,
