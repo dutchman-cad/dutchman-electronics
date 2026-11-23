@@ -1,6 +1,15 @@
 # Dutchman Electronics
 
-Reads circuit boards into [SolidCraft](https://github.com/tangency-labs/solidcraft) designs, through [Dutchman](https://github.com/dutchman-cad/dutchman). The first board format is Altium `.PcbDoc`.
+Reads circuit boards into [SolidCraft](https://github.com/tangency-labs/solidcraft) designs, through [Dutchman](https://github.com/dutchman-cad/dutchman).
+
+## Formats
+
+| Format | Status |
+|---|---|
+| Altium (`.PcbDoc`) | In progress |
+| tscircuit | In progress |
+| KiCad | TBD |
+| Fusion Electronics | TBD |
 
 It is an optional add-on. Dutchman works without it, and installing Dutchman does not install it. It is not part of cadmpeg: cadmpeg reads mechanical CAD, this reads electronics.
 
@@ -36,7 +45,7 @@ The "neutral board model" is plain Rust types in `crates/board-model`: outline, 
 | `crates/altium-pcbdoc` | Reads `.PcbDoc` into the board model. No Dutchman dependencies |
 | `crates/dutchman-electronics` | The `dutchman-electronics` command; gathers the formats |
 
-Adding KiCad or another format later means one new crate that fills the same model.
+Each further format is one new crate that fills the same model.
 
 The Dutchman side of add-ons is specified in dutchman-cad/dutchman#1005.
 
