@@ -1,11 +1,13 @@
 Original test board made for Dutchman Electronics. Released under CC0 1.0 (public domain): https://creativecommons.org/publicdomain/zero/1.0/
 
-(This line covers every board in this folder: empty-outline, outline-with-hole, one-track and
-one-resistor.)
+(This line covers every board in this folder: empty-outline, outline-with-hole, one-track,
+one-resistor, one-via, one-plated-pad, one-rotated-pad, one-oval-pad, one-bottom-track and
+one-arc.)
 
-Made in Altium Designer 26.12.2 (build 26.12.2.9), saved as "PCB Binary Files (*.PcbDoc)",
-on 2026-11-23. Each board was drawn with typed or grid-snapped coordinates (snap grid 1 mm), so
-every number below is exact.
+Made in Altium Designer 26.12.2 (build 26.12.2.9), saved as "PCB Binary Files (*.PcbDoc)".
+The first four boards (empty-outline, outline-with-hole, one-track, one-resistor) were drawn by
+hand on 2026-11-23 with typed or grid-snapped coordinates (snap grid 1 mm); the other six were
+made by a script on 2026-11-24 (see "Scripted boards" below). Every number below is exact.
 
 All numbers are in millimetres, as Altium shows them in its mm display. Coordinates are relative
 to the origin marker Altium puts on a new PCB; the board's lower-left corner sits on that origin.
@@ -78,6 +80,44 @@ x 24.2 to 25.8, y 14.6 to 15.4, z 0 to 0.45 above the top surface.
 
 The "R1" designator text is on Top Overlay where Altium put it by default; its position is not
 one of the numbers above. The footprint itself is stored inside the board file.
+
+
+Scripted boards: one-via, one-plated-pad, one-rotated-pad, one-oval-pad, one-bottom-track, one-arc
+------------------------------------------------------------------------------------------------
+Made on 2026-11-24 in the same Altium Designer 26.12.2, by a DelphiScript of my own run inside
+Altium (kept outside this repository). Each board started as a file copy of empty-outline.PcbDoc,
+so it has the same board shape and stack, and the script added exactly one object with the
+numbers below, then saved. The script read every number back from Altium and logged it; the log
+matches the numbers here. None of these objects has a net or belongs to a component.
+
+one-via.PcbDoc
+    one via, centre (25.000, 15.000), diameter 1.000, hole 0.500
+    from Top Layer to Bottom Layer (a through via)
+
+one-plated-pad.PcbDoc
+    one free pad, layer Multi-Layer, designator "1", rotation 0
+    centre (25.000, 15.000), round, 2.000 x 2.000 on top, middle and bottom
+    hole: round, diameter 1.000, plated
+
+one-rotated-pad.PcbDoc
+    one free pad, layer Top Layer only (SMD), designator "1", no hole
+    centre (25.000, 15.000), rectangle 2.000 x 1.000 (X x Y before rotation)
+    rotation 30 degrees (counter-clockwise)
+
+one-oval-pad.PcbDoc
+    one free pad, layer Top Layer only (SMD), designator "1", no hole, rotation 0
+    centre (25.000, 15.000), Altium shape "Round" with 2.000 x 1.000, which Altium draws as an
+    oval (a slot shape, 2.000 long along X, 1.000 wide)
+
+one-bottom-track.PcbDoc
+    one track, layer Bottom Layer
+    start (10.000, 15.000), end (20.000, 15.000): 10.000 long, straight along +X
+    width 0.500
+
+one-arc.PcbDoc
+    one arc (a curved track), layer Top Layer
+    centre (25.000, 15.000), radius 5.000, width 0.500
+    from 0 degrees to 90 degrees, counter-clockwise: it starts at (30, 15) and ends at (25, 20)
 
 
 Paths inside the files
