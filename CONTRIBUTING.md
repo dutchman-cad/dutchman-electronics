@@ -47,13 +47,15 @@ Make boards that are as small and boring as possible, one new thing at a time:
 
 Write the exact numbers down in a `README.txt` beside each file (where you placed things, in millimetres), and the Altium version that saved it (e.g. `Altium Designer 26.12.2`). Those numbers are the "right answer" the tests check against; the version tells us which file layout a board uses.
 
-Then put each board in `crates/altium-pcbdoc/tests/boards/` with its `README.txt`, and a line at the top of that file:
+Then put each board in `crates/altium-pcbdoc/tests/boards/` with its `README.txt` (either `README.txt` in the board's own folder, or `<board name>.README.txt` beside it), and this line at the top of that file:
 
 ```
-I made this board myself for testing. I release it under CC0 (public domain).
+I made this board myself for testing. My Altium licence permits me to share files I make with it. I release it under CC0 (public domain).
 ```
 
-CC0 means anyone may use it for anything with no conditions. Do not add a board without that line. Do not add 3D models you did not make or that you downloaded; use a simple box you modelled yourself.
+CC0 means anyone may use it for anything with no conditions. Do not add a board without that line; a test refuses boards that lack it.
+
+**About the licence part.** Some Altium licences, often ones provided by an employer or a school, limit what you may do with files made with them. Before your first board is committed, check the terms of the licence you use. If they do not allow sharing, or you are not sure, make test boards with a licence that does (a personal one, for example) instead. Ask in #electronics-dev if you want help reading the terms; never discuss your employer in a public issue or pull request. Do not add 3D models you did not make or that you downloaded; use a simple box you modelled yourself.
 
 ### Check a board for personal traces before sharing it
 
