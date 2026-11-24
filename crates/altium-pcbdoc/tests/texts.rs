@@ -2,7 +2,7 @@
 //! as AGENTS.md asks).
 
 use altium_pcbdoc::Altium;
-use board_model::{InputFormat, LayerKind, ReadOutcome, Side, Text};
+use board_model::{InputFormat, LayerKind, ReadOutcome, Severity, Side, Text};
 
 const TOLERANCE: f64 = 0.001;
 
@@ -84,5 +84,27 @@ fn boards_without_texts_have_none() -> Result<(), Box<dyn std::error::Error>> {
     for name in ["empty-outline.PcbDoc", "one-track.PcbDoc"] {
         assert!(read(name)?.board.texts.is_empty(), "{name}");
     }
+    Ok(())
+}
+
+#[test]
+fn one_ttf_text_is_read_like_a_stroke_text_with_a_font_note(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let out = read("one-ttf-text.PcbDoc")?;
+    let (t, layer, _, _) = only_text(&out).ok_or("expected exactly one text")?;
+    assert_eq!((t.content.as_str(), layer.as_str()), ("TTF", "Top Overlay"));
+    assert!(near(t.at.x, 10.0) && near(t.at.y, 10.0), "{:?}", t.at);
+    assert!(near(t.height, 2.0), "{}", t.height);
+    assert_eq!(t.rotation_deg, 0.0);
+    assert!(!t.mirrored);
+    let [note] = out.notes.as_slice() else {
+        return Err(format!("expected one note, got {:?}", out.notes).into());
+    };
+    assert_eq!(note.severity, Severity::Info);
+    assert!(
+        note.message.contains("TrueType font \"Arial\""),
+        "{}",
+        note.message
+    );
     Ok(())
 }
