@@ -291,10 +291,12 @@ fn components(list: &[Placement], embedded: &[EmbeddedModel], thickness: f64) ->
             &compose(&turn(2, rz), &compose(&turn(1, ry), &turn(0, rx))),
         );
         let mut part_notes = Vec::new();
-        if rx != 0.0 || ry != 0.0 {
+        // A tilt about X is confirmed on top- and bottom-side parts by the tenth batch of test
+        // boards; a tilt about Y is on none of them yet.
+        if ry != 0.0 {
             part_notes.push(json!({
                 "severity": "Degraded",
-                "message": "the model is tilted about X or Y on its part; no test board confirms \
+                "message": "the model is tilted about Y on its part; no test board confirms \
                             that turn yet",
             }));
         }
@@ -734,6 +736,41 @@ mod tests {
                 near(lo, want_lo) && near(hi, want_hi),
                 "{board}: {lo:?} {hi:?}"
             );
+        }
+    }
+
+    #[cfg(feature = "altium")]
+    #[test]
+    fn tilted_step_models_span_what_altium_shows() {
+        // The tenth batch: box-offset.step (x 0 to 1.6, y -0.4 to 0.4, 0.45 high) tilted 90
+        // degrees about X, so it reaches 0.4 above and below the board face it sits on. The
+        // README gives each body's span. A tilt about X needs no Degraded note any more.
+        let cases = [
+            (
+                "one-tilted-step-resistor",
+                [25.0, 14.6, 1.2],
+                [26.6, 15.05, 2.0],
+            ),
+            (
+                "one-bottom-tilted-step-resistor",
+                [23.8, 14.6, -0.4],
+                [25.4, 15.05, 0.4],
+            ),
+            (
+                "one-turned-tilted-step-resistor",
+                [24.975, 14.654, 1.2],
+                [26.586, 15.843, 2.0],
+            ),
+        ];
+        for (board, want_lo, want_hi) in cases {
+            let package = package_of(board);
+            let r1 = part_named(&package.manifest, "R1");
+            let (lo, hi) = placed_box(&r1["transform"], [0.0, -0.4, 0.0], [1.6, 0.4, 0.45]);
+            assert!(
+                near(lo, want_lo) && near(hi, want_hi),
+                "{board}: {lo:?} {hi:?}"
+            );
+            assert_eq!(r1["notes"], json!([]), "{board}");
         }
     }
 
