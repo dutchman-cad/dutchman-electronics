@@ -20,6 +20,8 @@ pub const DEFAULT_THICKNESS: f64 = 1.6;
 const MAX_SEGMENTS: usize = 200_000;
 /// The most drilled holes a board may have.
 const MAX_HOLES: usize = 200_000;
+/// The most tubes [`tubes`] writes into one file.
+pub const MAX_TUBES: usize = MAX_HOLES;
 /// Arc sampling step for inside/outside tests, in radians.
 const SAMPLE_STEP: f64 = PI / 36.0;
 
@@ -30,6 +32,8 @@ pub enum StepError {
     Outline(String),
     /// Too much geometry to write safely.
     TooLarge(String),
+    /// A size that cannot make a solid (a tube whose inner radius is not inside its outer one).
+    Size(String),
 }
 
 impl std::fmt::Display for StepError {
@@ -37,6 +41,7 @@ impl std::fmt::Display for StepError {
         match self {
             Self::Outline(why) => write!(f, "cannot make the board solid: {why}"),
             Self::TooLarge(why) => write!(f, "the board is too large to write: {why}"),
+            Self::Size(why) => write!(f, "cannot make the solid: {why}"),
         }
     }
 }
@@ -55,6 +60,19 @@ pub struct BoardStep {
     /// The solid's height in mm: for the board, its thickness (top face at z = thickness, bottom
     /// at z = 0); for a prism, `z1 - z0`.
     pub thickness: f64,
+    /// The drilled holes actually cut into the board solid (the board only; empty for a prism or
+    /// tubes), so a plating can follow what was cut.
+    pub holes: Vec<CutHole>,
+}
+
+/// A drilled hole that was cut through the board solid.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CutHole {
+    pub at: Point,
+    /// The drill radius, in mm.
+    pub radius: f64,
+    /// Lined with copper: every via, and every pad whose drill is marked plated.
+    pub plated: bool,
 }
 
 /// Counts of the solid's topology.
@@ -393,6 +411,7 @@ fn bounds(points: &[Point]) -> (Point, Point) {
 struct Drill {
     at: Point,
     radius: f64,
+    plated: bool,
 }
 
 /// Every drilled hole on the board, from through-hole pads and vias.
@@ -401,15 +420,16 @@ fn drills(board: &Board, notes: &mut Vec<Note>) -> Result<Vec<Drill>, StepError>
     let mut unusable = 0usize;
     for item in &board.copper {
         let found = match *item {
-            CopperItem::Via { at, drill, .. } => Some((at, drill)),
+            CopperItem::Via { at, drill, .. } => Some((at, drill, true)),
             CopperItem::Pad {
                 at,
                 drill: Some(drill),
+                plated,
                 ..
-            } => Some((at, drill)),
+            } => Some((at, drill, plated)),
             _ => None,
         };
-        let Some((at, diameter)) = found else {
+        let Some((at, diameter, plated)) = found else {
             continue;
         };
         if !finite(at) || !diameter.is_finite() || diameter <= 2.0 * TOLERANCE {
@@ -422,6 +442,7 @@ fn drills(board: &Board, notes: &mut Vec<Note>) -> Result<Vec<Drill>, StepError>
         out.push(Drill {
             at,
             radius: diameter / 2.0,
+            plated,
         });
     }
     if unusable > 0 {
@@ -450,6 +471,7 @@ fn clear_of_opening(hole: Drill, poly: &(Vec<Point>, (Point, Point)), edges: &[E
 struct Profile {
     outer: Vec<Edge2>,
     openings: Vec<Vec<Edge2>>,
+    holes: Vec<CutHole>,
 }
 
 fn profile(board: &Board, notes: &mut Vec<Note>) -> Result<Profile, StepError> {
@@ -553,12 +575,22 @@ fn profile(board: &Board, notes: &mut Vec<Note>) -> Result<Profile, StepError> {
             });
         }
     }
+    let mut cut = Vec::new();
     for hole in kept {
+        cut.push(CutHole {
+            at: hole.at,
+            radius: hole.radius,
+            plated: hole.plated,
+        });
         let mut edges = circle_edges(hole.at, hole.radius);
         reverse(&mut edges);
         openings.push(edges);
     }
-    Ok(Profile { outer, openings })
+    Ok(Profile {
+        outer,
+        openings,
+        holes: cut,
+    })
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -761,24 +793,23 @@ fn side_faces(w: &mut Writer, ring: &Ring, z0: f64, faces: &mut Vec<usize>) {
     }
 }
 
-/// Writes one solid: `outer` (counter-clockwise) with `openings` (clockwise) cut through it,
-/// extruded from `z0` up to `z1`, as a whole STEP file.
-fn solid(
+/// Adds one body to `w`: `outer` (counter-clockwise) with `openings` (clockwise) cut through
+/// it, extruded from `z0` up to `z1`. Returns the id of its `MANIFOLD_SOLID_BREP`.
+fn body(
+    w: &mut Writer,
     outer: Vec<Edge2>,
     openings: Vec<Vec<Edge2>>,
     (z0, z1): (f64, f64),
     name: &str,
-    description: &str,
     stats: &mut Stats,
-) -> String {
-    let mut w = Writer::default();
-    let mut rings = vec![ring(&mut w, outer, (z0, z1), stats)];
+) -> usize {
+    let mut rings = vec![ring(w, outer, (z0, z1), stats)];
     for opening in openings {
-        rings.push(ring(&mut w, opening, (z0, z1), stats));
+        rings.push(ring(w, opening, (z0, z1), stats));
     }
     let mut faces = Vec::new();
     for r in &rings {
-        side_faces(&mut w, r, z0, &mut faces);
+        side_faces(w, r, z0, &mut faces);
     }
     // Top face, normal +Z: every ring's top edges forward.
     let mut top_bounds = Vec::new();
@@ -791,10 +822,10 @@ fn solid(
             "FACE_BOUND"
         };
         let forward: Vec<(Edge3, bool)> = r.top.iter().map(|e| (*e, true)).collect();
-        let lt = edge_loop(&mut w, &forward);
+        let lt = edge_loop(w, &forward);
         top_bounds.push(w.add(format!("{kind}('',#{lt},.T.)")));
         let backward: Vec<(Edge3, bool)> = r.bottom.iter().rev().map(|e| (*e, false)).collect();
-        let lb = edge_loop(&mut w, &backward);
+        let lb = edge_loop(w, &backward);
         bottom_bounds.push(w.add(format!("{kind}('',#{lb},.T.)")));
     }
     let ids = |v: &[usize]| {
@@ -815,10 +846,22 @@ fn solid(
         "ADVANCED_FACE('',({}),#{bottom_surface},.T.)",
         ids(&bottom_bounds)
     )));
-    stats.faces = faces.len();
+    stats.faces = stats.faces.saturating_add(faces.len());
 
     let shell = w.add(format!("CLOSED_SHELL('',({}))", ids(&faces)));
-    let brep = w.add(format!("MANIFOLD_SOLID_BREP({},#{shell})", text(name)));
+    w.add(format!("MANIFOLD_SOLID_BREP({},#{shell})", text(name)))
+}
+
+/// The ids as a STEP list: `#1,#2`.
+fn id_list(ids: &[usize]) -> String {
+    ids.iter()
+        .map(|i| format!("#{i}"))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// Wraps the bodies `breps` already added to `w` into a whole STEP file.
+fn finish(mut w: Writer, breps: &[usize], name: &str, description: &str) -> String {
     let origin = w.placement([0.0; 3], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]);
     let length = w.add("( LENGTH_UNIT() NAMED_UNIT(*) SI_UNIT(.MILLI.,.METRE.) )".into());
     let angle = w.add("( NAMED_UNIT(*) PLANE_ANGLE_UNIT() SI_UNIT($,.RADIAN.) )".into());
@@ -834,7 +877,8 @@ fn solid(
          REPRESENTATION_CONTEXT('Context #1','3D Context with UNIT and UNCERTAINTY') )"
     ));
     let shape = w.add(format!(
-        "ADVANCED_BREP_SHAPE_REPRESENTATION('',(#{origin},#{brep}),#{context})"
+        "ADVANCED_BREP_SHAPE_REPRESENTATION('',(#{origin},{}),#{context})",
+        id_list(breps)
     ));
     let app = w.add("APPLICATION_CONTEXT('automotive design')".into());
     w.add(format!(
@@ -877,6 +921,21 @@ fn solid(
     out
 }
 
+/// Writes one solid as a whole STEP file: `outer` with `openings` cut through it, from `z0` to
+/// `z1`.
+fn solid(
+    outer: Vec<Edge2>,
+    openings: Vec<Vec<Edge2>>,
+    z: (f64, f64),
+    name: &str,
+    description: &str,
+    stats: &mut Stats,
+) -> String {
+    let mut w = Writer::default();
+    let brep = body(&mut w, outer, openings, z, name, stats);
+    finish(w, &[brep], name, description)
+}
+
 /// Writes the board substrate as a STEP file. `name` becomes the product name.
 pub fn write(board: &Board, name: &str) -> Result<BoardStep, StepError> {
     let mut notes = Vec::new();
@@ -916,6 +975,7 @@ pub fn write(board: &Board, name: &str) -> Result<BoardStep, StepError> {
         notes,
         stats,
         thickness,
+        holes: profile.holes,
     })
 }
 
@@ -962,6 +1022,69 @@ pub fn prism(outline: &Contour, z0: f64, z1: f64, name: &str) -> Result<BoardSte
         notes: Vec::new(),
         stats,
         thickness: z1 - z0,
+        holes: Vec::new(),
+    })
+}
+
+/// One plated hole's lining: a tube round `at` (in the XY plane) with the given radii.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Tube {
+    pub at: Point,
+    /// The drill radius, in mm: the tube's outside, where the copper meets the substrate.
+    pub outer_radius: f64,
+    /// The radius left open in the middle, in mm; above 0 and below `outer_radius`.
+    pub inner_radius: f64,
+}
+
+/// Writes tubes as one STEP file with one closed `MANIFOLD_SOLID_BREP` for each, all running from
+/// `z0` up to `z1`. Each is a ring (a circle with a circle cut out of it) extruded, so its sides
+/// are exact cylinders. An error when no tube is given, more than [`MAX_TUBES`], or a tube's
+/// position or radii are unusable (not numbers, an inner radius of 0 or less, or one that is
+/// not smaller than the outer radius). `name` becomes the product name.
+pub fn tubes(list: &[Tube], z0: f64, z1: f64, name: &str) -> Result<BoardStep, StepError> {
+    if !(z0.is_finite() && z1.is_finite() && z1 - z0 > TOLERANCE) {
+        return Err(StepError::Size(format!(
+            "tubes need their top above their bottom (from {z0} to {z1})"
+        )));
+    }
+    if list.is_empty() {
+        return Err(StepError::Size("no tubes were given".into()));
+    }
+    if list.len() > MAX_TUBES {
+        return Err(StepError::TooLarge(format!("more than {MAX_TUBES} tubes")));
+    }
+    let mut w = Writer::default();
+    let mut stats = Stats::default();
+    let mut breps = Vec::new();
+    for t in list {
+        let usable = finite(t.at)
+            && t.outer_radius.is_finite()
+            && t.inner_radius.is_finite()
+            && t.inner_radius > TOLERANCE
+            && t.inner_radius < t.outer_radius - TOLERANCE
+            && (t.at.x + t.outer_radius).is_finite()
+            && (t.at.x - t.outer_radius).is_finite()
+            && (t.at.y + t.outer_radius).is_finite()
+            && (t.at.y - t.outer_radius).is_finite();
+        if !usable {
+            return Err(StepError::Size(format!(
+                "a tube at ({}, {}) has radii {} and {}; the inner radius must be above 0 and \
+                 below the outer radius",
+                t.at.x, t.at.y, t.inner_radius, t.outer_radius
+            )));
+        }
+        let outer = circle_edges(t.at, t.outer_radius);
+        let mut inner = circle_edges(t.at, t.inner_radius);
+        reverse(&mut inner);
+        breps.push(body(&mut w, outer, vec![inner], (z0, z1), name, &mut stats));
+    }
+    stats.openings = list.len();
+    Ok(BoardStep {
+        text: finish(w, &breps, name, "Plating of plated holes"),
+        notes: Vec::new(),
+        stats,
+        thickness: z1 - z0,
+        holes: Vec::new(),
     })
 }
 

@@ -4,8 +4,9 @@
 //! Dutchman only draws polygons, so all the geometry happens here: every item becomes a polygon
 //! (a track a stroke with round ends, a pad its shape, a via its ring), the polygons of one
 //! overlay are united, every drill is cut out, and masked copper stops where a pad begins. Arcs
-//! are polylines within [`CHORD`] mm. Up to six overlays come out, for each side: copper under
-//! the mask (`masked`), bare pad copper (`bare`), and silkscreen.
+//! are polylines within [`CHORD`] mm. Up to eight overlays come out, for each side: copper under
+//! the mask (`masked`), bare pad copper (`bare`), silkscreen, and the solder mask itself (the
+//! board face less the bare pads and every drill). Each carries its colour from [`crate::colors`].
 //!
 //! This module knows the neutral board model only, nothing about any input format.
 
@@ -17,12 +18,19 @@ use geo::orient::{Direction, Orient};
 use geo::{BooleanOps, Coord, LineString, MultiPolygon, Polygon};
 use serde_json::{json, Value};
 
+use crate::colors::{
+    COPPER_BARE_COLOR, COPPER_MASKED_COLOR, MASK_COLOR, MASK_OPACITY, SILKSCREEN_COLOR,
+};
+
 /// The most an arc's polyline strays from the true arc, in mm.
 pub const CHORD: f64 = 0.02;
 /// How far copper is drawn off the board face, in mm (as SolidCraft's KiCad import does).
 pub const COPPER_LIFT: f64 = 0.001;
 /// How far silkscreen is drawn off the board face, in mm.
 pub const SILK_LIFT: f64 = 0.01;
+/// How far the solder mask is drawn off the board face, in mm: above the copper, below the
+/// silkscreen.
+pub const MASK_LIFT: f64 = 0.005;
 /// The most points one arc is drawn with: enough to hold [`CHORD`] on a whole circle as big as
 /// [`MAX_COORDINATE`] allows.
 const MAX_ARC_POINTS: usize = 4096;
@@ -331,6 +339,33 @@ fn areas(shape: &MultiPolygon) -> Vec<Value> {
         .collect()
 }
 
+/// One overlay before it is written into the manifest.
+struct Built {
+    name: String,
+    kind: &'static str,
+    finish: Option<&'static str>,
+    side: &'static str,
+    z: f64,
+    shape: MultiPolygon,
+    color: &'static str,
+    opacity: Option<f64>,
+}
+
+/// The board's outer contour as a polygon (`None` when it cannot be drawn), its drawable cutouts
+/// gathered (united when the mask is cut; at most [`MAX_ITEMS`]), how many cutouts could not be
+/// drawn, and how many were past the cap.
+fn mask_outline(board: &Board) -> (Option<MultiPolygon>, Pile, usize, usize) {
+    let outer = contour(&board.outline.outer);
+    let mut bad = 0usize;
+    let mut cuts = Pile::default();
+    for c in board.outline.cutouts.iter().take(MAX_ITEMS) {
+        cuts.add(contour(c), &mut bad);
+    }
+    let outline = outer.map(|p| MultiPolygon::new(vec![p]));
+    let over = board.outline.cutouts.len().saturating_sub(MAX_ITEMS);
+    (outline, cuts, bad, over)
+}
+
 /// The overlays of a board whose substrate is `thickness` thick (its top face at z = thickness,
 /// its bottom at z = 0, in the frame of the part named `board_part`), and notes on what was left
 /// out.
@@ -570,68 +605,128 @@ fn overlays_within(
 
     let mut out = Vec::new();
     let mut notes = Vec::new();
+    // The board's face for the solder mask: its outer contour, arcs included, minus its cutouts.
+    let (outline, cutouts, bad_cutouts, over_cutouts) = mask_outline(board);
+    if bad_cutouts > 0 {
+        notes.push(json!({
+            "severity": "Dropped",
+            "message": format!(
+                "{bad_cutouts} cutout(s) could not be drawn and are not cut from the solder mask"
+            ),
+        }));
+    }
+    if over_cutouts > 0 {
+        notes.push(json!({
+            "severity": "Dropped",
+            "message": format!(
+                "{over_cutouts} cutout(s) past the first {MAX_ITEMS} are not cut from the solder \
+                 mask"
+            ),
+        }));
+    }
+    // A board with no outline at all has nothing to draw (and nothing dropped); one with an
+    // outline that cannot be drawn says so.
+    if outline.is_none() && !board.outline.outer.segments.is_empty() {
+        notes.push(json!({
+            "severity": "Dropped",
+            "message": "the solder mask overlays could not be drawn: the board outline cannot \
+                        be drawn",
+        }));
+    }
     // A failure inside the polygon library must not take the whole package down with it.
     let built = catch_unwind(AssertUnwindSafe(|| {
         let drilled = holes.union();
+        let face = outline.map(|o| o.difference(&cutouts.union()));
         let mut built = Vec::new();
-        for (side, f, z_copper, z_silk) in [
-            ("top", &top, thickness + COPPER_LIFT, thickness + SILK_LIFT),
-            ("bottom", &bottom, -COPPER_LIFT, -SILK_LIFT),
-        ] {
+        for (side, f, sign) in [("top", &top, 1.0), ("bottom", &bottom, -1.0)] {
+            // The top side sits above the face at z = thickness, the bottom below z = 0.
+            let base = if sign > 0.0 { thickness } else { 0.0 };
+            let at = |lift: f64| base + sign * lift;
             let bare = f.bare.union().difference(&drilled);
             let masked = f.masked.union().difference(&drilled).difference(&bare);
             // Silkscreen is not printed over holes or on bare pads.
             let silk = f.silk.union().difference(&drilled).difference(&bare);
-            built.push((
+            let plain = |name: String, kind, finish, lift, shape, color| Built {
+                name,
+                kind,
+                finish,
+                side,
+                z: at(lift),
+                shape,
+                color,
+                opacity: None,
+            };
+            built.push(plain(
                 format!("Copper {side}"),
                 "copper",
                 Some("masked"),
-                side,
-                z_copper,
+                COPPER_LIFT,
                 masked,
+                COPPER_MASKED_COLOR,
             ));
-            built.push((
+            built.push(plain(
                 format!("Copper {side} pads"),
                 "copper",
                 Some("bare"),
-                side,
-                z_copper,
-                bare,
+                COPPER_LIFT,
+                bare.clone(),
+                COPPER_BARE_COLOR,
             ));
-            built.push((
+            built.push(plain(
                 format!("Silkscreen {side}"),
                 "silkscreen",
                 None,
-                side,
-                z_silk,
+                SILK_LIFT,
                 silk,
+                SILKSCREEN_COLOR,
             ));
+            // The mask covers the whole face except the bare pads and the drills.
+            if let Some(face) = &face {
+                let mask = face.difference(&drilled).difference(&bare);
+                built.push(Built {
+                    opacity: Some(MASK_OPACITY),
+                    ..plain(
+                        format!("Solder mask {side}"),
+                        "mask",
+                        None,
+                        MASK_LIFT,
+                        mask,
+                        MASK_COLOR,
+                    )
+                });
+            }
         }
         built
     }));
     match built {
         Ok(built) => {
-            for (name, kind, finish, side, z, shape) in built {
-                if shape.0.is_empty() {
+            for b in built {
+                if b.shape.0.is_empty() {
                     continue;
                 }
                 let mut o = json!({
-                    "name": name,
+                    "name": b.name,
                     "part": board_part,
-                    "kind": kind,
-                    "side": side,
-                    "z": (z * 1e6).round() / 1e6,
-                    "areas": areas(&shape),
+                    "kind": b.kind,
+                    "side": b.side,
+                    "z": (b.z * 1e6).round() / 1e6,
+                    "color": b.color,
+                    "areas": areas(&b.shape),
                 });
-                if let (Some(finish), Some(map)) = (finish, o.as_object_mut()) {
-                    map.insert("finish".into(), json!(finish));
+                if let Some(map) = o.as_object_mut() {
+                    if let Some(finish) = b.finish {
+                        map.insert("finish".into(), json!(finish));
+                    }
+                    if let Some(opacity) = b.opacity {
+                        map.insert("opacity".into(), json!(opacity));
+                    }
                 }
                 out.push(o);
             }
         }
         Err(_) => notes.push(json!({
             "severity": "Dropped",
-            "message": "the copper and silkscreen overlays could not be drawn",
+            "message": "the copper, silkscreen and solder mask overlays could not be drawn",
         })),
     }
     for (count, what) in [

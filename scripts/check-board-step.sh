@@ -95,5 +95,53 @@ PY
     then failed=1; fi
     done
   done
+  # The plating (plating.step, when the board has plated holes) holds one tube per hole: cadmpeg
+  # check OK, and SolidCraft sees as many bodies as the file has solids, each closed with a volume.
+  # one-via and one-plated-pad each have one plated hole, so they must have the file, with 1 tube.
+  plating="$dir/plating.step"
+  case "$name" in
+    one-via|one-plated-pad)
+      if [ ! -e "$plating" ]; then
+        echo "::error::$name has a plated hole but no plating.step"; failed=1
+      elif [ "$(grep -c 'MANIFOLD_SOLID_BREP' "$plating" || true)" != 1 ]; then
+        echo "::error::$name plating.step does not hold exactly 1 tube"; failed=1
+      fi ;;
+  esac
+  if [ -e "$plating" ]; then
+    tubes=$(grep -c 'MANIFOLD_SOLID_BREP' "$plating" || true)
+    if "$cadmpeg" check --json "$plating" > "$work/$name.plating.check.json" 2> "$work/$name.plating.check.log" \
+      && python3 -c 'import json,sys; sys.exit(json.load(open(sys.argv[1])).get("status") != "ok")' \
+        "$work/$name.plating.check.json"; then
+      echo "cadmpeg check plating: ok"
+    else
+      echo "::error::cadmpeg check failed on $name plating"; cat "$work/$name.plating.check.log"; failed=1
+    fi
+    if ! { "$solidcraft" eval --in "$plating" --json-out "$work/$name.plating.solidcraft.json" \
+      && "$solidcraft" run --in "$plating" --save "$dir/plating.sc" --quiet \
+      && "$solidcraft" eval --in "$dir/plating.sc" --json-out "$work/$name.plating.reopened.json"; }; then
+      echo "::error::SolidCraft could not open $name plating"; failed=1; continue
+    fi
+    for report in "$work/$name.plating.solidcraft.json" "$work/$name.plating.reopened.json"; do
+    if ! python3 - "$report" "$name plating" "$tubes" <<'PY'
+import json, sys
+report, name, tubes = json.load(open(sys.argv[1])), sys.argv[2], int(sys.argv[3])
+errors = [t.get("error") for t in report.get("timeline", []) if t.get("error")]
+bodies = report.get("bodies", [])
+problems = [f"feature error: {e}" for e in errors]
+if len(bodies) != tubes:
+    problems.append(f"{len(bodies)} bodies, expected {tubes}")
+for b in bodies:
+    if not b.get("closed"):
+        problems.append("a body is not closed")
+    if not b.get("volume_mm3", 0) > 0:
+        problems.append("a body has no volume")
+    print(f"SolidCraft {name} ({sys.argv[1].rsplit('.', 2)[-2]}): closed={b.get('closed')} faces={b.get('faces')} volume={b.get('volume_mm3', 0):.6f} mm3")
+if problems:
+    print(f"::error::SolidCraft on {name}: " + "; ".join(problems))
+    sys.exit(1)
+PY
+    then failed=1; fi
+    done
+  fi
 done
 exit $failed

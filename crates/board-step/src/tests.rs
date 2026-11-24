@@ -121,7 +121,9 @@ fn check_topology(text: &str) {
     }
 
     let (v, e, f) = (vertices as i64, edges.len() as i64, faces as i64);
-    assert_eq!(v - e + f, 2, "Euler: V={v} E={e} F={f}");
+    // Two for each closed shell: a file may hold several solids.
+    let shells = of("CLOSED_SHELL").count() as i64;
+    assert_eq!(v - e + f, 2 * shells, "Euler: V={v} E={e} F={f}");
 }
 
 #[test]
@@ -592,4 +594,120 @@ fn a_clockwise_arc_past_a_half_circle_is_split() {
     .unwrap();
     assert_eq!(out.text.matches("CYLINDRICAL_SURFACE(").count(), 3);
     check_topology(&out.text);
+}
+
+fn tube(x: f64, y: f64, outer: f64, inner: f64) -> Tube {
+    Tube {
+        at: p(x, y),
+        outer_radius: outer,
+        inner_radius: inner,
+    }
+}
+
+#[test]
+fn tubes_are_one_closed_solid_each_in_one_file() {
+    // Two tubes. Each is a ring extruded: its outer circle is 2 vertices at the bottom and 2 at
+    // the top (4), 6 edges (2 bottom, 2 top, 2 up) and 2 half-cylinder faces; its inner circle is
+    // the same; plus a top and a bottom face. So 8 vertices, 12 edges and 6 faces each, and
+    // 16 / 24 / 12 for the pair.
+    let list = [tube(1.0, 2.0, 0.5, 0.475), tube(5.0, 2.0, 0.3, 0.275)];
+    let out = tubes(&list, 0.0, 1.6, "plating").unwrap();
+    assert_eq!(
+        (out.stats.vertices, out.stats.edges, out.stats.faces),
+        (16, 24, 12)
+    );
+    assert_eq!(out.thickness, 1.6);
+    assert_eq!(out.text.matches("MANIFOLD_SOLID_BREP(").count(), 2);
+    assert_eq!(out.text.matches("CLOSED_SHELL(").count(), 2);
+    // Four circles of two half cylinders each, two circles per tube.
+    assert_eq!(out.text.matches("CYLINDRICAL_SURFACE(").count(), 8);
+    for radius in ["0.5", "0.475", "0.3", "0.275"] {
+        let found = out
+            .text
+            .lines()
+            .filter(|l| l.contains("CYLINDRICAL_SURFACE(") && l.ends_with(&format!(",{radius});")))
+            .count();
+        assert_eq!(found, 2, "two half cylinders of radius {radius}");
+    }
+    assert!(out.text.contains("CARTESIAN_POINT('',(1.5,2.,1.6))"));
+    check_topology(&out.text);
+}
+
+#[test]
+fn tubes_refuse_unusable_sizes() {
+    let ok = tube(0.0, 0.0, 0.5, 0.475);
+    assert!(tubes(&[ok], 0.0, 1.6, "t").is_ok());
+    for bad in [
+        tube(0.0, 0.0, 0.5, 0.0),
+        tube(0.0, 0.0, 0.5, -0.1),
+        tube(0.0, 0.0, 0.5, 0.5),
+        tube(0.0, 0.0, 0.5, 0.7),
+        tube(0.0, 0.0, f64::NAN, 0.1),
+        tube(0.0, 0.0, 0.5, f64::INFINITY),
+        tube(f64::NAN, 0.0, 0.5, 0.4),
+    ] {
+        let result = tubes(&[ok, bad], 0.0, 1.6, "t");
+        assert!(matches!(result, Err(StepError::Size(_))), "{bad:?}");
+    }
+    assert!(matches!(tubes(&[], 0.0, 1.6, "t"), Err(StepError::Size(_))));
+    assert!(tubes(&[ok], 1.6, 1.6, "t").is_err());
+    assert!(tubes(&[ok], 0.0, f64::NAN, "t").is_err());
+}
+
+#[test]
+fn a_tube_whose_extent_is_not_finite_is_refused() {
+    // 1e308 + 1e308 overflows to infinity, which would print as "inf" in the STEP text.
+    let huge = tube(1e308, 0.0, 1e308, 1.0);
+    assert!(matches!(
+        tubes(&[huge], 0.0, 1.6, "t"),
+        Err(StepError::Size(_))
+    ));
+    let huge = tube(0.0, -1e308, 1e308, 1.0);
+    assert!(matches!(
+        tubes(&[huge], 0.0, 1.6, "t"),
+        Err(StepError::Size(_))
+    ));
+}
+
+#[test]
+fn the_board_says_which_holes_it_cut() {
+    // A 20 x 10 board: a plated via in the clear, an unplated pad hole in the clear, and a via
+    // that touches the edge (not cut).
+    let mut b = board(
+        rect(0.0, 0.0, 20.0, 10.0),
+        vec![],
+        vec![
+            CopperItem::Via {
+                at: p(5.0, 5.0),
+                diameter: 1.0,
+                drill: 0.5,
+            },
+            hole(10.0, 5.0, 1.0),
+            CopperItem::Via {
+                at: p(0.1, 5.0),
+                diameter: 1.0,
+                drill: 0.5,
+            },
+        ],
+    );
+    let out = write(&b, "t").unwrap();
+    let want = [(p(5.0, 5.0), 0.25, true), (p(10.0, 5.0), 0.5, false)];
+    assert_eq!(out.holes.len(), 2);
+    for (got, (at, radius, plated)) in out.holes.iter().zip(want) {
+        assert_eq!((got.at, got.radius, got.plated), (at, radius, plated));
+    }
+    // A pad whose drill is marked plated is a plated hole.
+    if let Some(CopperItem::Pad { plated, .. }) = b.copper.get_mut(1) {
+        *plated = true;
+    }
+    assert!(write(&b, "t").unwrap().holes.iter().all(|h| h.plated));
+}
+
+#[test]
+fn too_many_tubes_are_refused() {
+    let many = vec![tube(0.0, 0.0, 0.5, 0.4); MAX_TUBES + 1];
+    assert!(matches!(
+        tubes(&many, 0.0, 1.6, "t"),
+        Err(StepError::TooLarge(_))
+    ));
 }
