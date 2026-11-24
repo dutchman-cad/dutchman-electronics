@@ -5,7 +5,7 @@
 //! - `models`: each geometry file once, `{id, file}` (file names relative to the folder),
 //! - `parts`: placed instances, `{name, model, transform, notes}`; `name` is the stable
 //!   identity (the board itself is `Board`, each component its designator),
-//! - `overlays`: reserved for copper and silkscreen, drawn flat on the board later,
+//! - `overlays`: copper and silkscreen as flat areas on the board's faces (see `overlay`),
 //! - `notes`: everything read but not in the package, as `Info`, `Degraded` or `Dropped`.
 
 use std::io::Read;
@@ -75,24 +75,14 @@ pub fn build(path: &Path, bytes: &[u8]) -> Result<Package, String> {
     let step = board_step::write(&board, &name).map_err(|e| e.to_string())?;
 
     let mut notes: Vec<Value> = outcome.notes.iter().map(note).collect();
-    let later = [
-        (
-            board.copper.len(),
-            "copper item(s) (tracks, pads, vias, pours) are not in the package yet",
-        ),
-        (
-            board.texts.len(),
-            "text item(s) (silkscreen, copper text) are not in the package yet",
-        ),
-        (
-            board.graphics.len(),
-            "silkscreen line(s) and arc(s) are not in the package yet",
-        ),
-    ];
-    for (count, what) in later {
-        if count > 0 {
-            notes.push(json!({ "severity": "Dropped", "message": format!("{count} {what}") }));
-        }
+    if !board.texts.is_empty() {
+        notes.push(json!({
+            "severity": "Dropped",
+            "message": format!(
+                "{} text item(s) (silkscreen, copper text) are not in the package yet",
+                board.texts.len()
+            ),
+        }));
     }
     let board_notes: Vec<Value> = step.notes.iter().map(note).collect();
     let mut models = vec![json!({ "id": BOARD_MODEL, "file": BOARD_FILE })];
@@ -118,6 +108,8 @@ pub fn build(path: &Path, bytes: &[u8]) -> Result<Package, String> {
     );
     parts.extend(placed.parts);
     notes.extend(placed.notes);
+    let (overlays, overlay_notes) = crate::overlay::overlays(&board, step.thickness, BOARD_PART);
+    notes.extend(overlay_notes);
     let manifest = json!({
         "schema": PARTS_SCHEMA,
         "ok": true,
@@ -126,7 +118,7 @@ pub fn build(path: &Path, bytes: &[u8]) -> Result<Package, String> {
         "source": { "format": format.id(), "format_name": format.name() },
         "models": models,
         "parts": parts,
-        "overlays": [],
+        "overlays": overlays,
         "notes": notes,
     });
     Ok(Package { manifest, files })
@@ -766,6 +758,90 @@ mod tests {
                 apply(t, model)
             );
         }
+    }
+
+    /// The net area of an overlay (outer rings minus holes), by the shoelace formula.
+    #[cfg(feature = "altium")]
+    fn overlay_area(o: &Value) -> f64 {
+        let ring = |r: &Value| {
+            let pts: Vec<(f64, f64)> = r
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|q| (q[0].as_f64().unwrap(), q[1].as_f64().unwrap()))
+                .collect();
+            let n = pts.len();
+            (0..n)
+                .map(|i| pts[i].0 * pts[(i + 1) % n].1 - pts[(i + 1) % n].0 * pts[i].1)
+                .sum::<f64>()
+                / 2.0
+        };
+        o["areas"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| {
+                ring(&a["outer"]) + a["holes"].as_array().unwrap().iter().map(ring).sum::<f64>()
+            })
+            .sum()
+    }
+
+    #[cfg(feature = "altium")]
+    #[test]
+    fn every_test_board_gives_a_package_with_sound_overlays() {
+        let dir = format!(
+            "{}/../altium-pcbdoc/tests/boards",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let mut seen = 0;
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().and_then(|e| e.to_str()) != Some("PcbDoc") {
+                continue;
+            }
+            let bytes = std::fs::read(&path).unwrap();
+            let package = build(&path, &bytes).unwrap();
+            for o in package.manifest["overlays"].as_array().unwrap() {
+                assert_eq!(o["part"], "Board");
+                assert!(overlay_area(o) > 0.0, "{}: {o}", path.display());
+                let z = o["z"].as_f64().unwrap();
+                assert!(
+                    z > 1.6 || z < 0.0,
+                    "{}: drawn off the faces",
+                    path.display()
+                );
+            }
+            seen += 1;
+        }
+        assert!(seen >= 37, "{seen} boards");
+    }
+
+    #[cfg(feature = "altium")]
+    #[test]
+    fn the_test_boards_copper_and_silkscreen_have_their_readme_areas() {
+        let area_of = |board: &str, overlay: &str| {
+            let package = package_of(board);
+            let list = package.manifest["overlays"].as_array().unwrap().clone();
+            let o = list
+                .iter()
+                .find(|o| o["name"] == overlay)
+                .unwrap_or_else(|| {
+                    panic!("{board}: no {overlay} in {list:?}");
+                });
+            overlay_area(o)
+        };
+        // one-track: 10 long, 0.5 wide, round ends.
+        let track = 5.0 + std::f64::consts::PI * 0.0625;
+        assert!((area_of("one-track", "Copper top") - track).abs() < 0.01);
+        assert!((area_of("one-bottom-track", "Copper bottom") - track).abs() < 0.01);
+        // one-resistor: two SMD pads 0.8 x 1.0 on Top Layer.
+        assert!((area_of("one-resistor", "Copper top pads") - 1.6).abs() < 1e-3);
+        // one-plated-pad: round 2, hole 1, on both faces.
+        let ring = std::f64::consts::PI * 0.75;
+        assert!((area_of("one-plated-pad", "Copper bottom pads") - ring).abs() < 0.02);
+        // one-overlay-line: (10, 10) to (20, 10), 0.2 wide.
+        let line = 2.0 + std::f64::consts::PI * 0.01;
+        assert!((area_of("one-overlay-line", "Silkscreen top") - line).abs() < 0.01);
     }
 
     #[cfg(feature = "altium")]

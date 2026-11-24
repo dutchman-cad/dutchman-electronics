@@ -7,6 +7,7 @@
 pub use board_model;
 
 pub mod module;
+pub mod overlay;
 pub mod package;
 use board_model::{Detection, InputFormat};
 
