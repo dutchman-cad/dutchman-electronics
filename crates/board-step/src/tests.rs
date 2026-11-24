@@ -531,3 +531,61 @@ fn a_clockwise_arc_is_a_concave_corner() {
     assert_eq!(out.text.matches("CYLINDRICAL_SURFACE(").count(), 1);
     check_topology(&out.text);
 }
+
+#[test]
+fn a_clockwise_circle_is_a_round_board() {
+    // Listed clockwise, so the writer turns it round: two half arcs, as for the round board.
+    let outer = Contour {
+        segments: vec![Segment::Arc {
+            center: p(0.0, 0.0),
+            radius: 25.0,
+            start_deg: 90.0,
+            end_deg: 90.0,
+            clockwise: true,
+        }],
+    };
+    let edges = contour_edges(&outer).unwrap();
+    assert_eq!(edges.len(), 2);
+    // Sampled every 5 degrees, the inscribed 72-gon is short of the circle by
+    // 625π (1 - sin 5° / 5°), about 2.49.
+    let area = signed_area2(&polygon(&edges)) / 2.0;
+    assert!(area < 0.0 && (area + PI * 625.0).abs() < 3.0, "{area}");
+    let out = write(&board(outer, vec![], vec![]), "round").unwrap();
+    assert_eq!(
+        (out.stats.vertices, out.stats.edges, out.stats.faces),
+        (4, 6, 4)
+    );
+    check_topology(&out.text);
+}
+
+#[test]
+fn a_clockwise_arc_past_a_half_circle_is_split() {
+    // A 40 x 20 board with a round cutout of radius 3 at (20, 10), listed clockwise as a 270
+    // degree arc and a 90 degree one. Its inscribed 72-gon is short by about 0.04.
+    let hole = Contour {
+        segments: vec![
+            Segment::Arc {
+                center: p(20.0, 10.0),
+                radius: 3.0,
+                start_deg: 0.0,
+                end_deg: 90.0,
+                clockwise: true,
+            },
+            Segment::Arc {
+                center: p(20.0, 10.0),
+                radius: 3.0,
+                start_deg: 90.0,
+                end_deg: 0.0,
+                clockwise: true,
+            },
+        ],
+    };
+    let edges = contour_edges(&hole).unwrap();
+    // 270 degrees in two pieces, then 90 in one.
+    assert_eq!(edges.len(), 3);
+    let area = signed_area2(&polygon(&edges)) / 2.0;
+    assert!(area < 0.0 && (area + PI * 9.0).abs() < 0.1, "{area}");
+    let out = write(&board(rect(0.0, 0.0, 40.0, 20.0), vec![hole], vec![]), "bite").unwrap();
+    assert_eq!(out.text.matches("CYLINDRICAL_SURFACE(").count(), 3);
+    check_topology(&out.text);
+}

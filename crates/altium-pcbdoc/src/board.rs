@@ -13,7 +13,7 @@
 //!   counter-clockwise from `SAn` to `EAn`: on `outline-with-arcs` (a 50 x 30 mm outline with
 //!   3 mm corner arcs) Altium lists the vertices clockwise, so each arc's vertex sits at `EAn`
 //!   and the next one at `SAn`. The reader hands such a contour over reversed, counter-clockwise,
-//!   as `Segment::Arc` has no other direction.
+//!   with every arc counter-clockwise (it does not set `Segment::Arc::clockwise` yet).
 //! - The layer stack is in `V9_STACK_LAYERn_…` keys: each solder mask and dielectric has a
 //!   `DIELHEIGHT`, each copper layer a `COPTHICK`. Their sum is the 1.600 mm we typed in.
 //! - `/Regions6/Data` is a run of records: a type byte (`0x0b`), a `u32` length, then 18 bytes we
@@ -222,8 +222,8 @@ fn on_circle(arc: &Arc, deg: f64) -> Point {
 }
 
 /// Joins the vertices into a closed contour, each to the next by a line or by its arc. Altium
-/// may list them clockwise (each arc then runs from its end angle to its start angle); since
-/// [`Segment::Arc`] only runs counter-clockwise, such a contour is handed over reversed. An arc
+/// may list them clockwise (each arc then runs from its end angle to its start angle); such a
+/// contour is handed over reversed, so that its arcs run counter-clockwise. An arc
 /// whose ends are not its two vertices, or that runs against the others, becomes a straight
 /// line with a warning that names `what`.
 pub(crate) fn contour(what: &str, vertices: &[Vertex], notes: &mut Vec<Note>) -> Contour {

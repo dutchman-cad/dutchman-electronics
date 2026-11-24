@@ -395,6 +395,12 @@ mod sweep_tests {
         assert_eq!(arc(350.0, 10.0, false).sweep_deg(), Some(20.0));
         assert_eq!(arc(30.0, 30.0, false).sweep_deg(), Some(360.0));
         assert_eq!(arc(30.0, 390.0, true).sweep_deg(), Some(-360.0));
+        assert_eq!(arc(-90.0, 90.0, false).sweep_deg(), Some(180.0));
+        assert_eq!(arc(720.0, 10.0, false).sweep_deg(), Some(10.0));
+        assert_eq!(arc(720.0, 10.0, true).sweep_deg(), Some(-350.0));
+        // Ends a hair apart are a whole circle, not a sliver, in either direction.
+        assert_eq!(arc(30.0, 30.0 + 1e-12, false).sweep_deg(), Some(360.0));
+        assert_eq!(arc(30.0, 30.0 - 1e-12, true).sweep_deg(), Some(-360.0));
         let line = Segment::Line {
             from: Point { x: 0.0, y: 0.0 },
             to: Point { x: 1.0, y: 0.0 },
