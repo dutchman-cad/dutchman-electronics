@@ -110,11 +110,7 @@ fn every_board_has_the_same_outline_and_thickness() -> Result<(), Box<dyn std::e
 #[test]
 fn what_is_not_read_yet_is_reported() -> Result<(), Box<dyn std::error::Error>> {
     let resistor = read("one-resistor.PcbDoc")?;
-    for stream in [
-        "/Components6/Data",
-        "/ComponentBodies6/Data",
-        "/Texts6/Data",
-    ] {
+    for stream in ["/ComponentBodies6/Data", "/Texts6/Data"] {
         assert!(
             resistor
                 .notes

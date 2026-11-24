@@ -15,11 +15,17 @@
 //!   diameter (0 for a pad without a hole), and at bytes 49..52 the shapes of the three size pairs
 //!   (1 round, 2 rectangle). Bytes 52..60 are 0 on every pad we have; they are taken to be the
 //!   rotation as an `f64` in degrees, which no board of ours confirms yet, so a non-zero value
-//!   gets a warning.
+//!   gets a warning. Bytes 7..9 are the index of the component the pad belongs to (see
+//!   `components.rs`); its designator becomes the pad's owner.
+//!
+//! The file stores whole units, so a typed length can come out a fraction of a micrometre off
+//! (50 mm is 19685039.37 units, stored as 19685039, read as 49.99999906 mm). That is the file, not
+//! a rounding bug; tests allow 0.001 mm.
 
 use board_model::{CopperItem, Layer, LayerKind, Note, PadShape, Point, Severity, Side};
 
 use crate::board::Properties;
+use crate::components::Components;
 
 /// Millimetres per internal unit (1/10000 mil).
 const MM_PER_UNIT: f64 = 0.0254 / 10_000.0;
@@ -174,6 +180,7 @@ pub(crate) fn tracks(
 pub(crate) fn pads(
     data: &[u8],
     layers: &CopperLayers,
+    components: &Components,
     notes: &mut Vec<Note>,
 ) -> Result<Vec<CopperItem>, String> {
     let mut items = Vec::new();
@@ -270,7 +277,7 @@ pub(crate) fn pads(
             size_y,
             rotation_deg: rotation,
             drill: (hole > 0.0).then_some(hole),
-            owner: None,
+            owner: components.owner(g),
         });
     }
     if rotated > 0 {
@@ -331,12 +338,12 @@ fn records<'a>(
     Ok(bodies)
 }
 
-fn read_u16(data: &[u8], at: usize) -> Option<u16> {
+pub(crate) fn read_u16(data: &[u8], at: usize) -> Option<u16> {
     let bytes: [u8; 2] = data.get(at..at.checked_add(2)?)?.try_into().ok()?;
     Some(u16::from_le_bytes(bytes))
 }
 
-fn read_u32(data: &[u8], at: usize) -> Option<usize> {
+pub(crate) fn read_u32(data: &[u8], at: usize) -> Option<usize> {
     let bytes: [u8; 4] = data.get(at..at.checked_add(4)?)?.try_into().ok()?;
     usize::try_from(u32::from_le_bytes(bytes)).ok()
 }
@@ -405,13 +412,14 @@ mod tests {
     #[test]
     fn hostile_streams_are_errors_not_panics() {
         let l = top_only();
+        let none = Components::default();
         let mut notes = Vec::new();
         assert!(tracks(&[TRACK_RECORD, 0xff, 0xff, 0xff, 0x7f], &l, &mut notes).is_err());
         assert!(tracks(&[TRACK_RECORD, 2, 0, 0, 0, 1, 0], &l, &mut notes).is_err());
-        assert!(pads(&[PAD_RECORD, 0xff, 0xff, 0xff, 0x7f], &l, &mut notes).is_err());
+        assert!(pads(&[PAD_RECORD, 0xff, 0xff, 0xff, 0x7f], &l, &none, &mut notes).is_err());
         let mut few_blocks = vec![PAD_RECORD];
         few_blocks.extend_from_slice(&0u32.to_le_bytes());
-        assert!(pads(&few_blocks, &l, &mut notes).is_err());
+        assert!(pads(&few_blocks, &l, &none, &mut notes).is_err());
         assert!(tracks(&[0x42], &l, &mut notes).unwrap().is_empty());
         assert_eq!(notes.last().map(|n| n.severity), Some(Severity::Dropped));
     }
