@@ -117,7 +117,7 @@ pub fn build(path: &Path, bytes: &[u8]) -> Result<Package, String> {
     );
     parts.extend(placed.parts);
     notes.extend(placed.notes);
-    let plated = plating(&board, step.thickness);
+    let plated = plating(&board, &step.holes, step.thickness);
     notes.extend(plated.notes);
     if let Some(text) = plated.text {
         models.push(json!({ "id": PLATING_MODEL, "file": PLATING_FILE }));
@@ -154,40 +154,46 @@ struct Plating {
 
 /// The copper lining the plated holes: one tube for each, from the board's bottom (z 0) to its top
 /// (z = `thickness`), in the Board's frame. Plated holes are every via, and every pad whose drill
-/// the board model marks `plated`. A tube's outer radius is the drill radius, its inner one that
-/// less [`PLATING_THICKNESS`]. No text when no hole is plated, or when the tubes cannot be
-/// written; a hole too small to line, or past the cap, or a failure, says so in a note.
-fn plating(board: &Board, thickness: f64) -> Plating {
+/// the board model marks `plated`, but only those the board solid was actually cut with (`cut`,
+/// from `board_step::write`): a tube in a hole that was not cut would float in the air or run
+/// through the substrate. A tube's outer radius is the drill radius, its inner one that less
+/// [`PLATING_THICKNESS`]. No text when no hole is plated, or when the tubes cannot be written;
+/// a hole not cut, too small to line, or past the cap, or a failure, says so in a note.
+fn plating(board: &Board, cut: &[board_step::CutHole], thickness: f64) -> Plating {
+    let wanted = board
+        .copper
+        .iter()
+        .filter(|item| match item {
+            CopperItem::Via { .. } => true,
+            CopperItem::Pad { drill, plated, .. } => drill.is_some() && *plated,
+            _ => false,
+        })
+        .count();
+    let plated_cut: Vec<&board_step::CutHole> = cut.iter().filter(|h| h.plated).collect();
+    let not_cut = wanted.saturating_sub(plated_cut.len());
     let mut list = Vec::new();
     let mut left_out = 0usize;
-    for item in &board.copper {
-        let (at, drill) = match *item {
-            CopperItem::Via { at, drill, .. } => (at, drill),
-            CopperItem::Pad {
-                at,
-                drill: Some(drill),
-                plated: true,
-                ..
-            } => (at, drill),
-            _ => continue,
-        };
-        let outer_radius = drill / 2.0;
-        let inner_radius = outer_radius - PLATING_THICKNESS;
-        let usable = at.x.is_finite()
-            && at.y.is_finite()
-            && inner_radius > board_step::TOLERANCE
-            && outer_radius.is_finite();
-        if !usable || list.len() >= board_step::MAX_TUBES {
+    for hole in plated_cut {
+        let inner_radius = hole.radius - PLATING_THICKNESS;
+        if inner_radius <= board_step::TOLERANCE || list.len() >= board_step::MAX_TUBES {
             left_out = left_out.saturating_add(1);
             continue;
         }
         list.push(board_step::Tube {
-            at,
-            outer_radius,
+            at: hole.at,
+            outer_radius: hole.radius,
             inner_radius,
         });
     }
     let mut notes = Vec::new();
+    if not_cut > 0 {
+        notes.push(json!({
+            "severity": "Dropped",
+            "message": format!(
+                "{not_cut} plated hole(s) were not cut into the board, so have no plating"
+            ),
+        }));
+    }
     if left_out > 0 {
         notes.push(json!({
             "severity": "Dropped",
@@ -1206,9 +1212,17 @@ mod tests {
         assert_eq!(names, vec!["Plating (2)", "Board (2)"]);
     }
 
+    fn cut(x: f64, radius: f64, plated: bool) -> board_step::CutHole {
+        board_step::CutHole {
+            at: Point { x, y: 1.0 },
+            radius,
+            plated,
+        }
+    }
+
     #[test]
     fn holes_too_small_to_line_are_a_note() {
-        use board_model::{Board, CopperItem, Point};
+        use board_model::{Board, CopperItem};
         let via = |drill| CopperItem::Via {
             at: Point { x: 1.0, y: 1.0 },
             diameter: 1.0,
@@ -1216,10 +1230,10 @@ mod tests {
         };
         // A 0.05 mm drill has radius 0.025: nothing left inside the plating.
         let small = Board {
-            copper: vec![via(0.05)],
+            copper: vec![via(0.1)],
             ..Board::default()
         };
-        let p = plating(&small, 1.6);
+        let p = plating(&small, &[cut(1.0, 0.025, true)], 1.6);
         assert!(p.text.is_none());
         assert_eq!(p.notes.len(), 1);
         assert_eq!(p.notes[0]["severity"], "Dropped");
@@ -1228,9 +1242,51 @@ mod tests {
             copper: vec![via(0.05), via(0.3)],
             ..Board::default()
         };
-        let p = plating(&both, 1.6);
+        let p = plating(&both, &[cut(1.0, 0.025, true), cut(3.0, 0.15, true)], 1.6);
         assert!(p.text.is_some());
         assert!(p.notes.iter().any(|n| n["severity"] == "Dropped"));
+    }
+
+    #[test]
+    fn a_plated_hole_that_was_not_cut_gets_no_tube() {
+        use board_model::{Board, CopperItem, Outline};
+        let via = |x: f64, y: f64| CopperItem::Via {
+            at: Point { x, y },
+            diameter: 1.0,
+            drill: 0.5,
+        };
+        // A 20 x 10 board with a 4 x 4 cutout from (8, 3). Via 1 is clear; via 2 touches the
+        // board edge (its centre is 0.1 from x = 0, less than its 0.25 radius); via 3 is inside
+        // the cutout. board-step cuts only the first, so only it is plated.
+        let board = Board {
+            thickness: Some(1.6),
+            outline: Outline {
+                outer: rect(0.0, 0.0, 20.0, 10.0),
+                cutouts: vec![rect(8.0, 3.0, 12.0, 7.0)],
+            },
+            copper: vec![via(5.0, 5.0), via(0.1, 5.0), via(10.0, 5.0)],
+            ..Board::default()
+        };
+        let step = board_step::write(&board, "t").unwrap();
+        assert_eq!(step.holes.len(), 1);
+        let p = plating(&board, &step.holes, step.thickness);
+        let text = p.text.unwrap();
+        assert_eq!(text.matches("MANIFOLD_SOLID_BREP(").count(), 1);
+        let said = p.notes.iter().any(|n| {
+            n["severity"] == "Dropped"
+                && n["message"]
+                    == "2 plated hole(s) were not cut into the board, so have no plating"
+        });
+        assert!(said, "{:?}", p.notes);
+        // A board whose only plated hole is not cut has no plating at all.
+        let edge = Board {
+            copper: vec![via(0.1, 5.0)],
+            ..board
+        };
+        let step = board_step::write(&edge, "t").unwrap();
+        let p = plating(&edge, &step.holes, step.thickness);
+        assert!(p.text.is_none());
+        assert_eq!(p.notes.len(), 1);
     }
 
     /// The bounding box of an overlay's outer rings: (min x, min y, max x, max y).

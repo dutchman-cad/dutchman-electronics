@@ -352,16 +352,18 @@ struct Built {
 }
 
 /// The board's outer contour as a polygon (`None` when it cannot be drawn), its drawable cutouts
-/// gathered (united when the mask is cut), and how many cutouts could not be drawn.
-fn mask_outline(board: &Board) -> (Option<MultiPolygon>, Pile, usize) {
+/// gathered (united when the mask is cut; at most [`MAX_ITEMS`]), how many cutouts could not be
+/// drawn, and how many were past the cap.
+fn mask_outline(board: &Board) -> (Option<MultiPolygon>, Pile, usize, usize) {
     let outer = contour(&board.outline.outer);
     let mut bad = 0usize;
     let mut cuts = Pile::default();
-    for c in &board.outline.cutouts {
+    for c in board.outline.cutouts.iter().take(MAX_ITEMS) {
         cuts.add(contour(c), &mut bad);
     }
     let outline = outer.map(|p| MultiPolygon::new(vec![p]));
-    (outline, cuts, bad)
+    let over = board.outline.cutouts.len().saturating_sub(MAX_ITEMS);
+    (outline, cuts, bad, over)
 }
 
 /// The overlays of a board whose substrate is `thickness` thick (its top face at z = thickness,
@@ -604,12 +606,21 @@ fn overlays_within(
     let mut out = Vec::new();
     let mut notes = Vec::new();
     // The board's face for the solder mask: its outer contour, arcs included, minus its cutouts.
-    let (outline, cutouts, bad_cutouts) = mask_outline(board);
+    let (outline, cutouts, bad_cutouts, over_cutouts) = mask_outline(board);
     if bad_cutouts > 0 {
         notes.push(json!({
             "severity": "Dropped",
             "message": format!(
                 "{bad_cutouts} cutout(s) could not be drawn and are not cut from the solder mask"
+            ),
+        }));
+    }
+    if over_cutouts > 0 {
+        notes.push(json!({
+            "severity": "Dropped",
+            "message": format!(
+                "{over_cutouts} cutout(s) past the first {MAX_ITEMS} are not cut from the solder \
+                 mask"
             ),
         }));
     }

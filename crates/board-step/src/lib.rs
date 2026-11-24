@@ -60,6 +60,19 @@ pub struct BoardStep {
     /// The solid's height in mm: for the board, its thickness (top face at z = thickness, bottom
     /// at z = 0); for a prism, `z1 - z0`.
     pub thickness: f64,
+    /// The drilled holes actually cut into the board solid (the board only; empty for a prism or
+    /// tubes), so a plating can follow what was cut.
+    pub holes: Vec<CutHole>,
+}
+
+/// A drilled hole that was cut through the board solid.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CutHole {
+    pub at: Point,
+    /// The drill radius, in mm.
+    pub radius: f64,
+    /// Lined with copper: every via, and every pad whose drill is marked plated.
+    pub plated: bool,
 }
 
 /// Counts of the solid's topology.
@@ -398,6 +411,7 @@ fn bounds(points: &[Point]) -> (Point, Point) {
 struct Drill {
     at: Point,
     radius: f64,
+    plated: bool,
 }
 
 /// Every drilled hole on the board, from through-hole pads and vias.
@@ -406,15 +420,16 @@ fn drills(board: &Board, notes: &mut Vec<Note>) -> Result<Vec<Drill>, StepError>
     let mut unusable = 0usize;
     for item in &board.copper {
         let found = match *item {
-            CopperItem::Via { at, drill, .. } => Some((at, drill)),
+            CopperItem::Via { at, drill, .. } => Some((at, drill, true)),
             CopperItem::Pad {
                 at,
                 drill: Some(drill),
+                plated,
                 ..
-            } => Some((at, drill)),
+            } => Some((at, drill, plated)),
             _ => None,
         };
-        let Some((at, diameter)) = found else {
+        let Some((at, diameter, plated)) = found else {
             continue;
         };
         if !finite(at) || !diameter.is_finite() || diameter <= 2.0 * TOLERANCE {
@@ -427,6 +442,7 @@ fn drills(board: &Board, notes: &mut Vec<Note>) -> Result<Vec<Drill>, StepError>
         out.push(Drill {
             at,
             radius: diameter / 2.0,
+            plated,
         });
     }
     if unusable > 0 {
@@ -455,6 +471,7 @@ fn clear_of_opening(hole: Drill, poly: &(Vec<Point>, (Point, Point)), edges: &[E
 struct Profile {
     outer: Vec<Edge2>,
     openings: Vec<Vec<Edge2>>,
+    holes: Vec<CutHole>,
 }
 
 fn profile(board: &Board, notes: &mut Vec<Note>) -> Result<Profile, StepError> {
@@ -558,12 +575,22 @@ fn profile(board: &Board, notes: &mut Vec<Note>) -> Result<Profile, StepError> {
             });
         }
     }
+    let mut cut = Vec::new();
     for hole in kept {
+        cut.push(CutHole {
+            at: hole.at,
+            radius: hole.radius,
+            plated: hole.plated,
+        });
         let mut edges = circle_edges(hole.at, hole.radius);
         reverse(&mut edges);
         openings.push(edges);
     }
-    Ok(Profile { outer, openings })
+    Ok(Profile {
+        outer,
+        openings,
+        holes: cut,
+    })
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -948,6 +975,7 @@ pub fn write(board: &Board, name: &str) -> Result<BoardStep, StepError> {
         notes,
         stats,
         thickness,
+        holes: profile.holes,
     })
 }
 
@@ -994,6 +1022,7 @@ pub fn prism(outline: &Contour, z0: f64, z1: f64, name: &str) -> Result<BoardSte
         notes: Vec::new(),
         stats,
         thickness: z1 - z0,
+        holes: Vec::new(),
     })
 }
 
@@ -1032,7 +1061,11 @@ pub fn tubes(list: &[Tube], z0: f64, z1: f64, name: &str) -> Result<BoardStep, S
             && t.outer_radius.is_finite()
             && t.inner_radius.is_finite()
             && t.inner_radius > TOLERANCE
-            && t.inner_radius < t.outer_radius - TOLERANCE;
+            && t.inner_radius < t.outer_radius - TOLERANCE
+            && (t.at.x + t.outer_radius).is_finite()
+            && (t.at.x - t.outer_radius).is_finite()
+            && (t.at.y + t.outer_radius).is_finite()
+            && (t.at.y - t.outer_radius).is_finite();
         if !usable {
             return Err(StepError::Size(format!(
                 "a tube at ({}, {}) has radii {} and {}; the inner radius must be above 0 and \
@@ -1051,6 +1084,7 @@ pub fn tubes(list: &[Tube], z0: f64, z1: f64, name: &str) -> Result<BoardStep, S
         notes: Vec::new(),
         stats,
         thickness: z1 - z0,
+        holes: Vec::new(),
     })
 }
 

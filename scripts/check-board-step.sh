@@ -97,7 +97,16 @@ PY
   done
   # The plating (plating.step, when the board has plated holes) holds one tube per hole: cadmpeg
   # check OK, and SolidCraft sees as many bodies as the file has solids, each closed with a volume.
+  # one-via and one-plated-pad each have one plated hole, so they must have the file, with 1 tube.
   plating="$dir/plating.step"
+  case "$name" in
+    one-via|one-plated-pad)
+      if [ ! -e "$plating" ]; then
+        echo "::error::$name has a plated hole but no plating.step"; failed=1
+      elif [ "$(grep -c 'MANIFOLD_SOLID_BREP' "$plating" || true)" != 1 ]; then
+        echo "::error::$name plating.step does not hold exactly 1 tube"; failed=1
+      fi ;;
+  esac
   if [ -e "$plating" ]; then
     tubes=$(grep -c 'MANIFOLD_SOLID_BREP' "$plating" || true)
     if "$cadmpeg" check --json "$plating" > "$work/$name.plating.check.json" 2> "$work/$name.plating.check.log" \

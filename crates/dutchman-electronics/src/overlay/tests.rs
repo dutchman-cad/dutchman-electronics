@@ -149,6 +149,45 @@ fn the_mask_is_the_outline_less_cutouts_bare_pads_and_drills() {
 }
 
 #[test]
+fn pads_on_the_bottom_only_open_the_bottom_mask() {
+    // A 20 x 10 board (200 mm2) and one bare 1 x 1 SMD pad (1 mm2) on Bottom Layer: the top
+    // mask is whole (200), the bottom mask has the pad's opening (199).
+    let mut b = board(
+        vec![CopperItem::Pad {
+            layer: 1,
+            at: p(5.0, 5.0),
+            shape: PadShape::Rectangle,
+            size_x: 1.0,
+            size_y: 1.0,
+            rotation_deg: 0.0,
+            drill: None,
+            plated: false,
+            owner: None,
+        }],
+        vec![],
+    );
+    b.outline.outer = square(0.0, 0.0, 20.0, 10.0);
+    let (list, notes) = overlays(&b, 1.6, "Board");
+    assert!(notes.is_empty(), "{notes:?}");
+    let top = named(&list, "Solder mask top");
+    let bottom = named(&list, "Solder mask bottom");
+    assert!((area(top) - 200.0).abs() < 1e-6, "{}", area(top));
+    assert!(top["areas"][0]["holes"].as_array().unwrap().is_empty());
+    assert!((area(bottom) - 199.0).abs() < 1e-6, "{}", area(bottom));
+    assert_eq!(bottom["areas"][0]["holes"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn cutouts_past_the_cap_are_counted_not_united() {
+    let mut b = board(vec![], vec![]);
+    b.outline.outer = square(0.0, 0.0, 10.0, 10.0);
+    b.outline.cutouts = vec![square(1.0, 1.0, 2.0, 2.0); MAX_ITEMS + 3];
+    let (outline, cuts, bad, over) = mask_outline(&b);
+    assert!(outline.is_some());
+    assert_eq!((cuts.polygons.len(), bad, over), (MAX_ITEMS, 0, 3));
+}
+
+#[test]
 fn an_outline_that_cannot_be_drawn_is_a_dropped_note_and_no_mask() {
     let mut b = board(vec![], vec![]);
     // A line of no area.

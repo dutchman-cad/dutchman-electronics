@@ -655,6 +655,49 @@ fn tubes_refuse_unusable_sizes() {
 }
 
 #[test]
+fn a_tube_whose_extent_is_not_finite_is_refused() {
+    // 1e308 + 1e308 overflows to infinity, which would print as "inf" in the STEP text.
+    let huge = tube(1e308, 0.0, 1e308, 1.0);
+    assert!(matches!(tubes(&[huge], 0.0, 1.6, "t"), Err(StepError::Size(_))));
+    let huge = tube(0.0, -1e308, 1e308, 1.0);
+    assert!(matches!(tubes(&[huge], 0.0, 1.6, "t"), Err(StepError::Size(_))));
+}
+
+#[test]
+fn the_board_says_which_holes_it_cut() {
+    // A 20 x 10 board: a plated via in the clear, an unplated pad hole in the clear, and a via
+    // that touches the edge (not cut).
+    let mut b = board(
+        rect(0.0, 0.0, 20.0, 10.0),
+        vec![],
+        vec![
+            CopperItem::Via {
+                at: p(5.0, 5.0),
+                diameter: 1.0,
+                drill: 0.5,
+            },
+            hole(10.0, 5.0, 1.0),
+            CopperItem::Via {
+                at: p(0.1, 5.0),
+                diameter: 1.0,
+                drill: 0.5,
+            },
+        ],
+    );
+    let out = write(&b, "t").unwrap();
+    let want = [(p(5.0, 5.0), 0.25, true), (p(10.0, 5.0), 0.5, false)];
+    assert_eq!(out.holes.len(), 2);
+    for (got, (at, radius, plated)) in out.holes.iter().zip(want) {
+        assert_eq!((got.at, got.radius, got.plated), (at, radius, plated));
+    }
+    // A pad whose drill is marked plated is a plated hole.
+    if let Some(CopperItem::Pad { plated, .. }) = b.copper.get_mut(1) {
+        *plated = true;
+    }
+    assert!(write(&b, "t").unwrap().holes.iter().all(|h| h.plated));
+}
+
+#[test]
 fn too_many_tubes_are_refused() {
     let many = vec![tube(0.0, 0.0, 0.5, 0.4); MAX_TUBES + 1];
     assert!(matches!(tubes(&many, 0.0, 1.6, "t"), Err(StepError::TooLarge(_))));
