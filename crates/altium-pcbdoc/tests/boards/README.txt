@@ -229,6 +229,22 @@ one-ttf-text.PcbDoc  (from empty-outline)
     Designer 26.12.2 opens it normally and draws the text with the Arial font installed on the
     PC.
 
+Scripted boards, sixth batch: an off-centre extruded body, top and flipped
+--------------------------------------------------------------------------
+Made on 2026-11-24 by my own script, each from a file copy of one-resistor.PcbDoc with R1's
+extruded box given a new outline; every number was read back and logged. The outline is
+lopsided in X and in Y, so a flip shows its mirror axis: about R1's centre it is
+(0, -0.4), (1.6, -0.4), (1.6, 0), (0, 0.4), from standoff 0 up to 0.450.
+
+one-offset-extruded-resistor.PcbDoc
+    R1 at (25, 15), rotation 0, top side. The body's outline is (26.6, 14.6), (26.6, 15),
+    (25, 15.4), (25, 14.6); its box x 25 to 26.6, y 14.6 to 15.4, height 0.450.
+one-bottom-extruded-resistor.PcbDoc  (the same, then R1 flipped to the bottom)
+    Altium turns a part about the middle of everything it holds, so R1's centre moved to
+    (25.400, 15.000) and it shows rotation 180 (I set only the side). The body's outline is
+    (23.8, 14.6), (23.8, 15), (25.4, 15.4), (25.4, 14.6), projecting from the bottom: the +X
+    lobe went to -X, the slanted edge kept its Y.
+
 Paths inside the files
 ----------------------
 Altium writes a few paths from the PC that saved a board into the file. After the last save, I
