@@ -189,8 +189,14 @@ pub enum CopperItem {
         /// The designator of the component this pad belongs to, if any.
         owner: Option<String>,
     },
-    /// A filled copper area (a pour or polygon).
-    Region { layer: usize, contour: Contour },
+    /// A filled copper area (a pour or polygon). Each hole is a closed contour inside `contour`,
+    /// in any winding (clearances around other copper, thermal-relief gaps); the copper is the
+    /// outline minus the holes.
+    Region {
+        layer: usize,
+        contour: Contour,
+        holes: Vec<Contour>,
+    },
 }
 
 /// A line or arc drawn on a layer that is not copper (today the silkscreen), in board

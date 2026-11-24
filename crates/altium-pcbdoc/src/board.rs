@@ -27,8 +27,7 @@
 //!   the outline, each again a `u32` vertex count and its `f64` pairs. On `small-board` each GND
 //!   pour has 7: the clearances around the copper of other nets and the gaps between its
 //!   thermal-relief spokes, and both records end right after the last hole. On every other
-//!   board the count is 0. The board model has no holes in a region yet, so they are counted
-//!   for a warning, not handed over.
+//!   board the count is 0. They go into the region's `holes`.
 //! - A cutout with arcs (the round one on `outline-with-arcs`) is only a polygon there (35
 //!   corners); its arcs are in `/ShapeBasedRegions6/Data` (see `shape_based.rs`), which is read
 //!   for it instead.
@@ -395,6 +394,9 @@ pub(crate) struct OtherRegion {
     /// True when the region belongs to a polygon pour (`SUBPOLYINDEX` is 0 or more).
     pub poured: bool,
     pub contour: Contour,
+    /// The holes inside `contour` (clearances, thermal-relief gaps); empty when there are none or
+    /// when they could not be read.
+    pub holes: Vec<Contour>,
 }
 
 /// The regions of `/Regions6/Data`: board cutouts, and every other region for `copper.rs`.
@@ -416,7 +418,7 @@ pub(crate) fn regions(
     let mut found = Regions::default();
     let mut unreadable = 0usize;
     let mut other_arcs = 0usize;
-    let (mut holed, mut holes, mut bad_holes) = (0usize, 0usize, 0usize);
+    let mut bad_holes = 0usize;
     let mut at = 0usize;
     let mut count = 0usize;
     while at < data.len() {
@@ -470,15 +472,16 @@ pub(crate) fn regions(
             if arcs.is_some() {
                 other_arcs += 1;
             }
+            let mut holes = Vec::new();
             if let Ok(points) = &corners {
-                let after = text_end + 4 + 16 * points.len();
-                match region_holes(body, after) {
-                    Ok(0) => {}
-                    Ok(n) => {
-                        holed += 1;
-                        holes += n;
-                    }
-                    Err(_) => bad_holes += 1,
+                let after = points
+                    .len()
+                    .checked_mul(16)
+                    .and_then(|b| b.checked_add(text_end))
+                    .and_then(|b| b.checked_add(4));
+                match after.map(|after| region_holes(body, after)) {
+                    Some(Ok(found_holes)) => holes = found_holes,
+                    _ => bad_holes += 1,
                 }
             }
             match corners {
@@ -490,6 +493,7 @@ pub(crate) fn regions(
                         .and_then(|v| v.trim().parse::<i64>().ok())
                         .is_some_and(|i| i >= 0),
                     contour: closed_polygon(&points),
+                    holes,
                 }),
                 Err(_) => unreadable += 1,
             }
@@ -511,43 +515,39 @@ pub(crate) fn regions(
             ),
         });
     }
-    if holed > 0 {
-        notes.push(Note {
-            severity: Severity::Warning,
-            message: format!(
-                "{holed} copper region(s) have {holes} hole(s) (such as the clearances in poured \
-                 copper); the board model has no holes in a region yet, so they are read whole"
-            ),
-        });
-    }
     if bad_holes > 0 {
         notes.push(Note {
             severity: Severity::Warning,
             message: format!(
                 "{bad_holes} copper region(s) have holes that could not be read; they are read \
-                 whole"
+                 without holes"
             ),
         });
     }
     Ok(found)
 }
 
-/// The number of holes of a region record, after checking that they can all be read: the `u32`
-/// count at [`REGION_HOLES_AT`], and the holes themselves from `after` (the end of the outline).
-fn region_holes(body: &[u8], after: usize) -> Result<usize, String> {
+/// The holes of a region record, each a closed contour of lines: the `u32` count at
+/// [`REGION_HOLES_AT`], and the holes themselves from `after` (the end of the outline). One hole
+/// that cannot be read fails them all.
+fn region_holes(body: &[u8], after: usize) -> Result<Vec<Contour>, String> {
     let n = read_u32(body, REGION_HOLES_AT).ok_or("has its hole count cut short")?;
     if n > MAX_VERTICES {
         return Err(format!("has {n} holes, more than {MAX_VERTICES}"));
     }
+    let mut holes = Vec::new();
     let mut at = after;
     for _ in 0..n {
-        let corners = region_points(body, at)?.len();
+        let corners = region_points(body, at)?;
         at = corners
+            .len()
             .checked_mul(16)
-            .and_then(|b| b.checked_add(at + 4))
+            .and_then(|b| b.checked_add(at))
+            .and_then(|b| b.checked_add(4))
             .ok_or("has a hole out of range")?;
+        holes.push(closed_polygon(&corners));
     }
-    Ok(n)
+    Ok(holes)
 }
 
 /// The corners of a region: a `u32` count at `at`, then that many `f64` (x, y) pairs.
@@ -895,20 +895,25 @@ mod tests {
     }
 
     #[test]
-    fn region_holes_are_counted_and_reported() {
+    fn region_holes_are_handed_over() {
         let mut notes = Vec::new();
         let found = regions(&holed_region(&[10_000.0, 50_000.0], 2), &[], &mut notes).unwrap();
         assert_eq!(found.others.len(), 1);
-        assert_eq!(notes.len(), 1, "{notes:?}");
-        assert!(notes[0]
-            .message
-            .starts_with("1 copper region(s) have 2 hole(s)"));
-        // No holes, no note; a count past the record's end is a note, and the region stays.
-        let mut notes = Vec::new();
-        regions(&holed_region(&[], 0), &[], &mut notes).unwrap();
         assert!(notes.is_empty(), "{notes:?}");
+        let holes = &found.others[0].holes;
+        assert_eq!(holes.len(), 2);
+        assert!(holes.iter().all(|h| h.segments.len() == 4));
+        // No holes, no note, no holes in the region.
+        let mut notes = Vec::new();
+        let found = regions(&holed_region(&[], 0), &[], &mut notes).unwrap();
+        assert!(
+            notes.is_empty() && found.others[0].holes.is_empty(),
+            "{notes:?}"
+        );
+        // A count past the record's end is a note, and the region stays, without holes.
         let found = regions(&holed_region(&[10_000.0], 3), &[], &mut notes).unwrap();
         assert_eq!(found.others.len(), 1);
+        assert!(found.others[0].holes.is_empty());
         assert!(notes[0].message.contains("could not be read"), "{notes:?}");
     }
 

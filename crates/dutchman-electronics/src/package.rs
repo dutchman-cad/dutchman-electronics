@@ -1100,7 +1100,7 @@ mod tests {
         let track = package_of("one-track");
         assert_eq!(
             overlay_named(&track.manifest, "one-track", "Copper top")["color"],
-            "#3f8f4f"
+            "#2b6e43"
         );
         let silk = package_of("one-overlay-line");
         assert_eq!(
@@ -1460,6 +1460,83 @@ mod tests {
             [24.2, 14.6, -0.45]
         ));
         assert!(close([span(0).1, span(1).1, span(2).1], [25.8, 15.4, 0.0]));
+    }
+
+    /// True when `(x, y)` is inside an overlay area's outer ring and in none of its holes.
+    #[cfg(feature = "altium")]
+    fn covered(overlay: &Value, x: f64, y: f64) -> bool {
+        let inside = |ring: &Value| {
+            let pts = ring_points(ring);
+            let mut odd = false;
+            for i in 0..pts.len() {
+                let (a, b) = (pts[i], pts[(i + 1) % pts.len()]);
+                if (a.1 > y) != (b.1 > y) && x < a.0 + (y - a.1) * (b.0 - a.0) / (b.1 - a.1) {
+                    odd = !odd;
+                }
+            }
+            odd
+        };
+        overlay["areas"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|a| inside(&a["outer"]) && !a["holes"].as_array().unwrap().iter().any(inside))
+    }
+
+    #[cfg(feature = "altium")]
+    fn ring_points(ring: &Value) -> Vec<(f64, f64)> {
+        ring.as_array()
+            .unwrap()
+            .iter()
+            .map(|q| (q[0].as_f64().unwrap(), q[1].as_f64().unwrap()))
+            .collect()
+    }
+
+    /// The area of a ring (negative for a clockwise one).
+    #[cfg(feature = "altium")]
+    fn ring_area(ring: &Value) -> f64 {
+        let pts = ring_points(ring);
+        (0..pts.len())
+            .map(|i| {
+                let (a, b) = (pts[i], pts[(i + 1) % pts.len()]);
+                a.0 * b.1 - b.0 * a.1
+            })
+            .sum::<f64>()
+            / 2.0
+    }
+
+    #[cfg(feature = "altium")]
+    #[test]
+    fn the_small_boards_top_pour_has_its_clearances_cut_out() {
+        let package = package_of("small-board");
+        let copper = overlay_named(&package.manifest, "small-board", "Copper top");
+        let areas = copper["areas"].as_array().unwrap();
+        let holes: usize = areas
+            .iter()
+            .map(|a| a["holes"].as_array().unwrap().len())
+            .sum();
+        assert!(holes > 0, "the pour has no holes");
+        // The SIG track (25.8, 15) to (30, 15), 0.25 wide, lies in a clearance gap of the GND
+        // pour: its centre is copper only because of the track, and the gap shows on both sides.
+        assert!(covered(copper, 27.9, 15.0));
+        assert!(!covered(copper, 27.9, 15.2));
+        assert!(!covered(copper, 27.9, 14.8));
+        // Open pour, well away from every net.
+        assert!(covered(copper, 45.0, 10.0));
+        // The net area is less than the pour's outline (46 x 26) alone.
+        let net: f64 = areas
+            .iter()
+            .map(|a| {
+                ring_area(&a["outer"])
+                    + a["holes"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .map(ring_area)
+                        .sum::<f64>()
+            })
+            .sum();
+        assert!(net < 46.0 * 26.0 - 10.0, "{net}");
     }
 
     #[test]

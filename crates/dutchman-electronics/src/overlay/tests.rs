@@ -452,6 +452,7 @@ fn a_region_with_an_arc_is_drawn_within_the_chord() {
             vec![CopperItem::Region {
                 layer: 0,
                 contour: c,
+                holes: vec![],
             }],
             vec![],
         ),
@@ -490,6 +491,7 @@ fn a_clockwise_pour_first_does_not_wipe_out_the_rest() {
                 CopperItem::Region {
                     layer: 0,
                     contour: square_cw(0.0, 0.0, 2.0),
+                    holes: vec![],
                 },
                 track(0, p(10.0, 0.0), p(20.0, 0.0), 0.5),
             ],
@@ -512,6 +514,7 @@ fn a_clockwise_pour_after_a_track_is_kept() {
                 CopperItem::Region {
                     layer: 0,
                     contour: square_cw(0.0, 0.0, 2.0),
+                    holes: vec![],
                 },
             ],
             vec![],
@@ -682,6 +685,7 @@ fn a_clockwise_arc_in_a_region_is_a_concave_corner() {
             vec![CopperItem::Region {
                 layer: 0,
                 contour: c,
+                holes: vec![],
             }],
             vec![],
         ),
@@ -763,7 +767,7 @@ fn texts_past_the_segment_budget_are_counted_not_drawn() {
         let at = p(10.0, 10.0 + f64::from(i) * 5.0);
         b.texts.push(text_on(3, "HHHH", 2.0, at));
     }
-    let (list, notes) = overlays_within(&b, 1.6, "Board", 20);
+    let (list, notes) = overlays_within(&b, 1.6, "Board", 20, MAX_HOLE_VERTICES);
     assert!(area(named(&list, "Silkscreen top")) > 0.0);
     let m = messages(&notes);
     assert!(
@@ -813,5 +817,122 @@ fn truetype_font_notes_are_capped_at_twenty_names() {
     assert!(
         m.contains(&"and 3 more TrueType font(s) used by drawn texts".to_string()),
         "{m:?}"
+    );
+}
+
+fn pour(holes: Vec<board_model::Contour>) -> Board {
+    board(
+        vec![CopperItem::Region {
+            layer: 0,
+            contour: square(0.0, 0.0, 10.0, 10.0),
+            holes,
+        }],
+        vec![],
+    )
+}
+
+#[test]
+fn a_region_is_its_outline_less_its_holes() {
+    // A clockwise hole, as the reader may hand it over: the winding makes no difference.
+    let (list, notes) = overlays(&pour(vec![square_cw(4.0, 4.0, 2.0)]), 1.6, "Board");
+    let copper = named(&list, "Copper top");
+    assert!((area(copper) - 96.0).abs() < 1e-9, "{}", area(copper));
+    assert!(!covers(copper, 5.0, 5.0));
+    assert!(covers(copper, 1.0, 1.0) && covers(copper, 7.0, 5.0));
+    assert!(notes.is_empty(), "{notes:?}");
+    // The same with a hole wound counter-clockwise, and with one that strays outside the outline.
+    let (list, _) = overlays(
+        &pour(vec![
+            square(4.0, 4.0, 6.0, 6.0),
+            square(9.0, 9.0, 12.0, 12.0),
+        ]),
+        1.6,
+        "Board",
+    );
+    let copper = named(&list, "Copper top");
+    assert!((area(copper) - 95.0).abs() < 1e-9, "{}", area(copper));
+}
+
+#[test]
+fn a_hole_that_cannot_be_drawn_is_counted_and_the_pour_stays() {
+    let flat = board_model::Contour {
+        segments: vec![board_model::Segment::Line {
+            from: p(1.0, 1.0),
+            to: p(1.0, 1.0),
+        }],
+    };
+    let (list, notes) = overlays(&pour(vec![flat, square(4.0, 4.0, 6.0, 6.0)]), 1.6, "Board");
+    let copper = named(&list, "Copper top");
+    assert!((area(copper) - 96.0).abs() < 1e-9);
+    assert!(
+        messages(&notes)
+            .iter()
+            .any(|m| m.starts_with("1 hole(s) of copper regions could not be drawn")),
+        "{notes:?}"
+    );
+    assert!(
+        !messages(&notes).iter().any(|m| m.contains("unusable")),
+        "{notes:?}"
+    );
+}
+
+#[test]
+fn holes_that_remove_the_whole_region_are_not_unusable() {
+    let (list, notes) = overlays(&pour(vec![square(-1.0, -1.0, 11.0, 11.0)]), 1.6, "Board");
+    assert!(list.iter().all(|o| o["name"] != "Copper top"));
+    assert!(notes.is_empty(), "{notes:?}");
+}
+
+#[test]
+fn a_hole_touching_the_edge_notches_the_outline() {
+    // A 2 x 2 hole on the left edge of the 10 x 10 pour.
+    let (list, notes) = overlays(&pour(vec![square(0.0, 4.0, 2.0, 6.0)]), 1.6, "Board");
+    let copper = named(&list, "Copper top");
+    assert!((area(copper) - 96.0).abs() < 1e-9, "{}", area(copper));
+    assert!(!covers(copper, 1.0, 5.0) && covers(copper, 3.0, 5.0));
+    assert!(notes.is_empty(), "{notes:?}");
+}
+
+#[test]
+fn overlapping_holes_are_cut_once() {
+    // Two 2 x 2 holes overlapping in a 1 x 1 square: the union is 7.
+    let holes = vec![square(3.0, 3.0, 5.0, 5.0), square(4.0, 4.0, 6.0, 6.0)];
+    let (list, _) = overlays(&pour(holes), 1.6, "Board");
+    let copper = named(&list, "Copper top");
+    assert!((area(copper) - 93.0).abs() < 1e-9, "{}", area(copper));
+}
+
+#[test]
+fn regions_past_the_hole_budget_are_drawn_solid_and_noted() {
+    let b = pour(vec![square(4.0, 4.0, 6.0, 6.0)]);
+    let (list, notes) = overlays_within(&b, 1.6, "Board", 20, 3);
+    let copper = named(&list, "Copper top");
+    assert!((area(copper) - 100.0).abs() < 1e-9, "{}", area(copper));
+    assert!(
+        messages(&notes)
+            .iter()
+            .any(|m| m.starts_with("1 copper region(s) are drawn solid")),
+        "{notes:?}"
+    );
+    // With room for the four vertices the hole is cut.
+    let (list, _) = overlays_within(&b, 1.6, "Board", 20, 4);
+    assert!((area(named(&list, "Copper top")) - 96.0).abs() < 1e-9);
+}
+
+#[test]
+fn holes_past_the_cap_are_noted_not_cut() {
+    let holes: Vec<_> = (0..MAX_REGION_HOLES + 3)
+        .map(|i| {
+            let x = 0.5 + (i % 100) as f64 * 0.09;
+            let y = 0.5 + (i / 100) as f64 * 0.09;
+            square(x, y, x + 0.05, y + 0.05)
+        })
+        .collect();
+    let (_, notes) = overlays(&pour(holes), 1.6, "Board");
+    assert!(
+        messages(&notes)
+            .iter()
+            .any(|m| m.starts_with("3 hole(s) past the first 10000")),
+        "{notes:?}"
     );
 }

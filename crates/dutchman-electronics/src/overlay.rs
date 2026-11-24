@@ -43,6 +43,13 @@ const MAX_ARC_POINTS: usize = 4096;
 const MAX_COORDINATE: f64 = 25_000.0;
 /// The most copper and silkscreen items drawn; the rest are a Dropped note.
 const MAX_ITEMS: usize = 200_000;
+/// The most holes cut from one copper region; the rest are a Dropped note. Each hole is a polygon
+/// that is united with the others before it is cut, so a hostile region of millions of holes
+/// must not get that far.
+const MAX_REGION_HOLES: usize = 10_000;
+/// The most hole vertices cut from copper regions on one board, summed over all regions; a
+/// region that would go past it is drawn solid and counted in a note.
+const MAX_HOLE_VERTICES: usize = 200_000;
 /// The most pen segments drawn for all texts of a board together. Each segment becomes a polygon
 /// that is united with the rest, so without a cap a hostile board of many long texts could ask
 /// for billions of them. Texts past the budget are counted in a Dropped note.
@@ -273,6 +280,82 @@ fn contour(c: &Contour) -> Option<Polygon> {
     polygon(ring)
 }
 
+/// What went wrong drawing the holes of copper regions, for the notes.
+#[derive(Default)]
+struct HoleCounts {
+    /// Holes that could not be drawn (or whose cut failed) and were left filled.
+    undrawn: usize,
+    /// Holes past [`MAX_REGION_HOLES`] in a region.
+    over: usize,
+    /// Regions drawn solid because the board's hole budget ([`MAX_HOLE_VERTICES`]) was used up.
+    solid: usize,
+    /// Regions the holes removed entirely: a legitimate empty result, not an unusable item.
+    emptied: usize,
+}
+
+/// A copper region: its outline less its holes. A hole that cannot be drawn is counted in
+/// `counts.undrawn` and left filled; holes past [`MAX_REGION_HOLES`] are counted in
+/// `counts.over`; when the holes' vertices would overspend `budget` (shared by all regions) the
+/// region is drawn solid and counted in `counts.solid`. Holes may wind either way, and the union
+/// of them is cut from the outline, so a hole that strays outside it or overlaps another cannot
+/// break the shape. The cut runs under `catch_unwind`: if it panics the region is drawn solid.
+/// Empty when the outline cannot be drawn, or the holes leave nothing.
+fn region(
+    outline: &Contour,
+    holes: &[Contour],
+    budget: &mut usize,
+    counts: &mut HoleCounts,
+) -> Vec<Polygon> {
+    let Some(outer) = contour(outline) else {
+        return Vec::new();
+    };
+    if holes.is_empty() {
+        return vec![outer];
+    }
+    let wanted: usize = holes
+        .iter()
+        .take(MAX_REGION_HOLES)
+        .map(|h| h.segments.len())
+        .fold(0, usize::saturating_add);
+    if wanted > *budget {
+        counts.solid = counts.solid.saturating_add(1);
+        return vec![outer];
+    }
+    *budget -= wanted;
+    counts.over = counts
+        .over
+        .saturating_add(holes.len().saturating_sub(MAX_REGION_HOLES));
+    let mut cuts = Vec::new();
+    for h in holes.iter().take(MAX_REGION_HOLES) {
+        match contour(h) {
+            Some(h) => cuts.push(h),
+            None => counts.undrawn = counts.undrawn.saturating_add(1),
+        }
+    }
+    if cuts.is_empty() {
+        return vec![outer];
+    }
+    let cut = catch_unwind(AssertUnwindSafe(|| {
+        outer
+            .difference(&geo::unary_union(&cuts))
+            .0
+            .into_iter()
+            .collect::<Vec<Polygon>>()
+    }));
+    match cut {
+        Ok(shapes) => {
+            if shapes.is_empty() {
+                counts.emptied = counts.emptied.saturating_add(1);
+            }
+            shapes
+        }
+        Err(_) => {
+            counts.undrawn = counts.undrawn.saturating_add(cuts.len());
+            vec![outer]
+        }
+    }
+}
+
 /// Polygons gathered for one overlay before they are united.
 #[derive(Default)]
 struct Pile {
@@ -375,21 +458,30 @@ fn mask_outline(board: &Board) -> (Option<MultiPolygon>, Pile, usize, usize) {
 /// its bottom at z = 0, in the frame of the part named `board_part`), and notes on what was left
 /// out.
 pub fn overlays(board: &Board, thickness: f64, board_part: &str) -> (Vec<Value>, Vec<Value>) {
-    overlays_within(board, thickness, board_part, MAX_TEXT_SEGMENTS)
+    overlays_within(
+        board,
+        thickness,
+        board_part,
+        MAX_TEXT_SEGMENTS,
+        MAX_HOLE_VERTICES,
+    )
 }
 
 /// [`overlays`] with `text_budget` as the most text segments drawn (a parameter so a test can
-/// use a small one).
+/// use a small one) and `hole_budget` as the most hole vertices cut from copper regions.
 fn overlays_within(
     board: &Board,
     thickness: f64,
     board_part: &str,
     text_budget: usize,
+    hole_budget: usize,
 ) -> (Vec<Value>, Vec<Value>) {
     let top = SideFaces::default();
     let bottom = SideFaces::default();
     let mut holes = Pile::default();
     let (mut inner, mut unusable, mut other_graphics) = (0usize, 0usize, 0usize);
+    let mut hole_counts = HoleCounts::default();
+    let mut hole_budget = hole_budget;
     // Where a copper item's layer puts it.
     enum On {
         Face(Side),
@@ -417,6 +509,7 @@ fn overlays_within(
         )
         .saturating_add(board.texts.len().saturating_sub(MAX_ITEMS));
     for item in board.copper.iter().take(MAX_ITEMS) {
+        let emptied_before = hole_counts.emptied;
         let (layer, shapes, bare, drill): (usize, Vec<Polygon>, bool, Option<(Point, f64)>) =
             match item {
                 CopperItem::Track {
@@ -445,9 +538,16 @@ fn overlays_within(
                     false,
                     None,
                 ),
-                CopperItem::Region { layer, contour: c } => {
-                    (*layer, contour(c).into_iter().collect(), false, None)
-                }
+                CopperItem::Region {
+                    layer,
+                    contour: c,
+                    holes: cuts,
+                } => (
+                    *layer,
+                    region(c, cuts, &mut hole_budget, &mut hole_counts),
+                    false,
+                    None,
+                ),
                 CopperItem::Via {
                     at,
                     diameter,
@@ -482,7 +582,9 @@ fn overlays_within(
                 ),
             };
         if shapes.is_empty() {
-            unusable = unusable.saturating_add(1);
+            if hole_counts.emptied == emptied_before {
+                unusable = unusable.saturating_add(1);
+            }
             continue;
         }
         let sides: &[Side] = match (on(layer), bare && drill.is_some()) {
@@ -738,6 +840,18 @@ fn overlays_within(
         (
             skipped,
             "copper, silkscreen or text item(s) past the first 200000 were not drawn",
+        ),
+        (
+            hole_counts.undrawn,
+            "hole(s) of copper regions could not be drawn and were left filled",
+        ),
+        (
+            hole_counts.over,
+            "hole(s) past the first 10000 of a copper region were not cut from it",
+        ),
+        (
+            hole_counts.solid,
+            "copper region(s) are drawn solid: the board's holes went past 200000 vertices",
         ),
         (
             inner,

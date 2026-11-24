@@ -298,7 +298,7 @@ fn one_arc_is_a_quarter_circle_of_radius_5() -> Result<(), Box<dyn std::error::E
 
 /// The only copper region of a board: its layer name and its corners, sorted.
 fn only_region(out: &ReadOutcome) -> Option<(String, Vec<(f64, f64)>)> {
-    let [CopperItem::Region { layer, contour }] = out.board.copper.as_slice() else {
+    let [CopperItem::Region { layer, contour, .. }] = out.board.copper.as_slice() else {
         return None;
     };
     let mut corners: Vec<(f64, f64)> = contour
@@ -458,7 +458,7 @@ fn four_layer_has_inner_layers_with_a_track_each() -> Result<(), Box<dyn std::er
 }
 
 #[test]
-fn small_board_pours_have_holes_that_are_reported() -> Result<(), Box<dyn std::error::Error>> {
+fn small_board_pours_hand_over_their_holes() -> Result<(), Box<dyn std::error::Error>> {
     let out = read("small-board.PcbDoc")?;
     let mut regions: Vec<&str> = out
         .board
@@ -471,18 +471,36 @@ fn small_board_pours_have_holes_that_are_reported() -> Result<(), Box<dyn std::e
         .collect();
     regions.sort_unstable();
     assert_eq!(regions, ["Bottom Layer", "Top Layer"]);
-    // Each GND pour has 7 holes (clearances and thermal-relief gaps), which the board model
-    // cannot hold yet. The shape-based copy repeats them, so it gets no note of its own.
+    // Each GND pour has 7 holes (clearances and thermal-relief gaps), 14 in all, and nothing is
+    // left to warn about; the shape-based copy repeats them, so it gets no note of its own.
+    let hole_counts: Vec<usize> = out
+        .board
+        .copper
+        .iter()
+        .filter_map(|c| match c {
+            CopperItem::Region { holes, .. } => Some(holes.len()),
+            _ => None,
+        })
+        .collect();
+    let mut hole_counts = hole_counts;
+    hole_counts.sort_unstable();
+    assert_eq!(hole_counts, [7, 7]);
+    let all_lines = out.board.copper.iter().all(|c| match c {
+        CopperItem::Region { holes, .. } => holes.iter().all(|h| {
+            h.segments.len() >= 3
+                && h.segments
+                    .iter()
+                    .all(|s| matches!(s, board_model::Segment::Line { .. }))
+        }),
+        _ => true,
+    });
+    assert!(all_lines);
     let warnings: Vec<&str> = out
         .notes
         .iter()
         .filter(|n| n.severity == board_model::Severity::Warning)
         .map(|n| n.message.as_str())
         .collect();
-    assert_eq!(warnings.len(), 1, "{warnings:?}");
-    assert!(
-        warnings[0].starts_with("2 copper region(s) have 14 hole(s)"),
-        "{warnings:?}"
-    );
+    assert!(warnings.is_empty(), "{warnings:?}");
     Ok(())
 }
