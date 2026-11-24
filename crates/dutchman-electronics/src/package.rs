@@ -75,15 +75,6 @@ pub fn build(path: &Path, bytes: &[u8]) -> Result<Package, String> {
     let step = board_step::write(&board, &name).map_err(|e| e.to_string())?;
 
     let mut notes: Vec<Value> = outcome.notes.iter().map(note).collect();
-    if !board.texts.is_empty() {
-        notes.push(json!({
-            "severity": "Dropped",
-            "message": format!(
-                "{} text item(s) (silkscreen, copper text) are not in the package yet",
-                board.texts.len()
-            ),
-        }));
-    }
     let board_notes: Vec<Value> = step.notes.iter().map(note).collect();
     let mut models = vec![json!({ "id": BOARD_MODEL, "file": BOARD_FILE })];
     let mut parts = vec![json!({
@@ -851,6 +842,61 @@ mod tests {
             seen += 1;
         }
         assert!(seen >= 37, "{seen} boards");
+    }
+
+    /// The bounding box of an overlay's outer rings: (min x, min y, max x, max y).
+    #[cfg(feature = "altium")]
+    fn overlay_bounds(o: &Value) -> (f64, f64, f64, f64) {
+        let (mut x0, mut y0, mut x1, mut y1) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
+        for a in o["areas"].as_array().unwrap() {
+            for q in a["outer"].as_array().unwrap() {
+                let (x, y) = (q[0].as_f64().unwrap(), q[1].as_f64().unwrap());
+                (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x), y1.max(y));
+            }
+        }
+        (x0, y0, x1, y1)
+    }
+
+    #[cfg(feature = "altium")]
+    #[test]
+    fn texts_are_drawn_on_their_silkscreen_where_the_board_puts_them() {
+        // README.txt, third batch: stroke texts 2.000 high with a 0.200 pen. Capitals stand on
+        // the baseline at the position, so with the pen's 0.1 radius they reach from y - 0.1 up
+        // to y + 2.1.
+        let near = |a: f64, b: f64| (a - b).abs() < 1e-3;
+        let silk = |board: &str, name: &str| {
+            let package = package_of(board);
+            let m = &package.manifest;
+            let o = m["overlays"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|o| o["name"] == name)
+                .unwrap_or_else(|| panic!("{board}: no {name}"))
+                .clone();
+            let degraded = m["notes"].as_array().unwrap().iter().any(|n| {
+                n["severity"] == "Degraded"
+                    && n["message"]
+                        .as_str()
+                        .unwrap()
+                        .starts_with("1 text(s) are drawn in the Hershey")
+            });
+            assert!(degraded, "{board}: {}", m["notes"]);
+            overlay_bounds(&o)
+        };
+        // "TEST" at (10, 10): runs right from x 10. The T's bar starts one font unit (0.095)
+        // into its cell, less the pen's radius: x 9.995.
+        let (x0, y0, x1, y1) = silk("one-text", "Silkscreen top");
+        assert!(near(y0, 9.9) && near(y1, 12.1), "{y0} {y1}");
+        assert!(near(x0, 9.995) && x1 > 14.0 && x1 < 18.0, "{x0} {x1}");
+        // "ROT" at (25, 15), turned 90 degrees: runs up from y 15, capitals left of x 25.
+        let (x0, y0, x1, y1) = silk("one-rotated-text", "Silkscreen top");
+        assert!(near(x0, 22.9) && near(x1, 25.1), "{x0} {x1}");
+        assert!(y0 > 15.0 && y1 > 18.0, "{y0} {y1}");
+        // "BOT" at (40, 10), mirrored on the bottom: runs left from x 40.
+        let (x0, y0, x1, y1) = silk("one-bottom-text", "Silkscreen bottom");
+        assert!(near(y0, 9.9) && near(y1, 12.1), "{y0} {y1}");
+        assert!(x1 < 40.0 && x0 < 37.0, "{x0} {x1}");
     }
 
     #[cfg(feature = "altium")]

@@ -2,7 +2,7 @@
 //! as AGENTS.md asks).
 
 use altium_pcbdoc::Altium;
-use board_model::{InputFormat, LayerKind, ReadOutcome, Severity, Side, Text};
+use board_model::{InputFormat, LayerKind, ReadOutcome, Severity, Side, Text, TextFont};
 
 const TOLERANCE: f64 = 0.001;
 
@@ -39,6 +39,12 @@ fn one_text_is_test_on_top_overlay() -> Result<(), Box<dyn std::error::Error>> {
     assert!(near(t.height, 2.0), "{}", t.height);
     assert_eq!(t.rotation_deg, 0.0);
     assert!(!t.mirrored);
+    // README.txt: Altium's stroke font, stroke width 0.200.
+    assert!(
+        matches!(t.font, TextFont::Stroke { width } if near(width, 0.2)),
+        "{:?}",
+        t.font
+    );
     assert!(out.notes.is_empty(), "{:?}", out.notes);
     Ok(())
 }
@@ -97,6 +103,12 @@ fn one_ttf_text_is_read_like_a_stroke_text_with_a_font_note(
     assert!(near(t.height, 2.0), "{}", t.height);
     assert_eq!(t.rotation_deg, 0.0);
     assert!(!t.mirrored);
+    assert_eq!(
+        t.font,
+        TextFont::TrueType {
+            name: "Arial".into()
+        }
+    );
     let [note] = out.notes.as_slice() else {
         return Err(format!("expected one note, got {:?}", out.notes).into());
     };

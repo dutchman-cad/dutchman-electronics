@@ -31,7 +31,7 @@
 
 use std::collections::BTreeMap;
 
-use board_model::{Note, Point, Severity, Text};
+use board_model::{Note, Point, Severity, Text, TextFont};
 
 use crate::components::{
     short_string, span, Components, COMMENT_FLAG_AT, COMPONENT_AT, DESIGNATOR_FLAG_AT,
@@ -44,6 +44,7 @@ const MM_PER_UNIT: f64 = 0.0254 / 10_000.0;
 /// The most records read from `/Texts6/Data` before the file is treated as hostile.
 const MAX_RECORDS: usize = 1_000_000;
 const MIRROR_AT: usize = 35;
+const STROKE_WIDTH_AT: usize = 36;
 const FONT_TYPE_AT: usize = 43;
 const TRUETYPE: u8 = 1;
 const FONT_NAME: std::ops::Range<usize> = 46..110;
@@ -112,10 +113,16 @@ pub(crate) fn read(
             .cloned()
             .or_else(|| short_string(block));
         match (content, geometry(body)) {
-            (Some(content), Some((at_point, height, rotation_deg, mirrored))) => {
-                if body.get(FONT_TYPE_AT) == Some(&TRUETYPE) {
-                    *truetype.entry(font_name(body)).or_default() += 1;
-                }
+            (Some(content), Some((at_point, height, rotation_deg, mirrored, stroke_width))) => {
+                let font = if body.get(FONT_TYPE_AT) == Some(&TRUETYPE) {
+                    let name = font_name(body);
+                    *truetype.entry(name.clone()).or_default() += 1;
+                    TextFont::TrueType { name }
+                } else {
+                    TextFont::Stroke {
+                        width: stroke_width,
+                    }
+                };
                 texts.push(Text {
                     layer,
                     at: at_point,
@@ -123,6 +130,7 @@ pub(crate) fn read(
                     height,
                     rotation_deg,
                     mirrored,
+                    font,
                 });
             }
             _ => unreadable += 1,
@@ -184,9 +192,9 @@ fn font_name(body: &[u8]) -> String {
     }
 }
 
-/// Position, height, rotation and mirroring, or `None` when the body is too short or the
-/// rotation is not a real angle.
-fn geometry(body: &[u8]) -> Option<(Point, f64, f64, bool)> {
+/// Position, height, rotation, mirroring and stroke width, or `None` when the body is too short
+/// or the rotation is not a real angle.
+fn geometry(body: &[u8]) -> Option<(Point, f64, f64, bool, f64)> {
     let i32_at = |at: usize| -> Option<f64> {
         let bytes: [u8; 4] = body.get(at..at.checked_add(4)?)?.try_into().ok()?;
         Some(f64::from(i32::from_le_bytes(bytes)) * MM_PER_UNIT)
@@ -204,6 +212,7 @@ fn geometry(body: &[u8]) -> Option<(Point, f64, f64, bool)> {
         i32_at(21)?,
         rotation,
         *body.get(MIRROR_AT)? == 1,
+        i32_at(STROKE_WIDTH_AT)?,
     ))
 }
 

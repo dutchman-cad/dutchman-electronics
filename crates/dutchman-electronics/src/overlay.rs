@@ -273,6 +273,16 @@ impl Pile {
     }
 }
 
+/// What happened to a board's texts, for the notes.
+#[derive(Default)]
+struct TextCounts {
+    drawn: usize,
+    other_layers: usize,
+    missing: usize,
+    cut: usize,
+    truetype: std::collections::BTreeMap<String, usize>,
+}
+
 #[derive(Default)]
 struct SideFaces {
     masked: Pile,
@@ -341,7 +351,8 @@ pub fn overlays(board: &Board, thickness: f64, board_part: &str) -> (Vec<Value>,
             .graphics
             .len()
             .saturating_sub(MAX_ITEMS.saturating_sub(shown)),
-    );
+    )
+    .saturating_add(board.texts.len().saturating_sub(MAX_ITEMS));
     for item in board.copper.iter().take(MAX_ITEMS) {
         let (layer, shapes, bare, drill): (usize, Vec<Polygon>, bool, Option<(Point, f64)>) =
             match item {
@@ -438,6 +449,46 @@ pub fn overlays(board: &Board, thickness: f64, board_part: &str) -> (Vec<Value>,
         }
     }
     let (mut top, mut bottom) = faces;
+    // Texts on a face's copper or silkscreen, drawn as pen strokes.
+    let mut texts = TextCounts::default();
+    for t in board.texts.iter().take(MAX_ITEMS) {
+        let pile = match board.layers.get(t.layer).map(|x| (x.kind, x.side)) {
+            Some((LayerKind::Silkscreen, Some(Side::Top))) => &mut top.silk,
+            Some((LayerKind::Silkscreen, Some(Side::Bottom))) => &mut bottom.silk,
+            Some((LayerKind::Copper, Some(Side::Top))) => &mut top.masked,
+            Some((LayerKind::Copper, Some(Side::Bottom))) => &mut bottom.masked,
+            Some((LayerKind::Copper, None)) => {
+                inner = inner.saturating_add(1);
+                continue;
+            }
+            _ => {
+                texts.other_layers = texts.other_layers.saturating_add(1);
+                continue;
+            }
+        };
+        let Some(drawn) = text::draw(t) else {
+            unusable = unusable.saturating_add(1);
+            continue;
+        };
+        texts.drawn = texts.drawn.saturating_add(1);
+        if let board_model::TextFont::TrueType { name } = &t.font {
+            *texts.truetype.entry(name.clone()).or_default() += 1;
+        }
+        texts.missing = texts.missing.saturating_add(drawn.missing);
+        texts.cut = texts.cut.saturating_add(drawn.cut);
+        for s in &drawn.strokes {
+            match s.as_slice() {
+                [only] => pile.add(stroke(*only, *only, drawn.pen), &mut unusable),
+                _ => {
+                    for pair in s.windows(2) {
+                        if let [a, b] = pair {
+                            pile.add(stroke(*a, *b, drawn.pen), &mut unusable);
+                        }
+                    }
+                }
+            }
+        }
+    }
     for g in board.graphics.iter().take(MAX_ITEMS.saturating_sub(shown)) {
         let (l, shapes) = match g {
             Graphic::Line {
@@ -543,7 +594,7 @@ pub fn overlays(board: &Board, thickness: f64, board_part: &str) -> (Vec<Value>,
     for (count, what) in [
         (
             skipped,
-            "copper or silkscreen item(s) past the first 200000 were not drawn",
+            "copper, silkscreen or text item(s) past the first 200000 were not drawn",
         ),
         (
             inner,
@@ -557,13 +608,52 @@ pub fn overlays(board: &Board, thickness: f64, board_part: &str) -> (Vec<Value>,
             other_graphics,
             "line(s) and arc(s) on layers other than the silkscreen are not drawn yet",
         ),
+        (
+            texts.other_layers,
+            "text(s) on layers other than copper and silkscreen are not drawn yet",
+        ),
+        (
+            texts.cut,
+            "character(s) past the first 1000 of a text were not drawn",
+        ),
     ] {
         if count > 0 {
             notes.push(json!({ "severity": "Dropped", "message": format!("{count} {what}") }));
         }
     }
+    if texts.drawn > 0 {
+        notes.push(json!({
+            "severity": "Degraded",
+            "message": format!(
+                "{} text(s) are drawn in the Hershey Roman Simplex stroke font at their height \
+                 and pen width, not in the board's own font, so letter shapes and spacing differ \
+                 a little",
+                texts.drawn
+            ),
+        }));
+    }
+    for (font, n) in &texts.truetype {
+        notes.push(json!({
+            "severity": "Degraded",
+            "message": format!(
+                "{n} text(s) in the TrueType font \"{font}\" are drawn as single strokes, a \
+                 tenth of their height wide"
+            ),
+        }));
+    }
+    if texts.missing > 0 {
+        notes.push(json!({
+            "severity": "Degraded",
+            "message": format!(
+                "{} character(s) the stroke font does not hold are drawn as \"?\"",
+                texts.missing
+            ),
+        }));
+    }
     (out, notes)
 }
+
+mod text;
 
 #[cfg(test)]
 mod tests;
