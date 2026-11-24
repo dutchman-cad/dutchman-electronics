@@ -449,6 +449,22 @@ small-board.PcbDoc
     (counter-clockwise), width 0.200, both over the top pour; a line on Bottom Overlay
     (10, 4) to (40, 4), width 0.150, over the bottom pour.
 
+Sixteenth batch: solder mask and silkscreen colours
+---------------------------------------------------
+Made on 2026-11-24 by hand, each from a file copy of one-resistor.PcbDoc: in the 3D view, the
+View Configuration panel, one board colour changed, then the board was saved. Altium keeps these
+colours with the board in the 3DCONFIGURATION setting of /Board6/Data (they are how its own 3D
+view draws the board). Colours below are red, green, blue from 0 to 255; nothing else changed.
+
+    Altium's defaults (one-resistor and every board before this batch):
+        solder mask, top and bottom   36, 120, 50   at opacity 0.6
+        silkscreen, top and bottom    250, 250, 250 at opacity 1.0
+
+one-blue-mask-resistor.PcbDoc
+    solder mask, top and bottom: 17, 85, 204 (stored as 13391121), opacity 0.6 as before
+one-yellow-silkscreen-resistor.PcbDoc
+    silkscreen, top and bottom: 255, 255, 0 (stored as 65535), opacity 1.0 as before
+
 Paths inside the files
 ----------------------
 Altium writes a few paths from the PC that saved a board into the file. After the last save, I
