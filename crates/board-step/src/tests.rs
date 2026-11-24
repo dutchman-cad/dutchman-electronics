@@ -352,6 +352,59 @@ fn the_same_board_gives_the_same_file() {
 }
 
 #[test]
+fn a_prism_is_a_box_between_its_heights() {
+    // The 0603 body of `one-resistor`: 1.6 x 0.8, from the standoff (0.1 here) to 0.45.
+    let out = prism(&rect(-0.8, -0.4, 0.8, 0.4), 0.1, 0.45, "R1 body").unwrap();
+    assert_eq!(
+        out.stats,
+        Stats {
+            vertices: 8,
+            edges: 12,
+            faces: 6,
+            openings: 0
+        }
+    );
+    assert!(out.text.contains("MANIFOLD_SOLID_BREP('R1 body',"));
+    assert!(out.text.contains("FILE_DESCRIPTION(('Extruded body'),"));
+    assert!(out.text.contains("CARTESIAN_POINT('',(0.8,0.4,0.45))"));
+    assert!(out.text.contains("CARTESIAN_POINT('',(-0.8,-0.4,0.1))"));
+    check_topology(&out.text);
+}
+
+#[test]
+fn a_clockwise_prism_outline_gives_the_same_solid() {
+    let mut cw = rect(-0.8, -0.4, 0.8, 0.4);
+    cw.segments.reverse();
+    for s in &mut cw.segments {
+        if let Segment::Line { from, to } = s {
+            std::mem::swap(from, to);
+        }
+    }
+    let a = prism(&rect(-0.8, -0.4, 0.8, 0.4), 0.0, 0.45, "b").unwrap();
+    let b = prism(&cw, 0.0, 0.45, "b").unwrap();
+    assert_eq!(a.stats, b.stats);
+    check_topology(&b.text);
+}
+
+#[test]
+fn a_prism_with_no_height_or_no_outline_is_an_error() {
+    let r = rect(0.0, 0.0, 1.0, 1.0);
+    assert!(prism(&r, 0.45, 0.45, "b").is_err());
+    assert!(prism(&r, 0.45, 0.1, "b").is_err());
+    assert!(prism(&r, 0.0, f64::NAN, "b").is_err());
+    assert!(prism(&Contour::default(), 0.0, 1.0, "b").is_err());
+}
+
+#[test]
+fn the_board_solid_says_its_thickness() {
+    let b = board(rect(0.0, 0.0, 10.0, 10.0), vec![], vec![]);
+    assert_eq!(write(&b, "t").unwrap().thickness, 1.6);
+    let mut unknown = b;
+    unknown.thickness = None;
+    assert_eq!(write(&unknown, "t").unwrap().thickness, DEFAULT_THICKNESS);
+}
+
+#[test]
 fn step_reals_and_strings() {
     assert_eq!(real(50.0), "50.");
     assert_eq!(real(-0.0), "0.");

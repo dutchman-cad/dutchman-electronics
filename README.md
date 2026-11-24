@@ -57,9 +57,9 @@ Dutchman runs this program as `dutchman electronics ...` and reads one JSON obje
 |---|---|
 | `dutchman-electronics info --json` | `dutchman.module-info/1`: `name`, `display_name`, `version`, `repository`, `interface` (1), `extensions`, and `formats` (`id`, `name`, `extension`, `extensions`) |
 | `dutchman-electronics detect <file> --json` | `dutchman.module-detect/1`: `detection` (`yes`, `maybe_by_name` or `no`) and `format` (the format id, or `null`) |
-| `dutchman-electronics read <file> --out <dir> --json` | Writes a placed-parts package into `<dir>` and prints its manifest, `dutchman.parts/1`: `models` (`id`, `file`), `parts` (`name`, `model`, 3x4 `transform`, `notes`), `overlays` (reserved for copper and silkscreen), `notes` (`Info`, `Degraded`, `Dropped`). Today the package holds the board itself (`Board`, `board.step`: outline, cutouts and drilled holes, exact) and notes for what is not in it yet. |
+| `dutchman-electronics read <file> --out <dir> --json` | Writes a placed-parts package into `<dir>` and prints its manifest, `dutchman.parts/1`: `models` (`id`, `file`), `parts` (`name`, `model`, 3x4 `transform`, `notes`), `overlays` (reserved for copper and silkscreen), `notes` (`Info`, `Degraded`, `Dropped`). Today the package holds the board itself (`Board`, `board.step`: outline, cutouts and drilled holes, exact), each component with an extruded 3D body as a part named by its designator (`model-1.step`, ..., each distinct body once, exact), and notes for what is not in it yet (embedded and external STEP models come next). |
 
-A part's `transform` is 3 rows of 4 numbers, row by row: the first three columns are the rotation, the last column the translation in mm, so a model point `p` lands at `R p + t`.
+A part's `transform` is 3 rows of 4 numbers, row by row: the first three columns are the rotation, the last column the translation in mm, so a model point `p` lands at `R p + t`. A top-side component's model sits on the board's top face (z = thickness), turned by the component's rotation; a bottom-side one is turned over by half a turn about its own X axis onto the bottom face (z = 0). The frame is written out in `board_model::Placement`.
 
 A failure is `{"schema": ..., "ok": false, "error": "..."}` with a non-zero exit code.
 

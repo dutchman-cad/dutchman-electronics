@@ -49,5 +49,38 @@ if problems:
 PY
   then failed=1; fi
   done
+  # Each component model the package wrote (extruded bodies): cadmpeg check OK, and SolidCraft
+  # sees one closed body with a volume.
+  for model in "$dir"/model-*.step; do
+    [ -e "$model" ] || continue
+    m=$(basename "$model" .step)
+    if "$cadmpeg" check --json "$model" > "$work/$name.$m.check.json" 2> "$work/$name.$m.check.log" \
+      && python3 -c 'import json,sys; sys.exit(json.load(open(sys.argv[1])).get("status") != "ok")' \
+        "$work/$name.$m.check.json"; then
+      echo "cadmpeg check $m: ok"
+    else
+      echo "::error::cadmpeg check failed on $name $m"; cat "$work/$name.$m.check.log"; failed=1
+    fi
+    "$solidcraft" eval --in "$model" --json-out "$work/$name.$m.solidcraft.json"
+    if ! python3 - "$work/$name.$m.solidcraft.json" "$name $m" <<'PY'
+import json, sys
+report, name = json.load(open(sys.argv[1])), sys.argv[2]
+errors = [t.get("error") for t in report.get("timeline", []) if t.get("error")]
+bodies = report.get("bodies", [])
+problems = [f"feature error: {e}" for e in errors]
+if len(bodies) != 1:
+    problems.append(f"{len(bodies)} bodies, expected 1")
+for b in bodies:
+    if not b.get("closed"):
+        problems.append("the body is not closed")
+    if not b.get("volume_mm3", 0) > 0:
+        problems.append("the body has no volume")
+    print(f"SolidCraft {name}: closed={b.get('closed')} faces={b.get('faces')} volume={b.get('volume_mm3', 0):.4f} mm3")
+if problems:
+    print(f"::error::SolidCraft on {name}: " + "; ".join(problems))
+    sys.exit(1)
+PY
+    then failed=1; fi
+  done
 done
 exit $failed
