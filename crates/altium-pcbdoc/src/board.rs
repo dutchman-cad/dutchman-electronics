@@ -19,10 +19,16 @@
 //!   against the contour (a concave corner) is a clockwise `Segment::Arc`.
 //! - The layer stack is in `V9_STACK_LAYERn_…` keys: each solder mask and dielectric has a
 //!   `DIELHEIGHT`, each copper layer a `COPTHICK`. Their sum is the 1.600 mm we typed in.
-//! - `/Regions6/Data` is a run of records: a type byte (`0x0b`), a `u32` length, then 18 bytes we
-//!   do not read yet, a `u32` text length, the text (with `ISBOARDCUTOUT=TRUE` for a board
-//!   cutout), a `u32` vertex count, and that many pairs of little-endian `f64` (x, y) in
-//!   1/10000 mil. The polygon does not repeat its first vertex.
+//! - `/Regions6/Data` is a run of records: a type byte (`0x0b`), a `u32` length, then 18 bytes, a
+//!   `u32` text length, the text (with `ISBOARDCUTOUT=TRUE` for a board cutout), a `u32` vertex
+//!   count, and that many pairs of little-endian `f64` (x, y) in 1/10000 mil. The polygon does
+//!   not repeat its first vertex.
+//! - Of the 18 bytes, the `u32` at byte 14 is the number of holes, and that many holes follow
+//!   the outline, each again a `u32` vertex count and its `f64` pairs. On `small-board` each GND
+//!   pour has 7: the clearances around the copper of other nets and the gaps between its
+//!   thermal-relief spokes, and both records end right after the last hole. On every other
+//!   board the count is 0. The board model has no holes in a region yet, so they are counted
+//!   for a warning, not handed over.
 //! - A cutout with arcs (the round one on `outline-with-arcs`) is only a polygon there (35
 //!   corners); its arcs are in `/ShapeBasedRegions6/Data` (see `shape_based.rs`), which is read
 //!   for it instead.
@@ -46,8 +52,10 @@ const MAX_REGIONS: usize = 1_000_000;
 const MAX_LENGTH_MM: f64 = 25_000.0;
 /// The record type byte of a region, as seen in `/Regions6/Data`.
 const REGION_RECORD: u8 = 0x0b;
-/// Bytes between a region record's length and its text length that are not read yet.
+/// Bytes between a region record's length and its text length.
 const REGION_SKIPPED: usize = 18;
+/// Where, among those bytes, a region record's `u32` hole count is.
+const REGION_HOLES_AT: usize = 14;
 
 /// The `KEY=VALUE` pairs of one text record. Keys keep their case; the first of a repeated key wins.
 #[derive(Debug, Default)]
@@ -408,6 +416,7 @@ pub(crate) fn regions(
     let mut found = Regions::default();
     let mut unreadable = 0usize;
     let mut other_arcs = 0usize;
+    let (mut holed, mut holes, mut bad_holes) = (0usize, 0usize, 0usize);
     let mut at = 0usize;
     let mut count = 0usize;
     while at < data.len() {
@@ -461,6 +470,17 @@ pub(crate) fn regions(
             if arcs.is_some() {
                 other_arcs += 1;
             }
+            if let Ok(points) = &corners {
+                let after = text_end + 4 + 16 * points.len();
+                match region_holes(body, after) {
+                    Ok(0) => {}
+                    Ok(n) => {
+                        holed += 1;
+                        holes += n;
+                    }
+                    Err(_) => bad_holes += 1,
+                }
+            }
             match corners {
                 Ok(points) => found.others.push(OtherRegion {
                     layer: body.first().copied().unwrap_or(0),
@@ -491,7 +511,43 @@ pub(crate) fn regions(
             ),
         });
     }
+    if holed > 0 {
+        notes.push(Note {
+            severity: Severity::Warning,
+            message: format!(
+                "{holed} copper region(s) have {holes} hole(s) (such as the clearances in poured \
+                 copper); the board model has no holes in a region yet, so they are read whole"
+            ),
+        });
+    }
+    if bad_holes > 0 {
+        notes.push(Note {
+            severity: Severity::Warning,
+            message: format!(
+                "{bad_holes} copper region(s) have holes that could not be read; they are read \
+                 whole"
+            ),
+        });
+    }
     Ok(found)
+}
+
+/// The number of holes of a region record, after checking that they can all be read: the `u32`
+/// count at [`REGION_HOLES_AT`], and the holes themselves from `after` (the end of the outline).
+fn region_holes(body: &[u8], after: usize) -> Result<usize, String> {
+    let n = read_u32(body, REGION_HOLES_AT).ok_or("has its hole count cut short")?;
+    if n > MAX_VERTICES {
+        return Err(format!("has {n} holes, more than {MAX_VERTICES}"));
+    }
+    let mut at = after;
+    for _ in 0..n {
+        let corners = region_points(body, at)?.len();
+        at = corners
+            .checked_mul(16)
+            .and_then(|b| b.checked_add(at + 4))
+            .ok_or("has a hole out of range")?;
+    }
+    Ok(n)
 }
 
 /// The corners of a region: a `u32` count at `at`, then that many `f64` (x, y) pairs.
@@ -812,6 +868,48 @@ mod tests {
         let c = outline(&board_record(&rec).unwrap(), &mut notes).unwrap();
         assert_eq!((c.segments.len(), arcs_of(&c)), (3, 0));
         assert_eq!(notes.len(), 1);
+    }
+
+    /// A region record (not a cutout) with a square outline and the given holes, each a square.
+    fn holed_region(holes: &[f64], count: u32) -> Vec<u8> {
+        let square = |at: f64, size: f64, out: &mut Vec<u8>| {
+            out.extend_from_slice(&4u32.to_le_bytes());
+            for (x, y) in [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)] {
+                out.extend_from_slice(&f64::to_le_bytes(at + x * size));
+                out.extend_from_slice(&f64::to_le_bytes(at + y * size));
+            }
+        };
+        let text = b"|KIND=0|SUBPOLYINDEX=0";
+        let mut body = vec![0u8; REGION_SKIPPED];
+        body[REGION_HOLES_AT..REGION_HOLES_AT + 4].copy_from_slice(&count.to_le_bytes());
+        body.extend_from_slice(&(text.len() as u32).to_le_bytes());
+        body.extend_from_slice(text);
+        square(0.0, 100_000.0, &mut body);
+        for &at in holes {
+            square(at, 1000.0, &mut body);
+        }
+        let mut data = vec![REGION_RECORD];
+        data.extend_from_slice(&(body.len() as u32).to_le_bytes());
+        data.extend_from_slice(&body);
+        data
+    }
+
+    #[test]
+    fn region_holes_are_counted_and_reported() {
+        let mut notes = Vec::new();
+        let found = regions(&holed_region(&[10_000.0, 50_000.0], 2), &[], &mut notes).unwrap();
+        assert_eq!(found.others.len(), 1);
+        assert_eq!(notes.len(), 1, "{notes:?}");
+        assert!(notes[0]
+            .message
+            .starts_with("1 copper region(s) have 2 hole(s)"));
+        // No holes, no note; a count past the record's end is a note, and the region stays.
+        let mut notes = Vec::new();
+        regions(&holed_region(&[], 0), &[], &mut notes).unwrap();
+        assert!(notes.is_empty(), "{notes:?}");
+        let found = regions(&holed_region(&[10_000.0], 3), &[], &mut notes).unwrap();
+        assert_eq!(found.others.len(), 1);
+        assert!(notes[0].message.contains("could not be read"), "{notes:?}");
     }
 
     #[test]
