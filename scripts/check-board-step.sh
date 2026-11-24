@@ -2,8 +2,9 @@
 # Opens every CC0 test board's STEP with the readers people will use: SolidCraft's STEP import
 # and cadmpeg. For each board under crates/altium-pcbdoc/tests/boards it builds the parts
 # package, then requires: cadmpeg `check` OK, and SolidCraft, both on importing the STEP and on
-# reopening the design it saved from it, sees one closed body whose box is 50 x 30 x 1.6 mm
-# (every test board shares that outline, see its README.txt) to 0.001 mm, with no feature error.
+# reopening the design it saved from it, sees one closed body whose box is 50 x 30 mm (every test
+# board shares that outline, see its README.txt) by the board's thickness (1.6 mm, 1.8122 mm for
+# four-layer) to 0.001 mm, with no feature error.
 # Each component model the package writes (model-*.step) must pass cadmpeg `check` and, on import
 # and on reopening its saved design, be one closed body with a volume.
 #   usage: scripts/check-board-step.sh <dutchman-electronics> <solidcraft-cli> <cadmpeg>
@@ -15,6 +16,10 @@ for board in crates/altium-pcbdoc/tests/boards/*.PcbDoc; do
   name=$(basename "$board" .PcbDoc)
   dir="$work/$name"
   echo "== $name"
+  case "$name" in
+    four-layer) thickness=1.8122 ;;
+    *) thickness=1.6 ;;
+  esac
   "$module" read "$board" --out "$dir" --json > "$work/$name.manifest.json"
   if "$cadmpeg" check --json "$dir/board.step" > "$work/$name.check.json" 2> "$work/$name.check.log" \
     && python3 -c 'import json,sys; sys.exit(json.load(open(sys.argv[1])).get("status") != "ok")' \
@@ -27,9 +32,9 @@ for board in crates/altium-pcbdoc/tests/boards/*.PcbDoc; do
   "$solidcraft" run --in "$dir/board.step" --save "$dir/board.sc" --quiet
   "$solidcraft" eval --in "$dir/board.sc" --json-out "$work/$name.reopened.json"
   for report in "$work/$name.solidcraft.json" "$work/$name.reopened.json"; do
-  if ! python3 - "$report" "$name" <<'PY'
+  if ! python3 - "$report" "$name" "$thickness" <<'PY'
 import json, sys
-report, name = json.load(open(sys.argv[1])), sys.argv[2]
+report, name, thickness = json.load(open(sys.argv[1])), sys.argv[2], float(sys.argv[3])
 errors = [t.get("error") for t in report.get("timeline", []) if t.get("error")]
 bodies = report.get("bodies", [])
 problems = [f"feature error: {e}" for e in errors]
@@ -39,7 +44,7 @@ for b in bodies:
     if not b.get("closed"):
         problems.append("the body is not closed")
     lo, hi = b["bbox"]["min"], b["bbox"]["max"]
-    for axis, want in zip("xyz", (50.0, 30.0, 1.6)):
+    for axis, want in zip("xyz", (50.0, 30.0, thickness)):
         i = "xyz".index(axis)
         size = hi[i] - lo[i]
         if abs(size - want) > 0.001:
