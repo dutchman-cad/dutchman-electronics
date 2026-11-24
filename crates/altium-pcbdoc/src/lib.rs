@@ -2,7 +2,7 @@
 //! Roadmap steps 1 and 2 are done: open the container and list its streams; read the board
 //! outline, its cutouts and the board thickness (`board.rs`). Step 3 has started: tracks, track
 //! arcs, pads, vias, fills and copper regions (`copper.rs`). Step 5 has started: component placements
-//! (`components.rs`). Everything else in the file is reported as a "not read yet"
+//! (`components.rs`). Step 4 has started: texts on overlay and copper layers (`texts.rs`). Everything else in the file is reported as a "not read yet"
 //! note.
 //!
 //! A `.PcbDoc` is an OLE / Compound File Binary container: a small file system inside one file,
@@ -16,6 +16,7 @@ mod board;
 mod components;
 mod copper;
 pub mod privacy;
+mod texts;
 
 use board_model::{
     Board, Detection, InputFormat, Note, ReadError, ReadOutcome, Severity, MAX_INPUT_BYTES,
@@ -31,7 +32,6 @@ const NOT_READ_YET: &[(&str, &str)] = &[
         "shape-based component bodies",
     ),
     ("/ShapeBasedRegions6/Data", "shape-based regions"),
-    ("/Texts6/Data", "texts"),
 ];
 
 /// The first eight bytes of every OLE / Compound File Binary file.
@@ -147,7 +147,7 @@ impl InputFormat for Altium {
             .map_err(ReadError::Invalid)?,
             None => components::Components::default(),
         };
-        let layers = copper::CopperLayers::new(&record);
+        let mut layers = copper::CopperLayers::new(&record);
         let mut copper = Vec::new();
         if let Some(data) = &tracks6 {
             copper.extend(copper::tracks(data, &layers, &mut notes).map_err(ReadError::Invalid)?);
@@ -178,6 +178,15 @@ impl InputFormat for Altium {
                     .into(),
             });
         }
+        let wide = match &wide_strings6 {
+            Some(data) => components::wide_strings(data).map_err(ReadError::Invalid)?,
+            None => Default::default(),
+        };
+        let texts = match &texts6 {
+            Some(data) => texts::read(data, &wide, &components, &mut layers, &mut notes)
+                .map_err(ReadError::Invalid)?,
+            None => Vec::new(),
+        };
         for (path, what) in NOT_READ_YET {
             if let Some(s) = streams.iter().find(|s| s.path == *path && s.len > 0) {
                 notes.push(Note {
@@ -192,6 +201,7 @@ impl InputFormat for Altium {
                 thickness: shape.thickness,
                 layers: layers.layers,
                 copper,
+                texts,
                 components: components.placements,
                 ..Board::default()
             },
