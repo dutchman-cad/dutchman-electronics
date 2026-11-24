@@ -2,8 +2,8 @@ Original test board made for Dutchman Electronics. Released under CC0 1.0 (publi
 
 (This line covers every board in this folder: empty-outline, outline-with-hole, one-track,
 one-resistor, one-via, one-plated-pad, one-rotated-pad, one-oval-pad, one-bottom-track,
-one-arc, one-fill, one-region, one-pour, one-text, one-rotated-text and
-one-bottom-text.)
+one-arc, one-fill, one-region, one-pour, one-text, one-rotated-text,
+one-bottom-text and one-step-resistor.)
 
 Made in Altium Designer 26.12.2 (build 26.12.2.9), saved as "PCB Binary Files (*.PcbDoc)".
 The first four boards (empty-outline, outline-with-hole, one-track, one-resistor) were drawn by
@@ -158,6 +158,16 @@ one-rotated-text.PcbDoc
 one-bottom-text.PcbDoc
     text "BOT", layer Bottom Overlay, position (40.000, 10.000), rotation 0, mirrored (so it
     reads correctly when the board is seen from below)
+
+Scripted board with a STEP model: one-step-resistor
+----------------------------------------------------
+Made on 2026-11-24 by my own script, from a file copy of one-resistor.PcbDoc: R1 keeps its
+place (25.000, 15.000), rotation 0, top side, footprint R0603-TEST and its pads. Its extruded
+box was removed and replaced by a 3D body that holds a STEP model, embedded in the board file.
+The STEP model (box-1608.step) is my own: a box 1.600 x 0.800 x 0.450, centred on its origin in
+X and Y, from z = 0 to z = 0.450, written by this repository's board-step crate (CC0 like the
+board). Altium was given no rotation and no standoff; the script read back the body's extent:
+x 24.2 to 25.8, y 14.6 to 15.4, height 0.450 above the top surface.
 
 Paths inside the files
 ----------------------
