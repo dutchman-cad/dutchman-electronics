@@ -106,7 +106,12 @@ pub fn build(path: &Path, bytes: &[u8]) -> Result<Package, String> {
             .iter()
             .map(|(id, file, _)| json!({ "id": id, "file": file })),
     );
-    files.extend(placed.models.into_iter().map(|(_, file, bytes)| (file, bytes)));
+    files.extend(
+        placed
+            .models
+            .into_iter()
+            .map(|(_, file, bytes)| (file, bytes)),
+    );
     parts.extend(placed.parts);
     notes.extend(placed.notes);
     let manifest = json!({
@@ -268,7 +273,9 @@ fn components(list: &[Placement], embedded: &[EmbeddedModel], thickness: f64) ->
                         match board_step::prism(outline, *standoff, *height, &id) {
                             Ok(step) => {
                                 let file = format!("{id}.step");
-                                placed.models.push((id.clone(), file, step.text.into_bytes()));
+                                placed
+                                    .models
+                                    .push((id.clone(), file, step.text.into_bytes()));
                                 extruded.insert(key, id.clone());
                                 id
                             }
@@ -663,12 +670,22 @@ mod tests {
             .map(|p| (p["name"].as_str().unwrap(), p["model"].as_str().unwrap()))
             .collect();
         parts.sort();
-        assert_eq!(parts, [("Board", "board"), ("R1", "model-1"), ("R2", "model-1")]);
+        assert_eq!(
+            parts,
+            [("Board", "board"), ("R1", "model-1"), ("R2", "model-1")]
+        );
         assert_eq!(package.files.len(), 2);
         assert!(package.files[1].1.starts_with(b"ISO-10303-21"));
         // box-1608.step is x -0.8 to 0.8; R2's body spans x 34.2 to 35.8, y 14.6 to 15.4.
-        let (lo, hi) = placed_box(&part_named(m, "R2")["transform"], [-0.8, -0.4, 0.0], [0.8, 0.4, 0.45]);
-        assert!(near(lo, [34.2, 14.6, 1.6]) && near(hi, [35.8, 15.4, 2.05]), "{lo:?} {hi:?}");
+        let (lo, hi) = placed_box(
+            &part_named(m, "R2")["transform"],
+            [-0.8, -0.4, 0.0],
+            [0.8, 0.4, 0.45],
+        );
+        assert!(
+            near(lo, [34.2, 14.6, 1.6]) && near(hi, [35.8, 15.4, 2.05]),
+            "{lo:?} {hi:?}"
+        );
     }
 
     #[cfg(feature = "altium")]
@@ -679,8 +696,15 @@ mod tests {
         let m = &package.manifest;
         assert_ne!(part_named(m, "R1")["model"], part_named(m, "R2")["model"]);
         // R2 holds box-offset.step (x 0 to 1.6): its body spans x 35 to 36.6.
-        let (lo, hi) = placed_box(&part_named(m, "R2")["transform"], [0.0, -0.4, 0.0], [1.6, 0.4, 0.45]);
-        assert!(near(lo, [35.0, 14.6, 1.6]) && near(hi, [36.6, 15.4, 2.05]), "{lo:?} {hi:?}");
+        let (lo, hi) = placed_box(
+            &part_named(m, "R2")["transform"],
+            [0.0, -0.4, 0.0],
+            [1.6, 0.4, 0.45],
+        );
+        assert!(
+            near(lo, [35.0, 14.6, 1.6]) && near(hi, [36.6, 15.4, 2.05]),
+            "{lo:?} {hi:?}"
+        );
     }
 
     #[cfg(feature = "altium")]
@@ -689,8 +713,16 @@ mod tests {
         // The eighth batch: box-offset.step (x 0 to 1.6, y -0.4 to 0.4, 0.45 high) turned 30
         // degrees on R1, then R1 flipped, then turned to 90. The README gives each body's span.
         let cases = [
-            ("one-turned-step-resistor", [24.45, 15.260, 1.6], [26.236, 16.753, 2.05]),
-            ("one-bottom-turned-step-resistor", [23.8, 15.260, -0.45], [25.586, 16.753, 0.0]),
+            (
+                "one-turned-step-resistor",
+                [24.45, 15.260, 1.6],
+                [26.236, 16.753, 2.05],
+            ),
+            (
+                "one-bottom-turned-step-resistor",
+                [23.8, 15.260, -0.45],
+                [25.586, 16.753, 0.0],
+            ),
             (
                 "one-bottom-rotated-turned-step-resistor",
                 [24.007, 14.45, -0.45],
@@ -724,7 +756,11 @@ mod tests {
             ([0.0, 0.4, 0.45], [25.8, 15.0, -0.45]),
         ];
         for (model, board) in on_board {
-            assert!(close(apply(t, model), board), "{model:?} -> {:?}", apply(t, model));
+            assert!(
+                close(apply(t, model), board),
+                "{model:?} -> {:?}",
+                apply(t, model)
+            );
         }
     }
 
