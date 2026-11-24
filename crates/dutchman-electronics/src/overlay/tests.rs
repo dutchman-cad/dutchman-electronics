@@ -418,9 +418,11 @@ fn covers(o: &Value, x: f64, y: f64) -> bool {
         }
         odd
     };
-    o["areas"].as_array().unwrap().iter().any(|a| {
-        inside(&a["outer"]) && !a["holes"].as_array().unwrap().iter().any(inside)
-    })
+    o["areas"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|a| inside(&a["outer"]) && !a["holes"].as_array().unwrap().iter().any(inside))
 }
 
 #[test]

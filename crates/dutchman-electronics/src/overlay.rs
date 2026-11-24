@@ -76,7 +76,12 @@ fn polygon(mut ring: Vec<Coord>) -> Option<Polygon> {
         return None;
     }
     ring.dedup_by(|a, b| same(a, b));
-    while ring.len() > 1 && ring.first().zip(ring.last()).is_some_and(|(a, b)| same(a, b)) {
+    while ring.len() > 1
+        && ring
+            .first()
+            .zip(ring.last())
+            .is_some_and(|(a, b)| same(a, b))
+    {
         ring.pop();
     }
     let n = ring.len();
@@ -143,8 +148,7 @@ fn arc_stroke(
     end_deg: f64,
     width: f64,
 ) -> Vec<Polygon> {
-    if !(radius.is_finite() && radius > 0.0 && width.is_finite() && width > 0.0 && finite(center))
-    {
+    if !(radius.is_finite() && radius > 0.0 && width.is_finite() && width > 0.0 && finite(center)) {
         return Vec::new();
     }
     let sweep = sweep(start_deg, end_deg);
@@ -175,7 +179,13 @@ fn arc_stroke(
     arc_points(center, outer, start_deg, sweep, &mut ring);
     arc_points(at(end), width / 2.0, end, 180.0, &mut ring);
     arc_points(center, inner, end, -sweep, &mut ring);
-    arc_points(at(start_deg), width / 2.0, start_deg + 180.0, 180.0, &mut ring);
+    arc_points(
+        at(start_deg),
+        width / 2.0,
+        start_deg + 180.0,
+        180.0,
+        &mut ring,
+    );
     polygon(ring).into_iter().collect()
 }
 
@@ -335,63 +345,68 @@ pub fn overlays(board: &Board, thickness: f64, board_part: &str) -> (Vec<Value>,
     for item in board.copper.iter().take(MAX_ITEMS) {
         let (layer, shapes, bare, drill): (usize, Vec<Polygon>, bool, Option<(Point, f64)>) =
             match item {
-            CopperItem::Track {
-                layer,
-                from,
-                to,
-                width,
-                ..
-            } => (*layer, stroke(*from, *to, *width).into_iter().collect(), false, None),
-            CopperItem::TrackArc {
-                layer,
-                center,
-                radius,
-                start_deg,
-                end_deg,
-                width,
-                ..
-            } => (
-                *layer,
-                arc_stroke(*center, *radius, *start_deg, *end_deg, *width),
-                false,
-                None,
-            ),
-            CopperItem::Region { layer, contour: c } => {
-                (*layer, contour(c).into_iter().collect(), false, None)
-            }
-            CopperItem::Via {
-                at,
-                diameter,
-                drill,
-            } => {
-                match circle(*at, diameter / 2.0) {
-                    Some(ring) => {
-                        faces.0.masked.polygons.push(ring.clone());
-                        faces.1.masked.polygons.push(ring);
-                        holes.add(circle(*at, drill / 2.0), &mut unusable);
-                    }
-                    None => unusable = unusable.saturating_add(1),
+                CopperItem::Track {
+                    layer,
+                    from,
+                    to,
+                    width,
+                    ..
+                } => (
+                    *layer,
+                    stroke(*from, *to, *width).into_iter().collect(),
+                    false,
+                    None,
+                ),
+                CopperItem::TrackArc {
+                    layer,
+                    center,
+                    radius,
+                    start_deg,
+                    end_deg,
+                    width,
+                    ..
+                } => (
+                    *layer,
+                    arc_stroke(*center, *radius, *start_deg, *end_deg, *width),
+                    false,
+                    None,
+                ),
+                CopperItem::Region { layer, contour: c } => {
+                    (*layer, contour(c).into_iter().collect(), false, None)
                 }
-                continue;
-            }
-            CopperItem::Pad {
-                layer,
-                at,
-                shape,
-                size_x,
-                size_y,
-                rotation_deg,
-                drill,
-                ..
-            } => (
-                *layer,
-                pad(*at, *shape, *size_x, *size_y, *rotation_deg)
-                    .into_iter()
-                    .collect(),
-                true,
-                drill.map(|d| (*at, d)),
-            ),
-        };
+                CopperItem::Via {
+                    at,
+                    diameter,
+                    drill,
+                } => {
+                    match circle(*at, diameter / 2.0) {
+                        Some(ring) => {
+                            faces.0.masked.polygons.push(ring.clone());
+                            faces.1.masked.polygons.push(ring);
+                            holes.add(circle(*at, drill / 2.0), &mut unusable);
+                        }
+                        None => unusable = unusable.saturating_add(1),
+                    }
+                    continue;
+                }
+                CopperItem::Pad {
+                    layer,
+                    at,
+                    shape,
+                    size_x,
+                    size_y,
+                    rotation_deg,
+                    drill,
+                    ..
+                } => (
+                    *layer,
+                    pad(*at, *shape, *size_x, *size_y, *rotation_deg)
+                        .into_iter()
+                        .collect(),
+                    true,
+                    drill.map(|d| (*at, d)),
+                ),
+            };
         if shapes.is_empty() {
             unusable = unusable.saturating_add(1);
             continue;
