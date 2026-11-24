@@ -11,7 +11,7 @@
 use std::io::Read;
 use std::path::Path;
 
-use board_model::{ModelSource, Note, Placement, Severity, Side, MAX_INPUT_BYTES};
+use board_model::{EmbeddedModel, ModelSource, Note, Placement, Severity, Side, MAX_INPUT_BYTES};
 use serde_json::{json, Value};
 
 /// Schema of the package manifest.
@@ -99,19 +99,14 @@ pub fn build(path: &Path, bytes: &[u8]) -> Result<Package, String> {
         "notes": board_notes,
     })];
     let mut files = vec![(BOARD_FILE.to_string(), step.text.into_bytes())];
-    let placed = components(&board.components, step.thickness);
+    let placed = components(&board.components, &outcome.models, step.thickness);
     models.extend(
         placed
             .models
             .iter()
             .map(|(id, file, _)| json!({ "id": id, "file": file })),
     );
-    files.extend(
-        placed
-            .models
-            .into_iter()
-            .map(|(_, file, text)| (file, text.into_bytes())),
-    );
+    files.extend(placed.models.into_iter().map(|(_, file, bytes)| (file, bytes)));
     parts.extend(placed.parts);
     notes.extend(placed.notes);
     let manifest = json!({
@@ -191,10 +186,10 @@ fn part_frame(p: &Placement, thickness: f64) -> Transform {
     compose(&turned, &flip)
 }
 
-/// The placed components: model files `(id, file, STEP text)`, parts, and package notes.
+/// The placed components: model files `(id, file, STEP file)`, parts, and package notes.
 #[derive(Default)]
 struct Placed {
-    models: Vec<(String, String, String)>,
+    models: Vec<(String, String, Vec<u8>)>,
     parts: Vec<Value>,
     notes: Vec<Value>,
 }
@@ -211,12 +206,13 @@ fn named(list: &[String]) -> String {
 }
 
 /// Each component with a model the package can build becomes a part named by its designator.
-fn components(list: &[Placement], thickness: f64) -> Placed {
+fn components(list: &[Placement], embedded: &[EmbeddedModel], thickness: f64) -> Placed {
     let mut placed = Placed::default();
     let mut used = std::collections::BTreeSet::from([BOARD_PART.to_string()]);
-    // Equal extruded bodies share one model file.
+    // Equal extruded bodies share one model file; so do parts naming the same embedded model.
     let mut extruded: std::collections::BTreeMap<String, String> = Default::default();
-    let (mut no_model, mut embedded, mut external, mut failed) =
+    let mut unpacked: std::collections::BTreeMap<&str, String> = Default::default();
+    let (mut no_model, mut missing, mut external, mut failed) =
         (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     for (index, p) in list.iter().enumerate() {
         let base = match p.designator.trim() {
@@ -235,10 +231,26 @@ fn components(list: &[Placement], thickness: f64) -> Placed {
             continue;
         };
         let id = match &model.source {
-            ModelSource::Embedded { .. } => {
-                embedded.push(name);
-                continue;
-            }
+            ModelSource::Embedded { id } => match unpacked.get(id.as_str()) {
+                Some(model_id) => model_id.clone(),
+                None => match embedded.iter().find(|m| &m.id == id) {
+                    Some(m) if m.step.starts_with(b"ISO-10303-21") => {
+                        let model_id = format!("model-{}", placed.models.len().saturating_add(1));
+                        let file = format!("{model_id}.step");
+                        placed.models.push((model_id.clone(), file, m.step.clone()));
+                        unpacked.insert(m.id.as_str(), model_id.clone());
+                        model_id
+                    }
+                    Some(m) => {
+                        failed.push(format!("{name}: {} is not a STEP file", m.name));
+                        continue;
+                    }
+                    None => {
+                        missing.push(name);
+                        continue;
+                    }
+                },
+            },
             ModelSource::External { file } => {
                 external.push(format!("{name} ({file})"));
                 continue;
@@ -256,7 +268,7 @@ fn components(list: &[Placement], thickness: f64) -> Placed {
                         match board_step::prism(outline, *standoff, *height, &id) {
                             Ok(step) => {
                                 let file = format!("{id}.step");
-                                placed.models.push((id.clone(), file, step.text));
+                                placed.models.push((id.clone(), file, step.text.into_bytes()));
                                 extruded.insert(key, id.clone());
                                 id
                             }
@@ -283,14 +295,6 @@ fn components(list: &[Placement], thickness: f64) -> Placed {
                             that turn yet",
             }));
         }
-        let half_turns = p.rotation_deg / 180.0;
-        if p.side == Side::Bottom && (half_turns - half_turns.round()).abs() > 1e-9 {
-            part_notes.push(json!({
-                "severity": "Degraded",
-                "message": "a bottom-side part turned by other than 0 or 180 degrees; no test \
-                            board confirms which way such a turn goes yet",
-            }));
-        }
         placed.parts.push(json!({
             "name": name,
             "model": id,
@@ -304,8 +308,8 @@ fn components(list: &[Placement], thickness: f64) -> Placed {
             "component(s) have no 3D model and are not in the package",
         ),
         (
-            embedded,
-            "component(s) have a 3D model stored in the board, which is not unpacked yet",
+            missing,
+            "component(s) name a 3D model the board does not hold",
         ),
         (
             external,
@@ -313,7 +317,7 @@ fn components(list: &[Placement], thickness: f64) -> Placed {
         ),
         (
             failed,
-            "component(s) have an extruded body that could not be built",
+            "component(s) have a 3D model that could not be used",
         ),
     ] {
         if !list.is_empty() {
@@ -450,7 +454,7 @@ mod tests {
 
     #[test]
     fn a_top_side_part_sits_on_the_top_face() {
-        let placed = components(&[part("R1", 25.0, 15.0, 0.0, Side::Top)], 1.6);
+        let placed = components(&[part("R1", 25.0, 15.0, 0.0, Side::Top)], &[], 1.6);
         assert_eq!(placed.models.len(), 1);
         assert!(placed.notes.is_empty(), "{:?}", placed.notes);
         let p = &placed.parts[0];
@@ -473,7 +477,7 @@ mod tests {
 
     #[test]
     fn a_turned_part_turns_its_model() {
-        let placed = components(&[part("R1", 25.0, 15.0, 90.0, Side::Top)], 1.6);
+        let placed = components(&[part("R1", 25.0, 15.0, 90.0, Side::Top)], &[], 1.6);
         let t = &placed.parts[0]["transform"];
         // one-rotated-step-resistor's README: the +X end of the model turned onto +Y.
         assert!(close(apply(t, [1.6, 0.0, 0.0]), [25.0, 16.6, 1.6]));
@@ -483,7 +487,7 @@ mod tests {
     fn a_bottom_side_part_is_flipped_onto_the_bottom_face() {
         // one-bottom-step-resistor's README: R1 flipped is at (25.4, 15) with rotation 180, and
         // the off-centre box (x 0 to 1.6 in the model) spans x 23.8 to 25.4, projecting down.
-        let placed = components(&[part("R1", 25.4, 15.0, 180.0, Side::Bottom)], 1.6);
+        let placed = components(&[part("R1", 25.4, 15.0, 180.0, Side::Bottom)], &[], 1.6);
         let t = &placed.parts[0]["transform"];
         assert!(close(apply(t, [0.0, 0.0, 0.0]), [25.4, 15.0, 0.0]));
         assert!(close(apply(t, [1.6, 0.0, 0.0]), [23.8, 15.0, 0.0]));
@@ -500,30 +504,12 @@ mod tests {
             m.offset = [1.0, 0.0, 0.2];
             m.rotation_deg = [0.0, 0.0, 90.0];
         }
-        let placed = components(&[r1], 1.6);
+        let placed = components(&[r1], &[], 1.6);
         let t = &placed.parts[0]["transform"];
         // Model +X: turned 90 on the part (+Y), moved by the offset to (1, 1), then the part
         // turns 90: (-1, 1), at (10, 0) on the top face, 0.2 up.
         assert!(close(apply(t, [1.0, 0.0, 0.0]), [9.0, 1.0, 1.8]));
         assert!(placed.parts[0]["notes"].as_array().unwrap().is_empty());
-    }
-
-    #[test]
-    fn a_bottom_side_turn_not_pinned_by_a_test_board_is_flagged() {
-        let placed = components(
-            &[
-                part("R1", 0.0, 0.0, 180.0, Side::Bottom),
-                part("R2", 0.0, 0.0, 90.0, Side::Bottom),
-                part("R3", 0.0, 0.0, 90.0, Side::Top),
-            ],
-            1.6,
-        );
-        let counts: Vec<usize> = placed
-            .parts
-            .iter()
-            .map(|p| p["notes"].as_array().unwrap().len())
-            .collect();
-        assert_eq!(counts, [0, 1, 0]);
     }
 
     #[test]
@@ -534,7 +520,7 @@ mod tests {
             part("Board", 30.0, 10.0, 0.0, Side::Top),
             part(" ", 40.0, 10.0, 0.0, Side::Top),
         ];
-        let placed = components(&list, 1.6);
+        let placed = components(&list, &[], 1.6);
         assert_eq!(placed.models.len(), 1);
         let names: Vec<&str> = placed
             .parts
@@ -565,7 +551,7 @@ mod tests {
                 height: 0.5,
             };
         }
-        let placed = components(&[none, embedded, external, flat], 1.6);
+        let placed = components(&[none, embedded, external, flat], &[], 1.6);
         assert!(placed.parts.is_empty());
         let messages: Vec<&str> = placed
             .notes
@@ -577,11 +563,169 @@ mod tests {
             .collect();
         assert_eq!(messages.len(), 4, "{messages:?}");
         assert!(messages[0].ends_with("no 3D model and are not in the package: R1"));
-        assert!(messages[1].ends_with("not unpacked yet: U1"));
+        assert!(messages[1].ends_with("name a 3D model the board does not hold: U1"));
         assert!(
             messages[2].ends_with("outside the board and are not in the package: U2 (soic8.step)")
         );
         assert!(messages[3].contains("U3: cannot make the board solid"));
+    }
+
+    #[test]
+    fn an_embedded_model_is_written_once_for_every_part_that_uses_it() {
+        let mut r1 = part("R1", 10.0, 0.0, 0.0, Side::Top);
+        let mut r2 = part("R2", 20.0, 0.0, 0.0, Side::Top);
+        let mut r3 = part("R3", 30.0, 0.0, 0.0, Side::Top);
+        for (p, id) in [(&mut r1, "A"), (&mut r2, "A"), (&mut r3, "B")] {
+            if let Some(m) = &mut p.model {
+                m.source = ModelSource::Embedded { id: id.into() };
+            }
+        }
+        let models = [
+            EmbeddedModel {
+                id: "A".into(),
+                name: "box.step".into(),
+                step: b"ISO-10303-21;\nHEADER;".to_vec(),
+            },
+            EmbeddedModel {
+                id: "B".into(),
+                name: "notes.txt".into(),
+                step: b"hello".to_vec(),
+            },
+        ];
+        let placed = components(&[r1, r2, r3], &models, 1.6);
+        assert_eq!(placed.models.len(), 1);
+        assert_eq!(placed.models[0].2, b"ISO-10303-21;\nHEADER;");
+        let used: Vec<(&str, &str)> = placed
+            .parts
+            .iter()
+            .map(|p| (p["name"].as_str().unwrap(), p["model"].as_str().unwrap()))
+            .collect();
+        assert_eq!(used, [("R1", "model-1"), ("R2", "model-1")]);
+        assert_eq!(placed.notes.len(), 1);
+        assert!(placed.notes[0]["message"]
+            .as_str()
+            .unwrap()
+            .ends_with("could not be used: R3: notes.txt is not a STEP file"));
+    }
+
+    /// The box a model's box spans on the board once placed: (min, max).
+    fn placed_box(t: &Value, lo: [f64; 3], hi: [f64; 3]) -> ([f64; 3], [f64; 3]) {
+        let mut min = [f64::INFINITY; 3];
+        let mut max = [f64::NEG_INFINITY; 3];
+        for k in 0..8 {
+            let corner = [0, 1, 2].map(|a| if k >> a & 1 == 0 { lo[a] } else { hi[a] });
+            let p = apply(t, corner);
+            for a in 0..3 {
+                min[a] = min[a].min(p[a]);
+                max[a] = max[a].max(p[a]);
+            }
+        }
+        (min, max)
+    }
+
+    /// The part with this name in a manifest.
+    #[cfg(feature = "altium")]
+    fn part_named<'a>(m: &'a Value, name: &str) -> &'a Value {
+        m["parts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["name"] == name)
+            .unwrap()
+    }
+
+    #[cfg(feature = "altium")]
+    fn package_of(name: &str) -> Package {
+        let path = format!(
+            "{}/../altium-pcbdoc/tests/boards/{name}.PcbDoc",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let bytes = std::fs::read(&path).unwrap();
+        build(Path::new(&path), &bytes).unwrap()
+    }
+
+    /// Equal to the 0.001 mm the boards' README.txt gives.
+    #[cfg(feature = "altium")]
+    fn near(a: [f64; 3], b: [f64; 3]) -> bool {
+        a.iter().zip(b).all(|(x, y)| (x - y).abs() < 0.0015)
+    }
+
+    #[cfg(feature = "altium")]
+    #[test]
+    fn two_parts_sharing_one_step_model_share_one_file() {
+        // shared-step-model's README: R1 and R2 hold the same embedded box-1608.step.
+        let package = package_of("shared-step-model");
+        let m = &package.manifest;
+        let mut parts: Vec<(&str, &str)> = m["parts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| (p["name"].as_str().unwrap(), p["model"].as_str().unwrap()))
+            .collect();
+        parts.sort();
+        assert_eq!(parts, [("Board", "board"), ("R1", "model-1"), ("R2", "model-1")]);
+        assert_eq!(package.files.len(), 2);
+        assert!(package.files[1].1.starts_with(b"ISO-10303-21"));
+        // box-1608.step is x -0.8 to 0.8; R2's body spans x 34.2 to 35.8, y 14.6 to 15.4.
+        let (lo, hi) = placed_box(&part_named(m, "R2")["transform"], [-0.8, -0.4, 0.0], [0.8, 0.4, 0.45]);
+        assert!(near(lo, [34.2, 14.6, 1.6]) && near(hi, [35.8, 15.4, 2.05]), "{lo:?} {hi:?}");
+    }
+
+    #[cfg(feature = "altium")]
+    #[test]
+    fn two_different_step_models_give_two_files() {
+        let package = package_of("two-step-models");
+        assert_eq!(package.files.len(), 3);
+        let m = &package.manifest;
+        assert_ne!(part_named(m, "R1")["model"], part_named(m, "R2")["model"]);
+        // R2 holds box-offset.step (x 0 to 1.6): its body spans x 35 to 36.6.
+        let (lo, hi) = placed_box(&part_named(m, "R2")["transform"], [0.0, -0.4, 0.0], [1.6, 0.4, 0.45]);
+        assert!(near(lo, [35.0, 14.6, 1.6]) && near(hi, [36.6, 15.4, 2.05]), "{lo:?} {hi:?}");
+    }
+
+    #[cfg(feature = "altium")]
+    #[test]
+    fn turned_and_flipped_step_models_span_what_altium_shows() {
+        // The eighth batch: box-offset.step (x 0 to 1.6, y -0.4 to 0.4, 0.45 high) turned 30
+        // degrees on R1, then R1 flipped, then turned to 90. The README gives each body's span.
+        let cases = [
+            ("one-turned-step-resistor", [24.45, 15.260, 1.6], [26.236, 16.753, 2.05]),
+            ("one-bottom-turned-step-resistor", [23.8, 15.260, -0.45], [25.586, 16.753, 0.0]),
+            (
+                "one-bottom-rotated-turned-step-resistor",
+                [24.007, 14.45, -0.45],
+                [25.5, 16.236, 0.0],
+            ),
+        ];
+        for (board, want_lo, want_hi) in cases {
+            let package = package_of(board);
+            let r1 = &package.manifest["parts"][1];
+            assert_eq!(r1["name"], "R1", "{board}");
+            let (lo, hi) = placed_box(&r1["transform"], [0.0, -0.4, 0.0], [1.6, 0.4, 0.45]);
+            assert!(
+                near(lo, want_lo) && near(hi, want_hi),
+                "{board}: {lo:?} {hi:?}"
+            );
+        }
+    }
+
+    #[cfg(feature = "altium")]
+    #[test]
+    fn a_flipped_body_turned_to_90_lands_where_altium_drew_it() {
+        // one-bottom-rotated-extruded-resistor's README: R1 at (25.4, 15), rotation 90, bottom;
+        // the body's outline on the board is (25, 16.6), (25.4, 16.6), (25.8, 15), (25, 15). In
+        // R1's frame it is (0, -0.4), (1.6, -0.4), (1.6, 0), (0, 0.4).
+        let package = package_of("one-bottom-rotated-extruded-resistor");
+        let t = &package.manifest["parts"][1]["transform"];
+        let on_board = [
+            ([0.0, -0.4, 0.0], [25.0, 15.0, 0.0]),
+            ([1.6, -0.4, 0.0], [25.0, 16.6, 0.0]),
+            ([1.6, 0.0, 0.0], [25.4, 16.6, 0.0]),
+            ([0.0, 0.4, 0.45], [25.8, 15.0, -0.45]),
+        ];
+        for (model, board) in on_board {
+            assert!(close(apply(t, model), board), "{model:?} -> {:?}", apply(t, model));
+        }
     }
 
     #[cfg(feature = "altium")]
