@@ -585,7 +585,11 @@ fn a_clockwise_arc_past_a_half_circle_is_split() {
     assert_eq!(edges.len(), 3);
     let area = signed_area2(&polygon(&edges)) / 2.0;
     assert!(area < 0.0 && (area + PI * 9.0).abs() < 0.1, "{area}");
-    let out = write(&board(rect(0.0, 0.0, 40.0, 20.0), vec![hole], vec![]), "bite").unwrap();
+    let out = write(
+        &board(rect(0.0, 0.0, 40.0, 20.0), vec![hole], vec![]),
+        "bite",
+    )
+    .unwrap();
     assert_eq!(out.text.matches("CYLINDRICAL_SURFACE(").count(), 3);
     check_topology(&out.text);
 }
