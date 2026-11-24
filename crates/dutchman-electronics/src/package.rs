@@ -20,6 +20,8 @@ pub const PARTS_SCHEMA: &str = "dutchman.parts/1";
 pub const BOARD_PART: &str = "Board";
 /// The board's model id and file.
 pub const BOARD_MODEL: &str = "board";
+/// The manifest's file in the package folder (the same JSON the command prints).
+pub const MANIFEST_FILE: &str = "manifest.json";
 pub const BOARD_FILE: &str = "board.step";
 
 /// A package before it is written: the manifest and its files.
@@ -330,22 +332,25 @@ fn components(list: &[Placement], embedded: &[EmbeddedModel], thickness: f64) ->
 /// final name first and then renamed, so a reader never sees half a file.
 pub fn write(dir: &Path, package: &Package) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("cannot make {}: {e}", dir.display()))?;
-    for (name, contents) in &package.files {
-        let plain = Path::new(name)
-            .file_name()
-            .is_some_and(|f| f == name.as_str());
-        if !plain {
-            return Err(format!(
-                "refusing a package file name with a folder in it: {name}"
-            ));
-        }
+    let put = |name: &str, contents: &[u8]| {
         let target = dir.join(name);
         let partial = dir.join(format!(".{name}.partial"));
         std::fs::write(&partial, contents)
             .and_then(|()| std::fs::rename(&partial, &target))
-            .map_err(|e| format!("cannot write {}: {e}", target.display()))?;
+            .map_err(|e| format!("cannot write {}: {e}", target.display()))
+    };
+    for (name, contents) in &package.files {
+        let plain = Path::new(name)
+            .file_name()
+            .is_some_and(|f| f == name.as_str());
+        if !plain || name == MANIFEST_FILE {
+            return Err(format!("refusing a package file named {name}"));
+        }
+        put(name, contents)?;
     }
-    Ok(())
+    // Last, so a folder that holds a manifest holds every file it names.
+    let manifest = serde_json::to_vec_pretty(&package.manifest).map_err(|e| e.to_string())?;
+    put(MANIFEST_FILE, &manifest)
 }
 
 /// The failure reply.
@@ -365,8 +370,17 @@ mod tests {
             files: vec![("../escape.step".into(), b"x".to_vec())],
         };
         let result = write(&dir, &bad);
+        let clash = Package {
+            manifest: Value::Null,
+            files: vec![(MANIFEST_FILE.into(), b"x".to_vec())],
+        };
+        let clashed = write(&dir, &clash);
         std::fs::remove_dir_all(&dir).ok();
         assert!(result.is_err());
+        assert!(
+            clashed.is_err(),
+            "a model file may not take the manifest's name"
+        );
     }
 
     #[test]
@@ -378,11 +392,13 @@ mod tests {
         };
         let result = write(&dir, &good);
         let written = std::fs::read(dir.join("board.step"));
+        let manifest = std::fs::read(dir.join(MANIFEST_FILE));
         let leftovers = std::fs::read_dir(&dir).map(|d| d.count());
         std::fs::remove_dir_all(&dir).ok();
         assert!(result.is_ok());
         assert_eq!(written.unwrap(), b"ISO");
-        assert_eq!(leftovers.unwrap(), 1, "no partial file left behind");
+        assert_eq!(manifest.unwrap(), b"null");
+        assert_eq!(leftovers.unwrap(), 2, "no partial file left behind");
     }
 
     #[test]
