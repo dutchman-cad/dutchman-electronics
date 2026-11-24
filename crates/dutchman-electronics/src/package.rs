@@ -1100,7 +1100,7 @@ mod tests {
         let track = package_of("one-track");
         assert_eq!(
             overlay_named(&track.manifest, "one-track", "Copper top")["color"],
-            "#3f8f4f"
+            "#2b6e43"
         );
         let silk = package_of("one-overlay-line");
         assert_eq!(

@@ -9,8 +9,8 @@
 pub const MASK_COLOR: &str = "#1f5f3a";
 /// How opaque the solder mask overlay is (0 clear, 1 solid), so the copper shows through it.
 pub const MASK_OPACITY: f64 = 0.85;
-/// Copper under the mask, as it looks through it: a lighter green.
-pub const COPPER_MASKED_COLOR: &str = "#3f8f4f";
+/// Copper under the mask, as it looks through it: a green a little lighter and warmer than the mask.
+pub const COPPER_MASKED_COLOR: &str = "#2b6e43";
 /// Bare pad copper: gold, as on an ENIG finish.
 pub const COPPER_BARE_COLOR: &str = "#d4af37";
 /// Silkscreen ink: off-white.
