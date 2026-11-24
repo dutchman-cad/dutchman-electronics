@@ -149,9 +149,16 @@ impl InputFormat for Altium {
             .map_err(ReadError::Invalid)?,
             None => components::Components::default(),
         };
+        let mut embedded = Vec::new();
         if let Some(data) = &bodies6 {
-            models::attach(data, models6.as_deref(), &mut components, &mut notes)
+            let stored = models::attach(data, models6.as_deref(), &mut components, &mut notes)
                 .map_err(ReadError::Invalid)?;
+            embedded = models::unpack(
+                &mut components.placements,
+                &stored,
+                |path| read_stream(&mut container, path).map_err(|e| e.to_string()),
+                &mut notes,
+            );
         }
         let mut layers = copper::CopperLayers::new(&record);
         if let Some(data) = read_stream(&mut container, "/Nets6/Data")? {
@@ -219,6 +226,7 @@ impl InputFormat for Altium {
                 ..Board::default()
             },
             notes,
+            models: embedded,
         })
     }
 }

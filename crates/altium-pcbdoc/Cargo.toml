@@ -12,6 +12,9 @@ publish = false
 board-model = { path = "../board-model" }
 # Reads the OLE / Compound File Binary container a .PcbDoc is stored in. MIT licensed.
 cfb = "0.10"
+# Unpacks the zlib-compressed 3D models stored in the board (/Models/n), with a size cap. Pure
+# Rust, no unsafe code. MIT, Zlib or Apache-2.0 licensed.
+miniz_oxide = "0.8"
 
 [lints]
 workspace = true

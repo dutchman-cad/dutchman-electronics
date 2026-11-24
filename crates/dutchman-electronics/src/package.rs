@@ -555,9 +555,7 @@ mod tests {
         if let (Some(e), Some(x), Some(f)) =
             (&mut embedded.model, &mut external.model, &mut flat.model)
         {
-            e.source = ModelSource::Embedded {
-                stream: "/Models/0".into(),
-            };
+            e.source = ModelSource::Embedded { id: "{M}".into() };
             x.source = ModelSource::External {
                 file: "soic8.step".into(),
             };

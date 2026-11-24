@@ -16,7 +16,11 @@
 //!   (degrees) and `MODEL.3D.DZ` place the model's origin.
 //! - `/Models/Data` is a run of records, each a `u32` length and text, with `ID`, `NAME`
 //!   (`box-1608.step`) and `EMBED=TRUE`. The n-th record (from 0) is stored in the stream
-//!   `/Models/n`: `/Models/0` is the STEP file compressed with zlib.
+//!   `/Models/n`: `/Models/0` is the STEP file compressed with zlib. `two-step-models` confirms
+//!   the numbering with two models (record 0 `box-offset.step` in `/Models/0`, record 1
+//!   `box-1608.step` in `/Models/1`); on `shared-step-model` two parts use one model, stored once,
+//!   and both bodies give the same `MODELID`. The reader hands each used model over unpacked, once,
+//!   in `ReadOutcome::models`; a part's `ModelSource::Embedded` names it by that ID.
 //! - With the off-centre STEP box `box-offset.step` (x 0 to 1.6 in the model), `MODEL.3D.ROTZ`
 //!   follows the part: 0 on `one-offset-step-resistor`, 90 on `one-rotated-step-resistor` (R1 at
 //!   90), 180 on `one-bottom-step-resistor` (R1 flipped: `LAYER=BOTTOM`, rotation 180, centre
@@ -35,10 +39,11 @@
 //!   it is rotated. So the reader negates y again for a bottom-side part, and the outline is the
 //!   same on both boards.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use board_model::{
-    Contour, ModelRef, ModelSource, Note, Placement, Point, Segment, Severity, Side,
+    Contour, EmbeddedModel, ModelRef, ModelSource, Note, Placement, Point, Segment, Severity, Side,
+    MAX_INPUT_BYTES,
 };
 
 use crate::board::Properties;
@@ -55,13 +60,20 @@ const MAX_VERTICES: usize = 100_000;
 const MAX_LENGTH_MM: f64 = 25_000.0;
 const MAX_ANGLE_DEG: f64 = 360.0;
 
+/// An embedded model as `/Models/Data` lists it: the stream that holds it and its file name.
+pub(crate) struct Stored {
+    pub(crate) stream: String,
+    pub(crate) name: String,
+}
+
 /// Reads the component bodies and gives each placed component the model of its first body.
+/// Returns the embedded models `/Models/Data` lists, by ID, for [`unpack`].
 pub(crate) fn attach(
     bodies6: &[u8],
     models6: Option<&[u8]>,
     components: &mut Components,
     notes: &mut Vec<Note>,
-) -> Result<(), String> {
+) -> Result<BTreeMap<String, Stored>, String> {
     let models = match models6 {
         Some(data) => model_streams(data)?,
         None => BTreeMap::new(),
@@ -112,25 +124,115 @@ pub(crate) fn attach(
             message: format!("{n} component 3D bod(ies) not read: {why}"),
         });
     }
-    Ok(())
+    Ok(models)
 }
 
-/// The stream of each embedded model, by its ID.
-fn model_streams(data: &[u8]) -> Result<BTreeMap<String, String>, String> {
+/// The stream and name of each embedded model, by its ID: the n-th record (from 0) is stored in
+/// `/Models/n` (`two-step-models`).
+fn model_streams(data: &[u8]) -> Result<BTreeMap<String, Stored>, String> {
     let mut map = BTreeMap::new();
     for (n, record) in text_records(data, "/Models/Data")?.iter().enumerate() {
         if let Some(id) = record.get("ID") {
-            map.insert(id.trim().to_string(), format!("/Models/{n}"));
+            map.insert(
+                id.trim().to_string(),
+                Stored {
+                    stream: format!("/Models/{n}"),
+                    name: record.get("NAME").unwrap_or_default().trim().to_string(),
+                },
+            );
         }
     }
     Ok(map)
+}
+
+/// Unpacks each embedded model the placed parts use, once however many parts use it. `read`
+/// gives a stream's bytes (`None` when the file has no such stream). All models together may
+/// unpack to at most [`MAX_INPUT_BYTES`]. A model that cannot be unpacked is left out with a
+/// note naming the parts that use it, and those parts get no model.
+pub(crate) fn unpack(
+    placements: &mut [Placement],
+    stored: &BTreeMap<String, Stored>,
+    read: impl FnMut(&str) -> Result<Option<Vec<u8>>, String>,
+    notes: &mut Vec<Note>,
+) -> Vec<EmbeddedModel> {
+    unpack_within(placements, stored, read, MAX_INPUT_BYTES, notes)
+}
+
+/// [`unpack`] with all models together allowed to unpack to at most `budget` bytes.
+fn unpack_within(
+    placements: &mut [Placement],
+    stored: &BTreeMap<String, Stored>,
+    mut read: impl FnMut(&str) -> Result<Option<Vec<u8>>, String>,
+    mut budget: usize,
+    notes: &mut Vec<Note>,
+) -> Vec<EmbeddedModel> {
+    let mut users: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for p in placements.iter() {
+        if let Some(ModelRef {
+            source: ModelSource::Embedded { id },
+            ..
+        }) = &p.model
+        {
+            users
+                .entry(id.clone())
+                .or_default()
+                .push(p.designator.clone());
+        }
+    }
+    let limit = budget;
+    let mut models = Vec::new();
+    let mut failed: BTreeSet<String> = BTreeSet::new();
+    for (id, designators) in &users {
+        let Some(s) = stored.get(id) else {
+            continue;
+        };
+        let step = read(&s.stream).and_then(|data| {
+            let data = data.ok_or("the stream is missing")?;
+            miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(&data, budget).map_err(|e| {
+                if e.status == miniz_oxide::inflate::TINFLStatus::HasMoreOutput {
+                    format!("all models together unpack to more than {limit} bytes")
+                } else {
+                    format!("not zlib data ({:?})", e.status)
+                }
+            })
+        });
+        match step {
+            Ok(step) => {
+                budget = budget.saturating_sub(step.len());
+                models.push(EmbeddedModel {
+                    id: id.clone(),
+                    name: s.name.clone(),
+                    step,
+                });
+            }
+            Err(why) => {
+                notes.push(Note {
+                    severity: Severity::Dropped,
+                    message: format!(
+                        "3D model {} ({}) could not be unpacked: {why}; {} left without a model",
+                        s.name,
+                        s.stream,
+                        designators.join(", ")
+                    ),
+                });
+                failed.insert(id.clone());
+            }
+        }
+    }
+    for p in placements.iter_mut() {
+        if matches!(&p.model, Some(ModelRef { source: ModelSource::Embedded { id }, .. }) if failed.contains(id))
+        {
+            p.model = None;
+        }
+    }
+    models
 }
 
 /// The model of one body record, or why it was left out.
 fn model(
     body: &[u8],
     placement: &Placement,
-    models: &BTreeMap<String, String>,
+    models: &BTreeMap<String, Stored>,
 ) -> Result<ModelRef, String> {
     let text_len = read_u32(body, BODY_SKIPPED).ok_or("record cut short")?;
     let text_start = BODY_SKIPPED + 4;
@@ -170,12 +272,12 @@ fn model(
                 .trim()
                 .to_string();
             let embedded = props.get("MODEL.EMBED").map(str::trim) == Some("TRUE");
-            let stream = props
+            let id = props
                 .get("MODELID")
-                .and_then(|id| models.get(id.trim()))
-                .cloned();
-            let source = match (embedded, stream) {
-                (true, Some(stream)) => ModelSource::Embedded { stream },
+                .map(|id| id.trim().to_string())
+                .filter(|id| models.contains_key(id));
+            let source = match (embedded, id) {
+                (true, Some(id)) => ModelSource::Embedded { id },
                 (true, None) => return Err("embedded model not found in /Models/Data".into()),
                 (false, _) => ModelSource::External { file: name.clone() },
             };
@@ -347,5 +449,82 @@ mod tests {
         assert!(attach(&data, None, &mut components, &mut notes).is_ok());
         assert!(notes.iter().any(|n| n.severity == Severity::Dropped));
         assert!(attach(&[0x42], None, &mut components, &mut notes).is_ok());
+    }
+
+    fn part(designator: &str, id: &str) -> Placement {
+        Placement {
+            designator: designator.into(),
+            footprint: String::new(),
+            at: Point::default(),
+            rotation_deg: 0.0,
+            side: Side::Top,
+            model: Some(ModelRef {
+                name: String::new(),
+                source: ModelSource::Embedded { id: id.into() },
+                offset: [0.0; 3],
+                rotation_deg: [0.0; 3],
+            }),
+        }
+    }
+
+    fn stored() -> BTreeMap<String, Stored> {
+        ["good", "bad", "gone"]
+            .iter()
+            .enumerate()
+            .map(|(n, id)| {
+                (
+                    id.to_string(),
+                    Stored {
+                        stream: format!("/Models/{n}"),
+                        name: format!("{id}.step"),
+                    },
+                )
+            })
+            .collect()
+    }
+
+    fn streams(path: &str) -> Result<Option<Vec<u8>>, String> {
+        Ok(match path {
+            "/Models/0" => Some(miniz_oxide::deflate::compress_to_vec_zlib(
+                b"ISO-10303-21;",
+                6,
+            )),
+            "/Models/1" => Some(b"not zlib".to_vec()),
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn each_used_model_is_unpacked_once_and_a_broken_one_is_a_note() {
+        let mut parts = vec![
+            part("R1", "good"),
+            part("R2", "good"),
+            part("U1", "bad"),
+            part("U2", "gone"),
+        ];
+        let mut notes = Vec::new();
+        let models = unpack(&mut parts, &stored(), streams, &mut notes);
+        assert_eq!(models.len(), 1, "{models:?}");
+        assert_eq!(
+            (models[0].id.as_str(), models[0].name.as_str()),
+            ("good", "good.step")
+        );
+        assert_eq!(models[0].step, b"ISO-10303-21;");
+        let have_model: Vec<bool> = parts.iter().map(|p| p.model.is_some()).collect();
+        assert_eq!(have_model, [true, true, false, false]);
+        assert_eq!(notes.len(), 2, "{notes:?}");
+        assert!(notes.iter().all(|n| n.severity == Severity::Dropped));
+        assert!(notes[0].message.contains("bad.step") && notes[0].message.contains("U1"));
+        assert!(notes[1].message.contains("missing") && notes[1].message.contains("U2"));
+    }
+
+    #[test]
+    fn unpacking_stops_at_the_size_cap() {
+        let mut parts = vec![part("R1", "good")];
+        let mut notes = Vec::new();
+        let models = unpack_within(&mut parts, &stored(), streams, 5, &mut notes);
+        assert!(models.is_empty());
+        assert!(parts[0].model.is_none());
+        assert!(notes[0].message.contains("more than 5 bytes"), "{notes:?}");
     }
 }

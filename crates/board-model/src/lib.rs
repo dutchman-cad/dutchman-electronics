@@ -147,8 +147,9 @@ pub struct Text {
 /// Where a 3D model for a component comes from.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ModelSource {
-    /// Stored inside the board file itself (the stream path, for the report).
-    Embedded { stream: String },
+    /// Stored inside the board file itself: the `id` of one of [`ReadOutcome::models`], which
+    /// holds the unpacked file. Parts that use the same model share one id.
+    Embedded { id: String },
     /// A file name the board refers to; the user's library may or may not have it.
     External { file: String },
     /// No file: a prism made by extruding a flat outline, in component coordinates (mm, the
@@ -244,11 +245,24 @@ pub struct Note {
     pub message: String,
 }
 
+/// A 3D model file stored inside the board file, unpacked, for [`ModelSource::Embedded`].
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct EmbeddedModel {
+    /// What [`ModelSource::Embedded`] points to.
+    pub id: String,
+    /// The model's file name as the board gives it, e.g. "box-1608.step".
+    pub name: String,
+    /// The STEP file itself.
+    pub step: Vec<u8>,
+}
+
 /// What [`InputFormat::read`] returns.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ReadOutcome {
     pub board: Board,
     pub notes: Vec<Note>,
+    /// The embedded 3D models the board's components use, each once.
+    pub models: Vec<EmbeddedModel>,
 }
 
 /// Why a file could not be read.
