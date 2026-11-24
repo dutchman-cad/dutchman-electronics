@@ -306,6 +306,27 @@ one-resistor-silkscreen.PcbDoc  (from one-resistor)
     R1 got its own silkscreen line, added to the component: Top Overlay, (24, 15.8) to
     (26, 15.8), width 0.150. It belongs to R1 the way its pads do.
 
+Scripted boards, tenth batch: a STEP model tilted 90 degrees about X
+---------------------------------------------------------------------
+Made on 2026-11-24 by my own script, each from a file copy of one-resistor.PcbDoc: R1's extruded
+box was replaced by a 3D body holding the embedded box-offset.step (fifth batch: x 0 to 1.6,
+y -0.4 to 0.4, z 0 to 0.45 in the model), tilted 90 degrees about its X axis, so it lies on its
+side. Every number was read back and logged.
+
+one-tilted-step-resistor.PcbDoc
+    R1 at (25, 15), rotation 0, top side. Model origin (MODEL.2D) at (25, 15.05),
+    MODEL.3D.ROTX 90, ROTY 0, ROTZ 0, DZ 0. The body spans x 25 to 26.6, y 14.6 to 15.05, and
+    reaches 0.4 above and below the top surface (STANDOFFHEIGHT -0.4, OVERALLHEIGHT 0.4).
+one-bottom-tilted-step-resistor.PcbDoc  (the same, then R1 flipped to the bottom)
+    R1 at (25.4, 15), rotation 180, bottom side (Altium turned it about the middle of everything
+    it holds). Model origin (25.4, 15.05), ROTX 90, ROTZ 180, DZ 0. The body spans x 23.8 to
+    25.4, y 14.6 to 15.05, 0.4 above and below the bottom surface.
+one-turned-tilted-step-resistor.PcbDoc  (like the first, then the model turned 30 degrees on R1)
+    The model was turned the same way as in the eighth batch (R1 turned to 30 with its body, the
+    body taken off, R1 turned back to 0, the body put back). R1 at (25, 15), rotation 0, top
+    side. Model origin (24.975, 15.043), ROTX 90, ROTZ 30. The body spans x 24.975 to 26.586,
+    y 14.654 to 15.843, 0.4 above and below the top surface.
+
 Paths inside the files
 ----------------------
 Altium writes a few paths from the PC that saved a board into the file. After the last save, I
