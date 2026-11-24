@@ -1,4 +1,4 @@
-//! A rotated part, a bottom-side part and a net, checked against the numbers in
+//! A rotated part, bottom-side parts, an off-centre extruded body and a net, checked against the numbers in
 //! tests/boards/README.txt (to 0.001 mm, as AGENTS.md asks).
 
 use altium_pcbdoc::Altium;
@@ -131,7 +131,71 @@ fn the_bottom_resistor_is_on_the_bottom_at_180_degrees() -> Result<(), Box<dyn s
     let (corners, height) = extruded_corners(r1).ok_or("R1 has no extruded model")?;
     assert!(is_the_resistor_box(&corners), "{corners:?}");
     assert!(near(height, 0.45));
+    assert!(
+        !out.notes.iter().any(|n| n.severity == Severity::Warning),
+        "{:?}",
+        out.notes
+    );
     Ok(())
+}
+
+/// The lopsided outline of the sixth batch, in R1's own coordinates, sorted.
+const OFFSET_OUTLINE: [(f64, f64); 4] = [(0.0, -0.4), (0.0, 0.4), (1.6, -0.4), (1.6, 0.0)];
+
+/// Checks R1's lopsided extruded body on one of the two sixth-batch boards.
+fn check_offset_extruded(
+    name: &str,
+    at: (f64, f64),
+    rotation: f64,
+    side: Side,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let out = read(name)?;
+    let r1 = only_part(&out).ok_or("expected one part")?;
+    assert_eq!((r1.designator.as_str(), r1.side), ("R1", side), "{name}");
+    assert!(
+        near(r1.at.x, at.0) && near(r1.at.y, at.1),
+        "{name}: {:?}",
+        r1.at
+    );
+    assert!(
+        near(r1.rotation_deg, rotation),
+        "{name}: {}",
+        r1.rotation_deg
+    );
+    let (corners, height) = extruded_corners(r1).ok_or("R1 has no extruded model")?;
+    assert_eq!(corners.len(), 4, "{name}: {corners:?}");
+    for (g, w) in corners.iter().zip(OFFSET_OUTLINE) {
+        assert!(near(g.0, w.0) && near(g.1, w.1), "{name}: {corners:?}");
+    }
+    assert!(near(height, 0.45), "{name}: {height}");
+    assert!(
+        !out.notes.iter().any(|n| n.severity == Severity::Warning),
+        "{name}: {:?}",
+        out.notes
+    );
+    Ok(())
+}
+
+#[test]
+fn the_offset_extruded_body_on_a_top_side_part() -> Result<(), Box<dyn std::error::Error>> {
+    check_offset_extruded(
+        "one-offset-extruded-resistor.PcbDoc",
+        (25.0, 15.0),
+        0.0,
+        Side::Top,
+    )
+}
+
+#[test]
+fn the_offset_extruded_body_is_the_same_on_the_flipped_part(
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Flipping moved R1's centre to (25.4, 15) and gave it rotation 180 (see README.txt).
+    check_offset_extruded(
+        "one-bottom-extruded-resistor.PcbDoc",
+        (25.4, 15.0),
+        180.0,
+        Side::Bottom,
+    )
 }
 
 #[test]

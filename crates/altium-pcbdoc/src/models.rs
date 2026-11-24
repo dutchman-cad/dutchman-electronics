@@ -27,6 +27,13 @@
 //!   x 24.6 to 25.4, y 14.2 to 15.8; turned back by the part's rotation it is the same
 //!   (-0.8, -0.4) to (0.8, 0.4) box as on `one-resistor`. On `one-bottom-resistor` the body has
 //!   `BODYPROJECTION=1` (0 on the top-side boards).
+//! - The lopsided extruded outline (0, -0.4), (1.6, -0.4), (1.6, 0), (0, 0.4) about R1's centre
+//!   (`one-offset-extruded-resistor`) shows how a flip stores it: on
+//!   `one-bottom-extruded-resistor` R1 is at (25.4, 15), rotation 180, and the outline is stored
+//!   as (23.8, 14.6), (23.8, 15), (25.4, 15.4), (25.4, 14.6). Turned back by 180 degrees that is
+//!   the top-side outline with y negated: the part is turned over about its own X axis before
+//!   it is rotated. So the reader negates y again for a bottom-side part, and the outline is the
+//!   same on both boards.
 
 use std::collections::BTreeMap;
 
@@ -62,7 +69,6 @@ pub(crate) fn attach(
     let mut extra = 0usize;
     let mut free = 0usize;
     let mut unread: BTreeMap<String, usize> = BTreeMap::new();
-    let mut unconfirmed = 0usize;
     for body in records(bodies6, notes)? {
         let Some(component) = read_u16(body, COMPONENT_AT).filter(|&c| c != NO_COMPONENT) else {
             free += 1;
@@ -81,26 +87,10 @@ pub(crate) fn attach(
             extra += 1;
             continue;
         }
-        // Confirmed: extruded bodies on rotated parts (`one-rotated-resistor`) and STEP models on
-        // rotated and bottom-side parts (`one-rotated-step-resistor`, `one-bottom-step-resistor`).
-        // Not yet: an extruded body on a bottom-side part, whose outline is stored already flipped
-        // (our only one is symmetric in Y, so the mirror axis does not show).
-        if placement.side == Side::Bottom && !is_step(body) {
-            unconfirmed += 1;
-        }
         match model(body, placement, &models) {
             Ok(m) => placement.model = Some(m),
             Err(why) => *unread.entry(why).or_default() += 1,
         }
-    }
-    if unconfirmed > 0 {
-        notes.push(Note {
-            severity: Severity::Warning,
-            message: format!(
-                "{unconfirmed} extruded 3D bod(ies) belong to a bottom-side part; how their outline \
-                 is mirrored is not confirmed by a test board yet"
-            ),
-        });
     }
     if extra > 0 {
         notes.push(Note {
@@ -123,22 +113,6 @@ pub(crate) fn attach(
         });
     }
     Ok(())
-}
-
-/// True when a body record's text says `MODEL.MODELTYPE=1` (a STEP model).
-fn is_step(body: &[u8]) -> bool {
-    let Some(text_len) = read_u32(body, BODY_SKIPPED) else {
-        return false;
-    };
-    let start = BODY_SKIPPED + 4;
-    let text = start
-        .checked_add(text_len)
-        .and_then(|end| body.get(start..end))
-        .unwrap_or_default();
-    Properties::parse(text)
-        .get("MODEL.MODELTYPE")
-        .map(str::trim)
-        == Some("1")
 }
 
 /// The stream of each embedded model, by its ID.
@@ -176,7 +150,12 @@ fn model(
             Ok(ModelRef {
                 name: String::new(),
                 source: ModelSource::Extruded {
-                    outline: closed(&points.into_iter().map(to_component).collect::<Vec<_>>()),
+                    outline: closed(
+                        &points
+                            .into_iter()
+                            .map(|p| on_part(to_component(p), placement.side))
+                            .collect::<Vec<_>>(),
+                    ),
                     standoff,
                     height,
                 },
@@ -242,6 +221,16 @@ fn to_component(p: Point, placement: &Placement) -> Point {
     Point {
         x: dx * cos - dy * sin,
         y: dx * sin + dy * cos,
+    }
+}
+
+/// A point in the component's coordinates as it lies on the part itself: a bottom-side part is
+/// the part turned over about its own X axis, so its stored outline is flipped back (y negated).
+/// This keeps the outline's turning direction, since Altium stores the flipped one reversed.
+fn on_part(p: Point, side: Side) -> Point {
+    match side {
+        Side::Top => p,
+        Side::Bottom => Point { x: p.x, y: -p.y },
     }
 }
 
