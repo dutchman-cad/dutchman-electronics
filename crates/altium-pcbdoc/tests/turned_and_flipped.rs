@@ -222,3 +222,91 @@ fn a_model_turned_on_a_flipped_part_at_90_keeps_its_place() -> Result<(), Box<dy
         Side::Bottom,
     )
 }
+
+/// Checks R1's tilted STEP model on one of the tenth-batch boards: in the part's own frame it is
+/// tilted 90 degrees about X, turned `turn` about Z, its origin at `offset` from R1's centre.
+fn check_tilted_model(
+    name: &str,
+    at: (f64, f64),
+    rotation: f64,
+    side: Side,
+    offset: (f64, f64),
+    turn: f64,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let out = read(name)?;
+    let [r1] = out.board.components.as_slice() else {
+        return Err(format!("{name}: expected one part").into());
+    };
+    assert_eq!((r1.designator.as_str(), r1.side), ("R1", side), "{name}");
+    assert!(
+        near(r1.at.x, at.0) && near(r1.at.y, at.1),
+        "{name}: {:?}",
+        r1.at
+    );
+    assert!(
+        near(r1.rotation_deg, rotation),
+        "{name}: {}",
+        r1.rotation_deg
+    );
+    let model = r1.model.as_ref().ok_or("R1 has no model")?;
+    assert_eq!(model.name, "box-offset.step", "{name}");
+    assert!(
+        near(model.offset[0], offset.0)
+            && near(model.offset[1], offset.1)
+            && near(model.offset[2], 0.0),
+        "{name}: {:?}",
+        model.offset
+    );
+    assert!(
+        near(model.rotation_deg[0], 90.0)
+            && near(model.rotation_deg[1], 0.0)
+            && near(model.rotation_deg[2], turn),
+        "{name}: {:?}",
+        model.rotation_deg
+    );
+    assert!(
+        !out.notes.iter().any(|n| n.severity == Severity::Warning),
+        "{name}: {:?}",
+        out.notes
+    );
+    Ok(())
+}
+
+#[test]
+fn a_model_tilted_about_x_on_a_top_side_part() -> Result<(), Box<dyn std::error::Error>> {
+    check_tilted_model(
+        "one-tilted-step-resistor.PcbDoc",
+        (25.0, 15.0),
+        0.0,
+        Side::Top,
+        (0.0, 0.05),
+        0.0,
+    )
+}
+
+#[test]
+fn a_model_tilted_about_x_keeps_its_tilt_on_a_flipped_part(
+) -> Result<(), Box<dyn std::error::Error>> {
+    check_tilted_model(
+        "one-bottom-tilted-step-resistor.PcbDoc",
+        (25.4, 15.0),
+        180.0,
+        Side::Bottom,
+        (0.0, 0.05),
+        0.0,
+    )
+}
+
+#[test]
+fn a_model_tilted_about_x_and_turned_on_its_part() -> Result<(), Box<dyn std::error::Error>> {
+    // The origin (0, 0.05) turned by 30 degrees with the model.
+    let (sin, cos) = 30f64.to_radians().sin_cos();
+    check_tilted_model(
+        "one-turned-tilted-step-resistor.PcbDoc",
+        (25.0, 15.0),
+        0.0,
+        Side::Top,
+        (-0.05 * sin, 0.05 * cos),
+        30.0,
+    )
+}

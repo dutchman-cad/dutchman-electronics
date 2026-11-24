@@ -44,8 +44,14 @@
 //!   (`one-bottom-turned-step-resistor`, R1 at 180, ROTZ 210) and then turned to 90
 //!   (`one-bottom-rotated-turned-step-resistor`, ROTZ 300): turned back by the part's rotation,
 //!   the origin's y is negated, like an extruded outline's, and the model's turn is ROTZ plus the
-//!   part's rotation on a bottom-side part (ROTZ minus it on a top-side part). ROTX and ROTY are 0
-//!   on all our boards, so how they change on a flip is not known yet.
+//!   part's rotation on a bottom-side part (ROTZ minus it on a top-side part).
+//! - `MODEL.3D.ROTX` is a right-handed tilt about the model's own X axis, applied before the turn
+//!   about Z: `one-tilted-step-resistor` (ROTX 90) lies on its side, y 14.6 to 15.05 and 0.4
+//!   above and below the board, and `one-turned-tilted-step-resistor` (ROTX 90, ROTZ 30) spans
+//!   exactly what the tilt and then the turn give (x 24.975 to 26.586, y 14.654 to 15.843), not
+//!   the other order. On the flipped `one-bottom-tilted-step-resistor` ROTX stays 90, and in the
+//!   part's own frame that is the same tilt. `MODEL.3D.ROTY` is 0 on all our boards, so a tilt
+//!   about Y on a bottom-side part gets a warning.
 //! - `/ShapeBasedComponentBodies6/Data` repeats the bodies; see `shape_based.rs`.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -111,9 +117,7 @@ pub(crate) fn attach(
         }
         match model(body, placement, &models) {
             Ok(m) => {
-                if placement.side == Side::Bottom
-                    && (m.rotation_deg[0] != 0.0 || m.rotation_deg[1] != 0.0)
-                {
+                if placement.side == Side::Bottom && m.rotation_deg[1] != 0.0 {
                     tilted += 1;
                 }
                 placement.model = Some(m);
@@ -125,7 +129,8 @@ pub(crate) fn attach(
         notes.push(Note {
             severity: Severity::Warning,
             message: format!(
-                "{tilted} 3D model(s) on bottom-side parts are tilted (MODEL.3D.ROTX or ROTY); how                  a flip changes that tilt is not confirmed by a test board yet"
+                "{tilted} 3D model(s) on bottom-side parts are tilted about Y (MODEL.3D.ROTY); how \
+                 a flip changes that tilt is not confirmed by a test board yet"
             ),
         });
     }
