@@ -110,6 +110,24 @@ pub struct Outline {
     pub cutouts: Vec<Contour>,
 }
 
+/// A colour as a board file records it: 8-bit sRGB, and how opaque it is (1 = solid, 0 = clear).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Color {
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
+    pub opacity: f64,
+}
+
+/// How the board's faces look, as the file records it. `None` where the file says nothing.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Appearance {
+    pub top_solder_mask: Option<Color>,
+    pub bottom_solder_mask: Option<Color>,
+    pub top_silkscreen: Option<Color>,
+    pub bottom_silkscreen: Option<Color>,
+}
+
 /// A pad's shape.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PadShape {
@@ -276,6 +294,8 @@ pub struct Board {
     pub graphics: Vec<Graphic>,
     pub texts: Vec<Text>,
     pub components: Vec<Placement>,
+    /// Solder mask and silkscreen colours.
+    pub appearance: Appearance,
 }
 
 // ---------------------------------------------------------------------------------------------
