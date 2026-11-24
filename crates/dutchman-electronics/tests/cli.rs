@@ -61,9 +61,13 @@ fn read_writes_a_parts_package() -> Result<(), Box<dyn std::error::Error>> {
         "--json",
     ]);
     let step = std::fs::read_to_string(out.join("board.step"));
+    let manifest = std::fs::read(out.join("manifest.json"));
     std::fs::remove_dir_all(&out).ok();
     let (ok, v) = result?;
     assert!(ok, "{v}");
+    // The folder holds the same manifest the command prints.
+    let on_disk: serde_json::Value = serde_json::from_slice(&manifest?)?;
+    assert_eq!(on_disk, v);
     assert_eq!(v["schema"], "dutchman.parts/1");
     assert_eq!(v["units"], "mm");
     assert_eq!(v["source"]["format"], "altium_pcbdoc");
