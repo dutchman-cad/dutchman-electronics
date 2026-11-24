@@ -162,6 +162,10 @@ pub enum ModelSource {
 }
 
 /// A reference to a component's 3D model, with the model's own placement on the component.
+///
+/// `offset`, `rotation_deg` and an [`ModelSource::Extruded`] outline are in the component's own
+/// frame (see [`Placement`]). The model is turned about its own X, then Y, then Z axis, and then
+/// moved by `offset`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ModelRef {
     pub name: String,
@@ -173,6 +177,15 @@ pub struct ModelRef {
 }
 
 /// A component placed on the board.
+///
+/// The component's own frame: its origin at `at` on the face of the board it sits on, +Z out of
+/// that face. A top-side part's frame is the board's, turned by `rotation_deg` about Z, at the
+/// top face. A bottom-side part's frame is also turned by `rotation_deg` about Z, at the bottom
+/// face, and then flipped over by half a turn about its own X axis, so its +Z points down and its
+/// +Y is the board's -Y (before the turn). So a point (x, y) in the board seen from the top, turned
+/// back into a bottom-side part's frame, has its y negated, and a turn about Z in that frame is a
+/// turn the other way seen from the top. (Test boards confirm this for bottom-side parts at 180
+/// degrees; other turns on the bottom side are not confirmed yet.)
 #[derive(Clone, Debug, PartialEq)]
 pub struct Placement {
     /// "R1", "U3".

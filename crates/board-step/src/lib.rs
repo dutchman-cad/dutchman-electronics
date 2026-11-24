@@ -52,6 +52,9 @@ pub struct BoardStep {
     pub notes: Vec<Note>,
     /// What the solid is made of, for checks.
     pub stats: Stats,
+    /// The solid's height in mm: for the board, its thickness (top face at z = thickness, bottom
+    /// at z = 0); for a prism, `z1 - z0`.
+    pub thickness: f64,
 }
 
 /// Counts of the solid's topology.
@@ -144,6 +147,47 @@ fn polygon(edges: &[Edge2]) -> Vec<Point> {
         samples(e, &mut points);
     }
     points
+}
+
+/// The most outline points a prism's self-crossing check looks at.
+const MAX_PRISM_POINTS: usize = 4096;
+
+/// True when segments `a0 a1` and `b0 b1` cross or touch.
+fn segments_meet(a0: Point, a1: Point, b0: Point, b1: Point) -> bool {
+    let side = |p: Point, q: Point, r: Point| (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
+    let (d1, d2) = (side(b0, b1, a0), side(b0, b1, a1));
+    let (d3, d4) = (side(a0, a1, b0), side(a0, a1, b1));
+    let apart =
+        |u: f64, v: f64| (u > TOLERANCE && v > TOLERANCE) || (u < -TOLERANCE && v < -TOLERANCE);
+    !apart(d1, d2) && !apart(d3, d4)
+}
+
+/// True when a closed polygon's edges meet only where neighbours share a corner.
+fn simple(points: &[Point]) -> bool {
+    let n = points.len();
+    let edge = |i: usize| {
+        let a = points.get(i).copied();
+        let b = points.get((i + 1) % n).copied();
+        a.zip(b)
+    };
+    for i in 0..n {
+        let Some((a0, a1)) = edge(i) else {
+            return false;
+        };
+        // Skip the edge itself and its two neighbours, which share a corner with it.
+        for j in i.saturating_add(2)..n {
+            if i == 0 && j + 1 == n {
+                continue;
+            }
+            let Some((b0, b1)) = edge(j) else {
+                return false;
+            };
+            if segments_meet(a0, a1, b0, b1) {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 /// Twice the signed area of a polygon; positive when counter-clockwise.
@@ -631,13 +675,13 @@ fn edge_loop(w: &mut Writer, edges: &[(Edge3, bool)]) -> usize {
     w.add(format!("EDGE_LOOP('',({}))", ids.join(",")))
 }
 
-fn ring(w: &mut Writer, edges: Vec<Edge2>, thickness: f64, stats: &mut Stats) -> Ring {
+fn ring(w: &mut Writer, edges: Vec<Edge2>, (z0, z1): (f64, f64), stats: &mut Stats) -> Ring {
     let mut vb = Vec::new();
     let mut vt = Vec::new();
     for e in &edges {
-        let pb = w.point(e.start.x, e.start.y, 0.0);
+        let pb = w.point(e.start.x, e.start.y, z0);
         vb.push(w.add(format!("VERTEX_POINT('',#{pb})")));
-        let pt = w.point(e.start.x, e.start.y, thickness);
+        let pt = w.point(e.start.x, e.start.y, z1);
         vt.push(w.add(format!("VERTEX_POINT('',#{pt})")));
     }
     stats.vertices = stats.vertices.saturating_add(vb.len().saturating_mul(2));
@@ -652,7 +696,7 @@ fn ring(w: &mut Writer, edges: Vec<Edge2>, thickness: f64, stats: &mut Stats) ->
         else {
             continue;
         };
-        for (z, v0, v1, list) in [(0.0, b0, b1, &mut bottom), (thickness, t0, t1, &mut top)] {
+        for (z, v0, v1, list) in [(z0, b0, b1, &mut bottom), (z1, t0, t1, &mut top)] {
             let (curve, sense) = match e.kind {
                 Kind2::Line => (
                     w.line([e.start.x, e.start.y, z], [e.end.x, e.end.y, z]),
@@ -667,10 +711,7 @@ fn ring(w: &mut Writer, edges: Vec<Edge2>, thickness: f64, stats: &mut Stats) ->
             let id = w.add(format!("EDGE_CURVE('',#{v0},#{v1},#{curve},{sense})"));
             list.push(Edge3 { id });
         }
-        let vertical = w.line(
-            [e.start.x, e.start.y, 0.0],
-            [e.start.x, e.start.y, thickness],
-        );
+        let vertical = w.line([e.start.x, e.start.y, z0], [e.start.x, e.start.y, z1]);
         let id = w.add(format!("EDGE_CURVE('',#{b0},#{t0},#{vertical},.T.)"));
         up.push(Edge3 { id });
     }
@@ -685,7 +726,7 @@ fn ring(w: &mut Writer, edges: Vec<Edge2>, thickness: f64, stats: &mut Stats) ->
 
 /// The side faces of one ring. Material is on the left of every edge (outer counter-clockwise,
 /// openings clockwise), so each face's outward normal is to the right.
-fn side_faces(w: &mut Writer, ring: &Ring, faces: &mut Vec<usize>) {
+fn side_faces(w: &mut Writer, ring: &Ring, z0: f64, faces: &mut Vec<usize>) {
     let count = ring.edges.len();
     for (i, e) in ring.edges.iter().enumerate() {
         let next = (i + 1) % count;
@@ -704,7 +745,7 @@ fn side_faces(w: &mut Writer, ring: &Ring, faces: &mut Vec<usize>) {
                 let (dx, dy) = (e.end.x - e.start.x, e.end.y - e.start.y);
                 let len = dx.hypot(dy);
                 let (tx, ty) = (dx / len, dy / len);
-                let a = w.placement([e.start.x, e.start.y, 0.0], [ty, -tx, 0.0], [tx, ty, 0.0]);
+                let a = w.placement([e.start.x, e.start.y, z0], [ty, -tx, 0.0], [tx, ty, 0.0]);
                 (w.add(format!("PLANE('',#{a})")), ".T.")
             }
             Kind2::Arc {
@@ -712,7 +753,7 @@ fn side_faces(w: &mut Writer, ring: &Ring, faces: &mut Vec<usize>) {
                 radius,
                 ccw,
             } => {
-                let a = w.placement([center.x, center.y, 0.0], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]);
+                let a = w.placement([center.x, center.y, z0], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]);
                 let s = w.add(format!("CYLINDRICAL_SURFACE('',#{a},{})", real(radius)));
                 (s, if ccw { ".T." } else { ".F." })
             }
@@ -721,40 +762,24 @@ fn side_faces(w: &mut Writer, ring: &Ring, faces: &mut Vec<usize>) {
     }
 }
 
-/// Writes the board substrate as a STEP file. `name` becomes the product name.
-pub fn write(board: &Board, name: &str) -> Result<BoardStep, StepError> {
-    let mut notes = Vec::new();
-    let thickness = match board.thickness {
-        Some(t) if t.is_finite() && t > TOLERANCE => t,
-        Some(_) => {
-            return Err(StepError::Outline(
-                "the board thickness is not usable".into(),
-            ))
-        }
-        None => {
-            notes.push(Note {
-                severity: Severity::Warning,
-                message: format!(
-                    "the board file gives no thickness; the solid uses {DEFAULT_THICKNESS} mm"
-                ),
-            });
-            DEFAULT_THICKNESS
-        }
-    };
-    let profile = profile(board, &mut notes)?;
-    let mut stats = Stats {
-        openings: profile.openings.len(),
-        ..Stats::default()
-    };
-
+/// Writes one solid: `outer` (counter-clockwise) with `openings` (clockwise) cut through it,
+/// extruded from `z0` up to `z1`, as a whole STEP file.
+fn solid(
+    outer: Vec<Edge2>,
+    openings: Vec<Vec<Edge2>>,
+    (z0, z1): (f64, f64),
+    name: &str,
+    description: &str,
+    stats: &mut Stats,
+) -> String {
     let mut w = Writer::default();
-    let mut rings = vec![ring(&mut w, profile.outer, thickness, &mut stats)];
-    for opening in profile.openings {
-        rings.push(ring(&mut w, opening, thickness, &mut stats));
+    let mut rings = vec![ring(&mut w, outer, (z0, z1), stats)];
+    for opening in openings {
+        rings.push(ring(&mut w, opening, (z0, z1), stats));
     }
     let mut faces = Vec::new();
     for r in &rings {
-        side_faces(&mut w, r, &mut faces);
+        side_faces(&mut w, r, z0, &mut faces);
     }
     // Top face, normal +Z: every ring's top edges forward.
     let mut top_bounds = Vec::new();
@@ -779,13 +804,13 @@ pub fn write(board: &Board, name: &str) -> Result<BoardStep, StepError> {
             .collect::<Vec<_>>()
             .join(",")
     };
-    let top_plane = w.placement([0.0, 0.0, thickness], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]);
+    let top_plane = w.placement([0.0, 0.0, z1], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]);
     let top_surface = w.add(format!("PLANE('',#{top_plane})"));
     faces.push(w.add(format!(
         "ADVANCED_FACE('',({}),#{top_surface},.T.)",
         ids(&top_bounds)
     )));
-    let bottom_plane = w.placement([0.0, 0.0, 0.0], [0.0, 0.0, -1.0], [1.0, 0.0, 0.0]);
+    let bottom_plane = w.placement([0.0, 0.0, z0], [0.0, 0.0, -1.0], [1.0, 0.0, 0.0]);
     let bottom_surface = w.add(format!("PLANE('',#{bottom_plane})"));
     faces.push(w.add(format!(
         "ADVANCED_FACE('',({}),#{bottom_surface},.T.)",
@@ -838,7 +863,7 @@ pub fn write(board: &Board, name: &str) -> Result<BoardStep, StepError> {
 
     let mut out = String::new();
     out.push_str("ISO-10303-21;\nHEADER;\n");
-    out.push_str("FILE_DESCRIPTION(('Board substrate'),'2;1');\n");
+    let _ = writeln!(out, "FILE_DESCRIPTION(({}),'2;1');", text(description));
     // A fixed time stamp: the same board always gives the same file.
     let _ = writeln!(
         out,
@@ -850,10 +875,94 @@ pub fn write(board: &Board, name: &str) -> Result<BoardStep, StepError> {
         let _ = writeln!(out, "#{}={line};", i.saturating_add(1));
     }
     out.push_str("ENDSEC;\nEND-ISO-10303-21;\n");
+    out
+}
+
+/// Writes the board substrate as a STEP file. `name` becomes the product name.
+pub fn write(board: &Board, name: &str) -> Result<BoardStep, StepError> {
+    let mut notes = Vec::new();
+    let thickness = match board.thickness {
+        Some(t) if t.is_finite() && t > TOLERANCE => t,
+        Some(_) => {
+            return Err(StepError::Outline(
+                "the board thickness is not usable".into(),
+            ))
+        }
+        None => {
+            notes.push(Note {
+                severity: Severity::Warning,
+                message: format!(
+                    "the board file gives no thickness; the solid uses {DEFAULT_THICKNESS} mm"
+                ),
+            });
+            DEFAULT_THICKNESS
+        }
+    };
+    let profile = profile(board, &mut notes)?;
+    let mut stats = Stats {
+        openings: profile.openings.len(),
+        ..Stats::default()
+    };
+
+    let text = solid(
+        profile.outer,
+        profile.openings,
+        (0.0, thickness),
+        name,
+        "Board substrate",
+        &mut stats,
+    );
     Ok(BoardStep {
-        text: out,
+        text,
         notes,
         stats,
+        thickness,
+    })
+}
+
+/// Writes a prism as a STEP file: the closed `outline` (in the XY plane, either winding)
+/// extruded from `z0` up to `z1`. Used for components' extruded 3D bodies. `name` becomes the
+/// product name.
+pub fn prism(outline: &Contour, z0: f64, z1: f64, name: &str) -> Result<BoardStep, StepError> {
+    if !(z0.is_finite() && z1.is_finite() && z1 - z0 > TOLERANCE) {
+        return Err(StepError::Outline(format!(
+            "a prism needs its top above its bottom (from {z0} to {z1})"
+        )));
+    }
+    if outline.segments.is_empty() {
+        return Err(StepError::Outline("the prism has no outline".into()));
+    }
+    let mut outer = contour_edges(outline).map_err(StepError::Outline)?;
+    let points = polygon(&outer);
+    if points.len() > MAX_PRISM_POINTS {
+        return Err(StepError::TooLarge(format!(
+            "an extruded outline of more than {MAX_PRISM_POINTS} points"
+        )));
+    }
+    if !simple(&points) {
+        return Err(StepError::Outline("the outline crosses itself".into()));
+    }
+    let area = signed_area2(&points);
+    if area.abs() < TOLERANCE {
+        return Err(StepError::Outline("the outline encloses no area".into()));
+    }
+    if area < 0.0 {
+        reverse(&mut outer);
+    }
+    let mut stats = Stats::default();
+    let text = solid(
+        outer,
+        Vec::new(),
+        (z0, z1),
+        name,
+        "Extruded body",
+        &mut stats,
+    );
+    Ok(BoardStep {
+        text,
+        notes: Vec::new(),
+        stats,
+        thickness: z1 - z0,
     })
 }
 
