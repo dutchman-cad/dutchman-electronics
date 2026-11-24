@@ -100,8 +100,18 @@ pub fn build(path: &Path, bytes: &[u8]) -> Result<Package, String> {
     })];
     let mut files = vec![(BOARD_FILE.to_string(), step.text.into_bytes())];
     let placed = components(&board.components, step.thickness);
-    models.extend(placed.models.iter().map(|(id, file, _)| json!({ "id": id, "file": file })));
-    files.extend(placed.models.into_iter().map(|(_, file, text)| (file, text.into_bytes())));
+    models.extend(
+        placed
+            .models
+            .iter()
+            .map(|(id, file, _)| json!({ "id": id, "file": file })),
+    );
+    files.extend(
+        placed
+            .models
+            .into_iter()
+            .map(|(_, file, text)| (file, text.into_bytes())),
+    );
     parts.extend(placed.parts);
     notes.extend(placed.notes);
     let manifest = json!({
@@ -273,6 +283,14 @@ fn components(list: &[Placement], thickness: f64) -> Placed {
                             that turn yet",
             }));
         }
+        let half_turns = p.rotation_deg / 180.0;
+        if p.side == Side::Bottom && (half_turns - half_turns.round()).abs() > 1e-9 {
+            part_notes.push(json!({
+                "severity": "Degraded",
+                "message": "a bottom-side part turned by other than 0 or 180 degrees; no test \
+                            board confirms which way such a turn goes yet",
+            }));
+        }
         placed.parts.push(json!({
             "name": name,
             "model": id,
@@ -281,7 +299,10 @@ fn components(list: &[Placement], thickness: f64) -> Placed {
         }));
     }
     for (list, what) in [
-        (no_model, "component(s) have no 3D model and are not in the package"),
+        (
+            no_model,
+            "component(s) have no 3D model and are not in the package",
+        ),
         (
             embedded,
             "component(s) have a 3D model stored in the board, which is not unpacked yet",
@@ -290,7 +311,10 @@ fn components(list: &[Placement], thickness: f64) -> Placed {
             external,
             "component(s) refer to a 3D model file outside the board and are not in the package",
         ),
-        (failed, "component(s) have an extruded body that could not be built"),
+        (
+            failed,
+            "component(s) have an extruded body that could not be built",
+        ),
     ] {
         if !list.is_empty() {
             placed.notes.push(json!({
@@ -434,10 +458,17 @@ mod tests {
         assert_eq!(p["model"], "model-1");
         assert_eq!(
             p["transform"],
-            json!([[1.0, 0.0, 0.0, 25.0], [0.0, 1.0, 0.0, 15.0], [0.0, 0.0, 1.0, 1.6]])
+            json!([
+                [1.0, 0.0, 0.0, 25.0],
+                [0.0, 1.0, 0.0, 15.0],
+                [0.0, 0.0, 1.0, 1.6]
+            ])
         );
         // one-resistor's README: the box spans x 24.2 to 25.8, y 14.6 to 15.4, 0.45 high.
-        assert!(close(apply(&p["transform"], [0.8, 0.4, 0.45]), [25.8, 15.4, 2.05]));
+        assert!(close(
+            apply(&p["transform"], [0.8, 0.4, 0.45]),
+            [25.8, 15.4, 2.05]
+        ));
     }
 
     #[test]
@@ -478,6 +509,24 @@ mod tests {
     }
 
     #[test]
+    fn a_bottom_side_turn_not_pinned_by_a_test_board_is_flagged() {
+        let placed = components(
+            &[
+                part("R1", 0.0, 0.0, 180.0, Side::Bottom),
+                part("R2", 0.0, 0.0, 90.0, Side::Bottom),
+                part("R3", 0.0, 0.0, 90.0, Side::Top),
+            ],
+            1.6,
+        );
+        let counts: Vec<usize> = placed
+            .parts
+            .iter()
+            .map(|p| p["notes"].as_array().unwrap().len())
+            .collect();
+        assert_eq!(counts, [0, 1, 0]);
+    }
+
+    #[test]
     fn equal_bodies_share_one_model_and_names_stay_unique() {
         let list = [
             part("R1", 10.0, 10.0, 0.0, Side::Top),
@@ -487,7 +536,11 @@ mod tests {
         ];
         let placed = components(&list, 1.6);
         assert_eq!(placed.models.len(), 1);
-        let names: Vec<&str> = placed.parts.iter().map(|p| p["name"].as_str().unwrap()).collect();
+        let names: Vec<&str> = placed
+            .parts
+            .iter()
+            .map(|p| p["name"].as_str().unwrap())
+            .collect();
         assert_eq!(names, ["R1", "R1 (2)", "Board (2)", "Part 4"]);
         assert!(placed.parts.iter().all(|p| p["model"] == "model-1"));
     }
@@ -527,7 +580,9 @@ mod tests {
         assert_eq!(messages.len(), 4, "{messages:?}");
         assert!(messages[0].ends_with("no 3D model and are not in the package: R1"));
         assert!(messages[1].ends_with("not unpacked yet: U1"));
-        assert!(messages[2].ends_with("outside the board and are not in the package: U2 (soic8.step)"));
+        assert!(
+            messages[2].ends_with("outside the board and are not in the package: U2 (soic8.step)")
+        );
         assert!(messages[3].contains("U3: cannot make the board solid"));
     }
 
@@ -548,7 +603,10 @@ mod tests {
         assert!(close(apply(&r1["transform"], [0.0; 3]), [25.0, 15.0, 1.6]));
         let files: Vec<&str> = package.files.iter().map(|(f, _)| f.as_str()).collect();
         assert_eq!(files, ["board.step", "model-1.step"]);
-        assert_eq!(m["models"][1], json!({ "id": "model-1", "file": "model-1.step" }));
+        assert_eq!(
+            m["models"][1],
+            json!({ "id": "model-1", "file": "model-1.step" })
+        );
     }
 
     #[cfg(feature = "altium")]
@@ -563,7 +621,10 @@ mod tests {
         let corners = [[-0.8, -0.4, 0.0], [0.8, 0.4, 0.45]].map(|p| apply(t, p));
         let (lo, hi) = (corners[0], corners[1]);
         let span = |k: usize| (lo[k].min(hi[k]), lo[k].max(hi[k]));
-        assert!(close([span(0).0, span(1).0, span(2).0], [24.2, 14.6, -0.45]));
+        assert!(close(
+            [span(0).0, span(1).0, span(2).0],
+            [24.2, 14.6, -0.45]
+        ));
         assert!(close([span(0).1, span(1).1, span(2).1], [25.8, 15.4, 0.0]));
     }
 

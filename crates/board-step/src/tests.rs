@@ -369,6 +369,55 @@ fn a_prism_is_a_box_between_its_heights() {
     assert!(out.text.contains("CARTESIAN_POINT('',(0.8,0.4,0.45))"));
     assert!(out.text.contains("CARTESIAN_POINT('',(-0.8,-0.4,0.1))"));
     check_topology(&out.text);
+    // Every point of the solid (vertices, line starts, plane origins) is at one of its two
+    // heights; only the representation's own origin is at z = 0.
+    let heights = point_heights(&out.text);
+    assert_eq!(heights.iter().filter(|z| **z == 0.0).count(), 1, "{heights:?}");
+    assert!(heights.iter().all(|z| [0.0, 0.1, 0.45].contains(z)), "{heights:?}");
+}
+
+/// The z of every CARTESIAN_POINT in a STEP file.
+fn point_heights(text: &str) -> Vec<f64> {
+    entities(text)
+        .values()
+        .filter(|(name, _)| name == "CARTESIAN_POINT")
+        .map(|(_, args)| {
+            let inner = args.rsplit_once('(').unwrap().1;
+            let z = inner.trim_end_matches(')').rsplit(',').next().unwrap();
+            z.parse::<f64>().unwrap()
+        })
+        .collect()
+}
+
+#[test]
+fn a_round_prism_has_its_cylinder_between_its_heights() {
+    let circle = Contour {
+        segments: vec![Segment::Arc {
+            center: p(1.0, 2.0),
+            radius: 0.5,
+            start_deg: 0.0,
+            end_deg: 360.0,
+        }],
+    };
+    let out = prism(&circle, 0.2, 1.2, "pin").unwrap();
+    assert!(out.text.contains("CYLINDRICAL_SURFACE('',"));
+    assert!(out.text.contains("CARTESIAN_POINT('',(1.,2.,0.2))"));
+    check_topology(&out.text);
+    let heights = point_heights(&out.text);
+    assert!(heights.iter().all(|z| [0.0, 0.2, 1.2].contains(z)), "{heights:?}");
+}
+
+#[test]
+fn a_prism_outline_that_crosses_itself_is_an_error() {
+    // A bow tie whose two lobes differ, so its signed area is not zero.
+    let bow = polyline(&[(0.0, 0.0), (3.0, 3.0), (3.0, 0.0), (0.0, 2.0)]);
+    assert_eq!(
+        prism(&bow, 0.0, 1.0, "b"),
+        Err(StepError::Outline("the outline crosses itself".into()))
+    );
+    // A plain L shape is fine.
+    let l = polyline(&[(0.0, 0.0), (2.0, 0.0), (2.0, 1.0), (1.0, 1.0), (1.0, 2.0), (0.0, 2.0)]);
+    check_topology(&prism(&l, 0.0, 1.0, "l").unwrap().text);
 }
 
 #[test]

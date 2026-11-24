@@ -52,7 +52,8 @@ pub struct BoardStep {
     pub notes: Vec<Note>,
     /// What the solid is made of, for checks.
     pub stats: Stats,
-    /// The substrate's thickness in mm: the top face is at z = thickness, the bottom at z = 0.
+    /// The solid's height in mm: for the board, its thickness (top face at z = thickness, bottom
+    /// at z = 0); for a prism, `z1 - z0`.
     pub thickness: f64,
 }
 
@@ -146,6 +147,46 @@ fn polygon(edges: &[Edge2]) -> Vec<Point> {
         samples(e, &mut points);
     }
     points
+}
+
+/// The most outline points a prism's self-crossing check looks at.
+const MAX_PRISM_POINTS: usize = 4096;
+
+/// True when segments `a0 a1` and `b0 b1` cross or touch.
+fn segments_meet(a0: Point, a1: Point, b0: Point, b1: Point) -> bool {
+    let side = |p: Point, q: Point, r: Point| (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
+    let (d1, d2) = (side(b0, b1, a0), side(b0, b1, a1));
+    let (d3, d4) = (side(a0, a1, b0), side(a0, a1, b1));
+    let apart = |u: f64, v: f64| (u > TOLERANCE && v > TOLERANCE) || (u < -TOLERANCE && v < -TOLERANCE);
+    !apart(d1, d2) && !apart(d3, d4)
+}
+
+/// True when a closed polygon's edges meet only where neighbours share a corner.
+fn simple(points: &[Point]) -> bool {
+    let n = points.len();
+    let edge = |i: usize| {
+        let a = points.get(i).copied();
+        let b = points.get((i + 1) % n).copied();
+        a.zip(b)
+    };
+    for i in 0..n {
+        let Some((a0, a1)) = edge(i) else {
+            return false;
+        };
+        // Skip the edge itself and its two neighbours, which share a corner with it.
+        for j in i.saturating_add(2)..n {
+            if i == 0 && j + 1 == n {
+                continue;
+            }
+            let Some((b0, b1)) = edge(j) else {
+                return false;
+            };
+            if segments_meet(a0, a1, b0, b1) {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 /// Twice the signed area of a polygon; positive when counter-clockwise.
@@ -891,7 +932,16 @@ pub fn prism(outline: &Contour, z0: f64, z1: f64, name: &str) -> Result<BoardSte
         return Err(StepError::Outline("the prism has no outline".into()));
     }
     let mut outer = contour_edges(outline).map_err(StepError::Outline)?;
-    let area = signed_area2(&polygon(&outer));
+    let points = polygon(&outer);
+    if points.len() > MAX_PRISM_POINTS {
+        return Err(StepError::TooLarge(format!(
+            "an extruded outline of more than {MAX_PRISM_POINTS} points"
+        )));
+    }
+    if !simple(&points) {
+        return Err(StepError::Outline("the outline crosses itself".into()));
+    }
+    let area = signed_area2(&points);
     if area.abs() < TOLERANCE {
         return Err(StepError::Outline("the outline encloses no area".into()));
     }
@@ -899,7 +949,14 @@ pub fn prism(outline: &Contour, z0: f64, z1: f64, name: &str) -> Result<BoardSte
         reverse(&mut outer);
     }
     let mut stats = Stats::default();
-    let text = solid(outer, Vec::new(), (z0, z1), name, "Extruded body", &mut stats);
+    let text = solid(
+        outer,
+        Vec::new(),
+        (z0, z1),
+        name,
+        "Extruded body",
+        &mut stats,
+    );
     Ok(BoardStep {
         text,
         notes: Vec::new(),
