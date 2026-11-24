@@ -17,6 +17,10 @@
 //! - `/Models/Data` is a run of records, each a `u32` length and text, with `ID`, `NAME`
 //!   (`box-1608.step`) and `EMBED=TRUE`. The n-th record (from 0) is stored in the stream
 //!   `/Models/n`: `/Models/0` is the STEP file compressed with zlib.
+//! - On `one-rotated-resistor` (R1 at 90 degrees) the extruded box's outline is stored turned:
+//!   x 24.6 to 25.4, y 14.2 to 15.8; turned back by the part's rotation it is the same
+//!   (-0.8, -0.4) to (0.8, 0.4) box as on `one-resistor`. On `one-bottom-resistor` the body has
+//!   `BODYPROJECTION=1` (0 on the top-side boards).
 
 use std::collections::BTreeMap;
 
@@ -71,7 +75,10 @@ pub(crate) fn attach(
             extra += 1;
             continue;
         }
-        if placement.rotation_deg != 0.0 || placement.side == Side::Bottom {
+        // An extruded body on a rotated part is confirmed by `one-rotated-resistor`. Not yet
+        // confirmed: a STEP model on a rotated part, and any model on a bottom-side part (our only
+        // bottom-side body is a symmetric box, so a mirror would not show).
+        if placement.side == Side::Bottom || (is_step(body) && placement.rotation_deg != 0.0) {
             unconfirmed += 1;
         }
         match model(body, placement, &models) {
@@ -83,8 +90,8 @@ pub(crate) fn attach(
         notes.push(Note {
             severity: Severity::Warning,
             message: format!(
-                "{unconfirmed} component model(s) belong to a rotated or bottom-side component; \
-                 their placement on the component is not confirmed by a test board yet"
+                "{unconfirmed} component model(s) belong to a bottom-side part, or are STEP models \
+                 of a rotated part; their placement on the component is not confirmed by a test board yet"
             ),
         });
     }
@@ -109,6 +116,22 @@ pub(crate) fn attach(
         });
     }
     Ok(())
+}
+
+/// True when a body record's text says `MODEL.MODELTYPE=1` (a STEP model).
+fn is_step(body: &[u8]) -> bool {
+    let Some(text_len) = read_u32(body, BODY_SKIPPED) else {
+        return false;
+    };
+    let start = BODY_SKIPPED + 4;
+    let text = start
+        .checked_add(text_len)
+        .and_then(|end| body.get(start..end))
+        .unwrap_or_default();
+    Properties::parse(text)
+        .get("MODEL.MODELTYPE")
+        .map(str::trim)
+        == Some("1")
 }
 
 /// The stream of each embedded model, by its ID.

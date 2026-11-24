@@ -40,6 +40,9 @@
 //!   `outline-with-hole` and on every SMD pad.
 //!   Bytes 7..9 are the index of the component the pad belongs to (see `components.rs`);
 //!   its designator becomes the pad's owner.
+//! - Nets (`one-net`): `/Nets6/Data` is a run of records, each a `u32` length and text with
+//!   `NAME=GND`; the n-th record (from 0) is net n. Bytes 3..5 of a track's body are its net
+//!   index: 0 on `one-net`'s track, `ff ff` for no net.
 //! - `/Fills6/Data` (`one-fill`): records of type `0x06` and a `u32` length; in the body, byte 0
 //!   is the layer, bytes 3..5 the net index, from byte 13 two corners (x1, y1, x2, y2), then at
 //!   byte 29 an `f64` that is 0 on our only fill and taken to be the rotation.
@@ -80,6 +83,8 @@ pub(crate) struct CopperLayers {
     by_number: Vec<Option<usize>>,
     /// For each layer byte, its name, when `/Board6/Data` names it.
     names: Vec<Option<String>>,
+    /// The net names of `/Nets6/Data`, by net index.
+    pub nets: Vec<String>,
 }
 
 impl CopperLayers {
@@ -130,6 +135,7 @@ impl CopperLayers {
             layers,
             by_number,
             names,
+            nets: Vec::new(),
         }
     }
 
@@ -179,6 +185,15 @@ impl CopperLayers {
         self.name(number)
     }
 
+    /// The net of a record whose body holds the net index at bytes 3..5: `Ok(None)` for no net,
+    /// `Err(())` for a net index with no name in `/Nets6/Data`.
+    fn net(&self, body: &[u8]) -> Result<Option<String>, ()> {
+        match read_u16(body, 3) {
+            None | Some(NO_NET) => Ok(None),
+            Some(i) => self.nets.get(usize::from(i)).cloned().map(Some).ok_or(()),
+        }
+    }
+
     fn copper_index(&self, number: u8) -> Option<usize> {
         self.by_number.get(usize::from(number)).copied().flatten()
     }
@@ -196,7 +211,10 @@ impl CopperLayers {
 #[derive(Default)]
 struct Skipped {
     off_copper: std::collections::BTreeMap<String, usize>,
+    /// Items that belong to a net the board model has no place for (pads, vias, fills).
     with_net: usize,
+    /// Items whose net index has no name in `/Nets6/Data`.
+    unnamed_net: usize,
     /// Items left out because an angle in them is not a real angle.
     bad_angle: usize,
 }
@@ -222,8 +240,17 @@ impl Skipped {
             notes.push(Note {
                 severity: Severity::Info,
                 message: format!(
-                    "{} {what} belong to a net; net names are not read yet",
+                    "{} {what} belong to a net; the board model keeps no net for them",
                     self.with_net
+                ),
+            });
+        }
+        if self.unnamed_net > 0 {
+            notes.push(Note {
+                severity: Severity::Warning,
+                message: format!(
+                    "{} {what} name a net that /Nets6/Data does not have; read without a net",
+                    self.unnamed_net
                 ),
             });
         }
@@ -243,16 +270,17 @@ pub(crate) fn tracks(
         let from = point(body, 13)?;
         let to = point(body, 21)?;
         let width = length(body, 29)?;
-        if read_u16(body, 3) != Some(NO_NET) {
-            skipped.with_net += 1;
-        }
+        let net = layers.net(body).unwrap_or_else(|()| {
+            skipped.unnamed_net += 1;
+            None
+        });
         match layers.copper_index(layer_number) {
             Some(layer) => items.push(CopperItem::Track {
                 layer,
                 from,
                 to,
                 width,
-                net: None,
+                net,
             }),
             None => {
                 *skipped
@@ -399,9 +427,10 @@ pub(crate) fn arcs(
             skipped.bad_angle += 1;
             continue;
         };
-        if read_u16(body, 3) != Some(NO_NET) {
-            skipped.with_net += 1;
-        }
+        let net = layers.net(body).unwrap_or_else(|()| {
+            skipped.unnamed_net += 1;
+            None
+        });
         let Some(layer) = layers.copper_index(layer_number) else {
             *skipped
                 .off_copper
@@ -419,7 +448,7 @@ pub(crate) fn arcs(
             start_deg,
             end_deg,
             width,
-            net: None,
+            net,
         });
     }
     if unconfirmed_start > 0 {
