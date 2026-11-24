@@ -12,6 +12,7 @@
 
 use std::io::{Cursor, Read};
 
+mod appearance;
 mod board;
 mod components;
 mod copper;
@@ -171,6 +172,7 @@ impl InputFormat for Altium {
             }
         }
         let record = board::board_record(&board6).map_err(ReadError::Invalid)?;
+        let appearance = appearance::read(&record, &mut notes);
         let shape = board::read(&record, regions6.as_deref(), &region_arcs, &mut notes)
             .map_err(ReadError::Invalid)?;
         let mut components = match &components6 {
@@ -265,6 +267,7 @@ impl InputFormat for Altium {
                 graphics,
                 texts,
                 components: components.placements,
+                appearance,
                 ..Board::default()
             },
             notes,
