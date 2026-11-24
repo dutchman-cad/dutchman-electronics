@@ -144,3 +144,81 @@ fn the_rotated_fill_is_turned_30_degrees_about_its_centre() -> Result<(), Box<dy
     assert!(out.notes.is_empty(), "{:?}", out.notes);
     Ok(())
 }
+
+/// Checks R1's turned, off-centre STEP model on one of the eighth-batch boards: on the part it is
+/// always at (-0.350, 0.606), turned 30 degrees.
+fn check_turned_model(
+    name: &str,
+    at: (f64, f64),
+    rotation: f64,
+    side: Side,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let out = read(name)?;
+    let [r1] = out.board.components.as_slice() else {
+        return Err(format!("{name}: expected one part").into());
+    };
+    assert_eq!((r1.designator.as_str(), r1.side), ("R1", side), "{name}");
+    assert!(
+        near(r1.at.x, at.0) && near(r1.at.y, at.1),
+        "{name}: {:?}",
+        r1.at
+    );
+    assert!(
+        near(r1.rotation_deg, rotation),
+        "{name}: {}",
+        r1.rotation_deg
+    );
+    let model = r1.model.as_ref().ok_or("R1 has no model")?;
+    assert_eq!(model.name, "box-offset.step", "{name}");
+    let want = [-0.35, 0.7 * 30f64.to_radians().cos(), 0.0];
+    assert!(
+        model.offset.iter().zip(want).all(|(g, w)| near(*g, w)),
+        "{name}: {:?}",
+        model.offset
+    );
+    assert!(
+        near(model.rotation_deg[0], 0.0)
+            && near(model.rotation_deg[1], 0.0)
+            && near(model.rotation_deg[2], 30.0),
+        "{name}: {:?}",
+        model.rotation_deg
+    );
+    assert!(
+        !out.notes.iter().any(|n| n.severity == Severity::Warning),
+        "{name}: {:?}",
+        out.notes
+    );
+    Ok(())
+}
+
+#[test]
+fn a_model_turned_on_a_top_side_part() -> Result<(), Box<dyn std::error::Error>> {
+    check_turned_model(
+        "one-turned-step-resistor.PcbDoc",
+        (25.0, 15.0),
+        0.0,
+        Side::Top,
+    )
+}
+
+#[test]
+fn a_model_turned_on_a_flipped_part_keeps_its_place() -> Result<(), Box<dyn std::error::Error>> {
+    // Flipping moved R1's centre to (25.036, 15) and gave it rotation 180 (see README.txt).
+    check_turned_model(
+        "one-bottom-turned-step-resistor.PcbDoc",
+        (25.0356, 15.0),
+        180.0,
+        Side::Bottom,
+    )
+}
+
+#[test]
+fn a_model_turned_on_a_flipped_part_at_90_keeps_its_place() -> Result<(), Box<dyn std::error::Error>>
+{
+    check_turned_model(
+        "one-bottom-rotated-turned-step-resistor.PcbDoc",
+        (23.7474, 15.0),
+        90.0,
+        Side::Bottom,
+    )
+}

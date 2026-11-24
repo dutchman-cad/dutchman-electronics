@@ -199,6 +199,17 @@ fn the_offset_extruded_body_is_the_same_on_the_flipped_part(
 }
 
 #[test]
+fn the_offset_extruded_body_is_the_same_on_a_flipped_part_at_90(
+) -> Result<(), Box<dyn std::error::Error>> {
+    check_offset_extruded(
+        "one-bottom-rotated-extruded-resistor.PcbDoc",
+        (25.4, 15.0),
+        90.0,
+        Side::Bottom,
+    )
+}
+
+#[test]
 fn the_track_on_one_net_belongs_to_gnd() -> Result<(), Box<dyn std::error::Error>> {
     let out = read("one-net.PcbDoc")?;
     let [CopperItem::Track { net, .. }] = out.board.copper.as_slice() else {
