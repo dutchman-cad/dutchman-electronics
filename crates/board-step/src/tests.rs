@@ -43,6 +43,7 @@ fn hole(x: f64, y: f64, drill: f64) -> CopperItem {
         size_y: drill,
         rotation_deg: 0.0,
         drill: Some(drill),
+        plated: false,
         owner: None,
     }
 }

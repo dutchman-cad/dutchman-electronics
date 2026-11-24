@@ -123,6 +123,8 @@ pub enum CopperItem {
         rotation_deg: f64,
         /// A through-hole pad has a drill diameter.
         drill: Option<f64>,
+        /// The hole is plated (lined with copper). Always false for a pad without a hole.
+        plated: bool,
         /// The designator of the component this pad belongs to, if any.
         owner: Option<String>,
     },

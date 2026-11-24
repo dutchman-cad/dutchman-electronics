@@ -1,8 +1,8 @@
 //! Altium `.PcbDoc` reader: reads a board file into the neutral model in the `board-model` crate.
 //! Roadmap steps 1 and 2 are done: open the container and list its streams; read the board
-//! outline, its cutouts and the board thickness (`board.rs`). Step 3 has started: tracks and pads
-//! on copper layers (`copper.rs`). Step 5 has started: component placements (`components.rs`).
-//! Everything else in the file is reported as a "not read yet"
+//! outline, its cutouts and the board thickness (`board.rs`). Step 3 has started: tracks, track
+//! arcs, pads and vias on copper layers (`copper.rs`). Step 5 has started: component placements
+//! (`components.rs`). Everything else in the file is reported as a "not read yet"
 //! note.
 //!
 //! A `.PcbDoc` is an OLE / Compound File Binary container: a small file system inside one file,
@@ -24,7 +24,6 @@ use board_model::{
 /// Streams holding board objects that this version does not read yet. Each one that has data
 /// gets a Dropped note, so nothing is lost silently.
 const NOT_READ_YET: &[(&str, &str)] = &[
-    ("/Arcs6/Data", "arcs"),
     ("/ComponentBodies6/Data", "component 3D bodies"),
     ("/Dimensions6/Data", "dimensions"),
     ("/Fills6/Data", "fills"),
@@ -35,7 +34,6 @@ const NOT_READ_YET: &[(&str, &str)] = &[
     ),
     ("/ShapeBasedRegions6/Data", "shape-based regions"),
     ("/Texts6/Data", "texts"),
-    ("/Vias6/Data", "vias"),
 ];
 
 /// The first eight bytes of every OLE / Compound File Binary file.
@@ -133,6 +131,8 @@ impl InputFormat for Altium {
         let components6 = read_stream(&mut container, "/Components6/Data")?;
         let texts6 = read_stream(&mut container, "/Texts6/Data")?;
         let wide_strings6 = read_stream(&mut container, "/WideStrings6/Data")?;
+        let arcs6 = read_stream(&mut container, "/Arcs6/Data")?;
+        let vias6 = read_stream(&mut container, "/Vias6/Data")?;
 
         let mut notes = Vec::new();
         let record = board::board_record(&board6).map_err(ReadError::Invalid)?;
@@ -153,10 +153,16 @@ impl InputFormat for Altium {
         if let Some(data) = &tracks6 {
             copper.extend(copper::tracks(data, &layers, &mut notes).map_err(ReadError::Invalid)?);
         }
+        if let Some(data) = &arcs6 {
+            copper.extend(copper::arcs(data, &layers, &mut notes).map_err(ReadError::Invalid)?);
+        }
         if let Some(data) = &pads6 {
             copper.extend(
                 copper::pads(data, &layers, &components, &mut notes).map_err(ReadError::Invalid)?,
             );
+        }
+        if let Some(data) = &vias6 {
+            copper.extend(copper::vias(data, &layers, &mut notes).map_err(ReadError::Invalid)?);
         }
         for (path, what) in NOT_READ_YET {
             if let Some(s) = streams.iter().find(|s| s.path == *path && s.len > 0) {
