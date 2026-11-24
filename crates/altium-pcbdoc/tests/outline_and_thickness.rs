@@ -254,3 +254,44 @@ fn outline_with_arcs_has_rounded_corners_and_a_round_cutout(
     assert!(out.notes.is_empty(), "{:?}", out.notes);
     Ok(())
 }
+
+#[test]
+fn outline_with_notch_has_convex_and_concave_arcs() -> Result<(), Box<dyn std::error::Error>> {
+    let out = read("outline-with-notch.PcbDoc")?;
+    let outer = &out.board.outline.outer;
+    let (_, lines) = arcs_and_lines(outer);
+    assert_eq!(lines, 8, "{outer:?}");
+    assert!(chained(outer), "{outer:?}");
+    // The outline comes counter-clockwise: the notch's mouth corners as counter-clockwise arcs,
+    // its concave bottom corners as clockwise ones, each from where the outline reaches it.
+    let arcs: Vec<(ArcXy, bool)> = outer
+        .segments
+        .iter()
+        .filter_map(|s| match *s {
+            Segment::Arc {
+                center,
+                radius,
+                start_deg,
+                end_deg,
+                clockwise,
+            } => Some(((center.x, center.y, radius, start_deg, end_deg), clockwise)),
+            Segment::Line { .. } => None,
+        })
+        .collect();
+    assert_eq!(arcs.len(), 4, "{arcs:?}");
+    for (want, clockwise) in [
+        ((31.0, 29.0, 1.0, 90.0, 180.0), false),
+        ((28.0, 22.0, 2.0, 0.0, 270.0), true),
+        ((22.0, 22.0, 2.0, 270.0, 180.0), true),
+        ((19.0, 29.0, 1.0, 0.0, 90.0), false),
+    ] {
+        assert!(
+            arcs.iter()
+                .any(|&(got, cw)| cw == clockwise && same_arc(got, want)),
+            "{want:?} {clockwise} in {arcs:?}"
+        );
+    }
+    assert!(out.board.outline.cutouts.is_empty());
+    assert!(out.notes.is_empty(), "{:?}", out.notes);
+    Ok(())
+}

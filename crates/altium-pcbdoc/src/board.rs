@@ -12,8 +12,11 @@
 //!   and angles are 0). `KINDn=1` is an arc with centre (`CXn`, `CYn`), radius `Rn`, running
 //!   counter-clockwise from `SAn` to `EAn`: on `outline-with-arcs` (a 50 x 30 mm outline with
 //!   3 mm corner arcs) Altium lists the vertices clockwise, so each arc's vertex sits at `EAn`
-//!   and the next one at `SAn`. The reader hands such a contour over reversed, counter-clockwise,
-//!   with every arc counter-clockwise (it does not set `Segment::Arc::clockwise` yet).
+//!   and the next one at `SAn`. On `outline-with-notch` the two concave corner arcs of its notch
+//!   run the other way, vertex at `SAn` and the next one at `EAn`, while the two convex ones are
+//!   like those of `outline-with-arcs`. So each arc's way is told by which end its vertex is at.
+//!   The reader hands a clockwise contour over reversed, counter-clockwise; an arc that then runs
+//!   against the contour (a concave corner) is a clockwise `Segment::Arc`.
 //! - The layer stack is in `V9_STACK_LAYERn_…` keys: each solder mask and dielectric has a
 //!   `DIELHEIGHT`, each copper layer a `COPTHICK`. Their sum is the 1.600 mm we typed in.
 //! - `/Regions6/Data` is a run of records: a type byte (`0x0b`), a `u32` length, then 18 bytes we
@@ -25,6 +28,7 @@
 //!   for it instead.
 
 use std::collections::BTreeMap;
+use std::f64::consts::TAU;
 
 use board_model::{Contour, Note, Outline, Point, Segment, Severity};
 
@@ -221,11 +225,12 @@ fn on_circle(arc: &Arc, deg: f64) -> Point {
     }
 }
 
-/// Joins the vertices into a closed contour, each to the next by a line or by its arc. Altium
-/// may list them clockwise (each arc then runs from its end angle to its start angle); such a
-/// contour is handed over reversed, so that its arcs run counter-clockwise. An arc
-/// whose ends are not its two vertices, or that runs against the others, becomes a straight
-/// line with a warning that names `what`.
+/// Joins the vertices into a closed contour, each to the next by a line or by its arc, run the
+/// way it goes there: an arc stored counter-clockwise but passed from its end angle to its start
+/// angle becomes a clockwise [`Segment::Arc`]. Altium may list a contour clockwise; going by the
+/// area it encloses (arcs included), such a contour is handed over reversed, counter-clockwise.
+/// An arc whose ends are not its two vertices becomes a straight line with a warning that names
+/// `what`.
 pub(crate) fn contour(what: &str, vertices: &[Vertex], notes: &mut Vec<Note>) -> Contour {
     /// One edge before the direction is settled: a line, or an arc and whether it runs
     /// counter-clockwise from `from` to `to`.
@@ -261,16 +266,25 @@ pub(crate) fn contour(what: &str, vertices: &[Vertex], notes: &mut Vec<Note>) ->
         };
         edges.push((v.at, to, edge));
     }
-    let ccw = edges
+    // Twice the signed area: the corners' polygon, plus each arc's circle segment beyond its
+    // chord (positive where the arc runs counter-clockwise).
+    let area2: f64 = edges
         .iter()
-        .filter(|e| matches!(e.2, Edge::Arc(_, true)))
-        .count();
-    let cw = edges
-        .iter()
-        .filter(|e| matches!(e.2, Edge::Arc(_, false)))
-        .count();
-    let reversed = cw > ccw;
-    if reversed {
+        .map(|(from, to, edge)| {
+            let chord = from.x * to.y - to.x * from.y;
+            let bulge = match edge {
+                Edge::Line => 0.0,
+                Edge::Arc(arc, forward) => {
+                    let sweep = (arc.end_deg - arc.start_deg).rem_euclid(360.0).to_radians();
+                    let sweep = if sweep == 0.0 { TAU } else { sweep };
+                    let t = if *forward { sweep } else { -sweep };
+                    arc.radius * arc.radius * (t - t.sin())
+                }
+            };
+            chord + bulge
+        })
+        .sum();
+    if area2 < 0.0 {
         edges.reverse();
         for e in &mut edges {
             std::mem::swap(&mut e.0, &mut e.1);
@@ -279,18 +293,17 @@ pub(crate) fn contour(what: &str, vertices: &[Vertex], notes: &mut Vec<Note>) ->
             }
         }
     }
-    let against = ccw.min(cw);
     let segments = edges
         .into_iter()
         .map(|(from, to, edge)| match edge {
-            Edge::Arc(arc, true) => Segment::Arc {
+            Edge::Arc(arc, forward) => Segment::Arc {
                 center: arc.center,
                 radius: arc.radius,
-                start_deg: arc.start_deg,
-                end_deg: arc.end_deg,
-                clockwise: false,
+                start_deg: if forward { arc.start_deg } else { arc.end_deg },
+                end_deg: if forward { arc.end_deg } else { arc.start_deg },
+                clockwise: !forward,
             },
-            Edge::Arc(_, false) | Edge::Line => Segment::Line { from, to },
+            Edge::Line => Segment::Line { from, to },
         })
         .collect();
     if unmatched > 0 {
@@ -298,14 +311,6 @@ pub(crate) fn contour(what: &str, vertices: &[Vertex], notes: &mut Vec<Note>) ->
             severity: Severity::Warning,
             message: format!(
                 "{what}: {unmatched} arc(s) do not end at their vertices; read as straight lines"
-            ),
-        });
-    }
-    if against > 0 {
-        notes.push(Note {
-            severity: Severity::Warning,
-            message: format!(
-                "{what}: {against} arc(s) turn against the others; read as straight lines"
             ),
         });
     }
@@ -727,7 +732,7 @@ mod tests {
     }
 
     #[test]
-    fn a_stray_arc_or_one_against_the_rest_becomes_a_line() {
+    fn a_stray_arc_becomes_a_line_and_a_dent_a_clockwise_arc() {
         // An arc whose ends are not its vertices.
         let mut square = rounded_square(true);
         square[1].arc = arc(5.0, 5.0, 1.0, 0.0, 90.0);
@@ -749,14 +754,39 @@ mod tests {
             v(10.0, 10.0, None),
             v(0.0, 10.0, arc(0.0, 5.0, 5.0, 90.0, 270.0)),
         ];
-        let mut notes = Vec::new();
-        let c = contour("test", &dented, &mut notes);
-        assert_eq!((c.segments.len(), arcs_of(&c)), (6, 2));
-        assert!(chained(&c));
-        assert!(
-            notes[0].message.contains("1 arc(s) turn against"),
-            "{notes:?}"
-        );
+        // Listed counter-clockwise as here, or the other way round (each vertex then starts the
+        // edge that ended at it), it comes out counter-clockwise with the dent clockwise.
+        let mut reversed: Vec<Vertex> = dented
+            .iter()
+            .rev()
+            .map(|v| Vertex {
+                at: v.at,
+                arc: None,
+            })
+            .collect();
+        for (i, r) in reversed.iter_mut().enumerate() {
+            r.arc = dented[(dented.len() * 2 - 2 - i) % dented.len()].arc;
+        }
+        for listed in [dented.to_vec(), reversed] {
+            let mut notes = Vec::new();
+            let c = contour("test", &listed, &mut notes);
+            assert_eq!((c.segments.len(), arcs_of(&c)), (6, 3));
+            assert!(chained(&c), "{c:?}");
+            assert!(notes.is_empty(), "{notes:?}");
+            let clockwise: Vec<(f64, f64)> = c
+                .segments
+                .iter()
+                .filter_map(|s| match *s {
+                    Segment::Arc {
+                        center,
+                        clockwise: true,
+                        ..
+                    } => Some((center.x, center.y)),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(clockwise, [(5.0, 0.0)], "{c:?}");
+        }
     }
 
     #[test]
