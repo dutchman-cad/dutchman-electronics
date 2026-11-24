@@ -185,8 +185,8 @@ pub struct ModelRef {
 /// face, and then flipped over by half a turn about its own X axis, so its +Z points down and its
 /// +Y is the board's -Y (before the turn). So a point (x, y) in the board seen from the top, turned
 /// back into a bottom-side part's frame, has its y negated, and a turn about Z in that frame is a
-/// turn the other way seen from the top. (Test boards confirm this for bottom-side parts at 180
-/// degrees; other turns on the bottom side are not confirmed yet.)
+/// turn the other way seen from the top. (Test boards confirm this for bottom-side parts at 180 and
+/// 90 degrees, with models turned on their part.)
 #[derive(Clone, Debug, PartialEq)]
 pub struct Placement {
     /// "R1", "U3".
