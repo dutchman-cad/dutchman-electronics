@@ -45,7 +45,8 @@
 //!   index: 0 on `one-net`'s track, `ff ff` for no net.
 //! - `/Fills6/Data` (`one-fill`): records of type `0x06` and a `u32` length; in the body, byte 0
 //!   is the layer, bytes 3..5 the net index, from byte 13 two corners (x1, y1, x2, y2), then at
-//!   byte 29 an `f64` that is 0 on our only fill and taken to be the rotation.
+//!   byte 29 the rotation as an `f64` in degrees: 0 on `one-fill`, 30 on `one-rotated-fill`, whose
+//!   bounding box (x 18.17 to 31.83) shows it is turned counter-clockwise about its centre.
 //! - Copper regions (`one-region`) and the copper Altium poured for a polygon (`one-pour`) are
 //!   region records in `/Regions6/Data` (see `board.rs`) with `KIND=0` and the layer in body
 //!   byte 0; poured copper also has `SUBPOLYINDEX=0` (a free region has -1). The pour's own
@@ -505,8 +506,8 @@ pub(crate) fn vias(
     Ok(items)
 }
 
-/// Reads the fills from `/Fills6/Data` as rectangular copper regions. A rotated fill is left out
-/// with a note: no test board has one, so how its corners turn is not confirmed yet.
+/// Reads the fills from `/Fills6/Data` as rectangular copper regions. A rotated fill is the
+/// rectangle of its two corners turned counter-clockwise about its centre (`one-rotated-fill`).
 pub(crate) fn fills(
     data: &[u8],
     layers: &CopperLayers,
@@ -514,12 +515,14 @@ pub(crate) fn fills(
 ) -> Result<Vec<CopperItem>, String> {
     let mut items = Vec::new();
     let mut skipped = Skipped::default();
-    let mut rotated = 0usize;
     for body in records(data, FILL_RECORD, "/Fills6/Data", notes)? {
         let layer_number = *body.first().ok_or("fill record is empty")?;
         let a = point(body, 13)?;
         let b = point(body, 21)?;
-        let rotation = read_f64(body, 29).ok_or("fill rotation cut short")?;
+        let Some(rotation) = angle(body, 29)? else {
+            skipped.bad_angle += 1;
+            continue;
+        };
         if read_u16(body, 3) != Some(NO_NET) {
             skipped.with_net += 1;
         }
@@ -530,20 +533,19 @@ pub(crate) fn fills(
                 .or_default() += 1;
             continue;
         };
-        if rotation != 0.0 {
-            rotated += 1;
-            continue;
-        }
-        let corners = [a, Point { x: b.x, y: a.y }, b, Point { x: a.x, y: b.y }];
+        let centre = Point {
+            x: (a.x + b.x) / 2.0,
+            y: (a.y + b.y) / 2.0,
+        };
+        let (sin, cos) = rotation.to_radians().sin_cos();
+        let turn = |p: Point| Point {
+            x: centre.x + (p.x - centre.x) * cos - (p.y - centre.y) * sin,
+            y: centre.y + (p.x - centre.x) * sin + (p.y - centre.y) * cos,
+        };
+        let corners = [a, Point { x: b.x, y: a.y }, b, Point { x: a.x, y: b.y }].map(turn);
         items.push(CopperItem::Region {
             layer,
             contour: closed(&corners),
-        });
-    }
-    if rotated > 0 {
-        notes.push(Note {
-            severity: Severity::Dropped,
-            message: format!("{rotated} rotated fill(s) not read yet"),
         });
     }
     skipped.into_notes("fill(s)", notes);
