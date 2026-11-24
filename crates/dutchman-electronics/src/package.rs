@@ -627,7 +627,11 @@ mod tests {
             ([0.0, -0.4, 0.45], [25.4, 14.6, -0.45]),
         ];
         for (model, board) in on_board {
-            assert!(close(apply(t, model), board), "{model:?} -> {:?}", apply(t, model));
+            assert!(
+                close(apply(t, model), board),
+                "{model:?} -> {:?}",
+                apply(t, model)
+            );
         }
     }
 
