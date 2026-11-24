@@ -365,13 +365,17 @@ fn overlays_within(
     };
     let mut faces = (top, bottom);
     let shown = board.copper.len().min(MAX_ITEMS);
-    let skipped = board.copper.len().saturating_sub(MAX_ITEMS).saturating_add(
-        board
-            .graphics
-            .len()
-            .saturating_sub(MAX_ITEMS.saturating_sub(shown)),
-    )
-    .saturating_add(board.texts.len().saturating_sub(MAX_ITEMS));
+    let skipped = board
+        .copper
+        .len()
+        .saturating_sub(MAX_ITEMS)
+        .saturating_add(
+            board
+                .graphics
+                .len()
+                .saturating_sub(MAX_ITEMS.saturating_sub(shown)),
+        )
+        .saturating_add(board.texts.len().saturating_sub(MAX_ITEMS));
     for item in board.copper.iter().take(MAX_ITEMS) {
         let (layer, shapes, bare, drill): (usize, Vec<Polygon>, bool, Option<(Point, f64)>) =
             match item {

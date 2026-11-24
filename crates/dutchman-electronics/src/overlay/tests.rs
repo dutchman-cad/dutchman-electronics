@@ -685,9 +685,7 @@ fn truetype_font_notes_are_capped_at_twenty_names() {
     let (_, notes) = overlays(&b, 1.6, "Board");
     let m = messages(&notes);
     assert_eq!(
-        m.iter()
-            .filter(|m| m.contains("TrueType font \""))
-            .count(),
+        m.iter().filter(|m| m.contains("TrueType font \"")).count(),
         20
     );
     assert!(

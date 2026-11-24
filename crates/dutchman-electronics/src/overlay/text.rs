@@ -48,7 +48,10 @@ fn font() -> &'static [Glyph] {
 /// coordinate pairs, then the pairs (the first is the left and right edge), each letter less
 /// `R`; " R" lifts the pen. Entries may wrap across lines.
 fn parse(source: &str) -> Vec<Glyph> {
-    let chars: Vec<u8> = source.bytes().filter(|&b| b != b'\n' && b != b'\r').collect();
+    let chars: Vec<u8> = source
+        .bytes()
+        .filter(|&b| b != b'\n' && b != b'\r')
+        .collect();
     let mut glyphs = Vec::new();
     let mut at = 0usize;
     let unit = |b: u8| f64::from(b) - f64::from(b'R');
@@ -218,7 +221,10 @@ mod tests {
         let d = draw(&text("H", 0.0, false)).unwrap();
         let (x0, y0, _, y1) = bounds(&d);
         assert!(close(y0, 10.0) && close(y1, 12.1), "{y0} {y1}");
-        assert!(x0 > 10.0, "the left bearing keeps the stroke right of the position");
+        assert!(
+            x0 > 10.0,
+            "the left bearing keeps the stroke right of the position"
+        );
         assert_eq!((d.pen, d.missing, d.cut), (0.2, 0, 0));
     }
 
