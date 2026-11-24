@@ -569,6 +569,7 @@ pub(crate) fn fills(
         items.push(CopperItem::Region {
             layer,
             contour: closed(&corners),
+            holes: Vec::new(),
         });
     }
     skipped.into_notes("fill(s)", notes);
@@ -596,6 +597,7 @@ pub(crate) fn regions(
                 items.push(CopperItem::Region {
                     layer,
                     contour: region.contour.clone(),
+                    holes: region.holes.clone(),
                 });
             }
             (_, kind) => {
