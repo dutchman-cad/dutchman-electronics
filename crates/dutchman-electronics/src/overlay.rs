@@ -30,6 +30,12 @@ const MAX_ARC_POINTS: usize = 4096;
 const MAX_COORDINATE: f64 = 25_000.0;
 /// The most copper and silkscreen items drawn; the rest are a Dropped note.
 const MAX_ITEMS: usize = 200_000;
+/// The most pen segments drawn for all texts of a board together. Each segment becomes a polygon
+/// that is united with the rest, so without a cap a hostile board of many long texts could ask
+/// for billions of them. Texts past the budget are counted in a Dropped note.
+const MAX_TEXT_SEGMENTS: usize = 2_000_000;
+/// The most TrueType font names listed one by one in notes; the rest are counted in one note.
+const MAX_FONT_NOTES: usize = 20;
 /// The fewest sides a whole circle is drawn with, so small vias and pads stay round.
 const MIN_CIRCLE_SIDES: f64 = 32.0;
 
@@ -273,6 +279,18 @@ impl Pile {
     }
 }
 
+/// What happened to a board's texts, for the notes.
+#[derive(Default)]
+struct TextCounts {
+    drawn: usize,
+    other_layers: usize,
+    missing: usize,
+    cut: usize,
+    /// Texts left out because the board's texts had used up [`MAX_TEXT_SEGMENTS`].
+    over_budget: usize,
+    truetype: std::collections::BTreeMap<String, usize>,
+}
+
 #[derive(Default)]
 struct SideFaces {
     masked: Pile,
@@ -317,6 +335,17 @@ fn areas(shape: &MultiPolygon) -> Vec<Value> {
 /// its bottom at z = 0, in the frame of the part named `board_part`), and notes on what was left
 /// out.
 pub fn overlays(board: &Board, thickness: f64, board_part: &str) -> (Vec<Value>, Vec<Value>) {
+    overlays_within(board, thickness, board_part, MAX_TEXT_SEGMENTS)
+}
+
+/// [`overlays`] with `text_budget` as the most text segments drawn (a parameter so a test can
+/// use a small one).
+fn overlays_within(
+    board: &Board,
+    thickness: f64,
+    board_part: &str,
+    text_budget: usize,
+) -> (Vec<Value>, Vec<Value>) {
     let top = SideFaces::default();
     let bottom = SideFaces::default();
     let mut holes = Pile::default();
@@ -336,12 +365,17 @@ pub fn overlays(board: &Board, thickness: f64, board_part: &str) -> (Vec<Value>,
     };
     let mut faces = (top, bottom);
     let shown = board.copper.len().min(MAX_ITEMS);
-    let skipped = board.copper.len().saturating_sub(MAX_ITEMS).saturating_add(
-        board
-            .graphics
-            .len()
-            .saturating_sub(MAX_ITEMS.saturating_sub(shown)),
-    );
+    let skipped = board
+        .copper
+        .len()
+        .saturating_sub(MAX_ITEMS)
+        .saturating_add(
+            board
+                .graphics
+                .len()
+                .saturating_sub(MAX_ITEMS.saturating_sub(shown)),
+        )
+        .saturating_add(board.texts.len().saturating_sub(MAX_ITEMS));
     for item in board.copper.iter().take(MAX_ITEMS) {
         let (layer, shapes, bare, drill): (usize, Vec<Polygon>, bool, Option<(Point, f64)>) =
             match item {
@@ -438,6 +472,66 @@ pub fn overlays(board: &Board, thickness: f64, board_part: &str) -> (Vec<Value>,
         }
     }
     let (mut top, mut bottom) = faces;
+    // Texts on a face's copper or silkscreen, drawn as pen strokes.
+    let mut texts = TextCounts::default();
+    let mut budget = text_budget;
+    for t in board.texts.iter().take(MAX_ITEMS) {
+        let pile = match board.layers.get(t.layer).map(|x| (x.kind, x.side)) {
+            Some((LayerKind::Silkscreen, Some(Side::Top))) => &mut top.silk,
+            Some((LayerKind::Silkscreen, Some(Side::Bottom))) => &mut bottom.silk,
+            Some((LayerKind::Copper, Some(Side::Top))) => &mut top.masked,
+            Some((LayerKind::Copper, Some(Side::Bottom))) => &mut bottom.masked,
+            Some((LayerKind::Copper, None)) => {
+                inner = inner.saturating_add(1);
+                continue;
+            }
+            _ => {
+                texts.other_layers = texts.other_layers.saturating_add(1);
+                continue;
+            }
+        };
+        if budget == 0 {
+            texts.over_budget = texts.over_budget.saturating_add(1);
+            continue;
+        }
+        let Some(drawn) = text::draw(t) else {
+            unusable = unusable.saturating_add(1);
+            continue;
+        };
+        texts.missing = texts.missing.saturating_add(drawn.missing);
+        texts.cut = texts.cut.saturating_add(drawn.cut);
+        let (mut added, mut failed) = (0usize, 0usize);
+        let mut segment = |a: Point, b: Point| match stroke(a, b, drawn.pen) {
+            Some(p) => {
+                pile.polygons.push(p);
+                added = added.saturating_add(1);
+            }
+            None => failed = failed.saturating_add(1),
+        };
+        for s in &drawn.strokes {
+            match s.as_slice() {
+                [only] => segment(*only, *only),
+                _ => {
+                    for pair in s.windows(2) {
+                        if let [a, b] = pair {
+                            segment(*a, *b);
+                        }
+                    }
+                }
+            }
+        }
+        budget = budget.saturating_sub(added.saturating_add(failed));
+        if added > 0 {
+            texts.drawn = texts.drawn.saturating_add(1);
+            if let board_model::TextFont::TrueType { name } = &t.font {
+                let n = texts.truetype.entry(name.clone()).or_default();
+                *n = n.saturating_add(1);
+            }
+        }
+        if added == 0 || failed > 0 {
+            unusable = unusable.saturating_add(1);
+        }
+    }
     for g in board.graphics.iter().take(MAX_ITEMS.saturating_sub(shown)) {
         let (l, shapes) = match g {
             Graphic::Line {
@@ -543,7 +637,7 @@ pub fn overlays(board: &Board, thickness: f64, board_part: &str) -> (Vec<Value>,
     for (count, what) in [
         (
             skipped,
-            "copper or silkscreen item(s) past the first 200000 were not drawn",
+            "copper, silkscreen or text item(s) past the first 200000 were not drawn",
         ),
         (
             inner,
@@ -557,13 +651,63 @@ pub fn overlays(board: &Board, thickness: f64, board_part: &str) -> (Vec<Value>,
             other_graphics,
             "line(s) and arc(s) on layers other than the silkscreen are not drawn yet",
         ),
+        (
+            texts.other_layers,
+            "text(s) on layers other than copper and silkscreen are not drawn yet",
+        ),
+        (
+            texts.cut,
+            "character(s) past the first 1000 of a text were not drawn",
+        ),
+        (
+            texts.over_budget,
+            "text(s) past the drawing limit were not drawn",
+        ),
     ] {
         if count > 0 {
             notes.push(json!({ "severity": "Dropped", "message": format!("{count} {what}") }));
         }
     }
+    if texts.drawn > 0 {
+        notes.push(json!({
+            "severity": "Degraded",
+            "message": format!(
+                "{} text(s) are drawn in the Hershey Roman Simplex stroke font at their height \
+                 and pen width, not in the board's own font, so letter shapes and spacing differ \
+                 a little",
+                texts.drawn
+            ),
+        }));
+    }
+    for (font, n) in texts.truetype.iter().take(MAX_FONT_NOTES) {
+        notes.push(json!({
+            "severity": "Degraded",
+            "message": format!(
+                "{n} text(s) in the TrueType font \"{font}\" are drawn as single strokes, a \
+                 tenth of their height wide"
+            ),
+        }));
+    }
+    let more_fonts = texts.truetype.len().saturating_sub(MAX_FONT_NOTES);
+    if more_fonts > 0 {
+        notes.push(json!({
+            "severity": "Degraded",
+            "message": format!("and {more_fonts} more TrueType font(s) used by drawn texts"),
+        }));
+    }
+    if texts.missing > 0 {
+        notes.push(json!({
+            "severity": "Degraded",
+            "message": format!(
+                "{} character(s) the stroke font does not hold are drawn as \"?\"",
+                texts.missing
+            ),
+        }));
+    }
     (out, notes)
 }
+
+mod text;
 
 #[cfg(test)]
 mod tests;

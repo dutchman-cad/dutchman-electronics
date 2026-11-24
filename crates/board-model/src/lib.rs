@@ -195,6 +195,17 @@ pub struct Text {
     pub rotation_deg: f64,
     /// Reads mirrored (text on the bottom side).
     pub mirrored: bool,
+    /// Where its letter shapes come from.
+    pub font: TextFont,
+}
+
+/// The letter shapes of a [`Text`].
+#[derive(Clone, Debug, PartialEq)]
+pub enum TextFont {
+    /// The CAD program's own single-line font, drawn with a pen `width` mm wide.
+    Stroke { width: f64 },
+    /// A TrueType font, by name; its outlines come from the font file.
+    TrueType { name: String },
 }
 
 /// Where a 3D model for a component comes from.
