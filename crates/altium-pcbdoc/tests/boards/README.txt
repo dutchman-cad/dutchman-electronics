@@ -465,6 +465,23 @@ one-blue-mask-resistor.PcbDoc
 one-yellow-silkscreen-resistor.PcbDoc
     silkscreen, top and bottom: 255, 255, 0 (stored as 65535), opacity 1.0 as before
 
+Seventeenth batch: surface finish
+--------------------------------
+Made on 2026-11-24 by hand, each from a file copy of one-resistor.PcbDoc: in Design > Layer Stack
+Manager, right-click Top Layer, Insert layer above, Surface Finish; with the stack kept
+symmetric Altium added the same finish below Bottom Layer. The finish's Process was picked from
+Altium's own list, which filled in its material, colour and thickness; then the stack and the
+board were saved. Altium shows the finish layers in the stack and counts them in its total
+thickness; they are not among the stack's layers in the plain /Board6/Data keys.
+
+one-enig-resistor.PcbDoc
+    Top Surface Finish and Bottom Surface Finish: process ENIG, material "Nickel, Gold", colour
+    #FFFFC400 (opaque; red 255, green 196, blue 0), thickness 0.004. Altium's total thickness:
+    1.608.
+one-hasl-resistor.PcbDoc
+    Top Surface Finish and Bottom Surface Finish: process HASL, material "PbSn", colour
+    #FFF2F2F2 (opaque; 242, 242, 242), thickness 0.020. Altium's total thickness: 1.640.
+
 Paths inside the files
 ----------------------
 Altium writes a few paths from the PC that saved a board into the file. After the last save, I
