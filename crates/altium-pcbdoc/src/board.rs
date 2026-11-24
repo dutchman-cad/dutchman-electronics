@@ -5,15 +5,24 @@
 //!
 //! - `/Board6/Data` holds one record: a little-endian `u32` length, then text of the form
 //!   `|KEY=VALUE|KEY=VALUE…` ending in a NUL byte.
-//! - The board shape is a numbered vertex list in that record: `KINDn`, `VXn`, `VYn` (and `CXn`,
-//!   `CYn`, `SAn`, `EAn`, `Rn`, all zero on our boards, whose edges are all straight with
-//!   `KINDn=0`). The last vertex repeats the first. Lengths are text such as `1181.1024mil`.
+//! - The board shape is a numbered vertex list in that record: `KINDn`, `VXn`, `VYn`, `CXn`,
+//!   `CYn`, `SAn`, `EAn`, `Rn`. The last vertex repeats the first. Lengths are text such as
+//!   `1181.1024mil`, angles text such as ` 1.80000000000000E+0002` (degrees).
+//! - Vertex n starts the edge to vertex n + 1. `KINDn=0` is a straight edge (its centre, radius
+//!   and angles are 0). `KINDn=1` is an arc with centre (`CXn`, `CYn`), radius `Rn`, running
+//!   counter-clockwise from `SAn` to `EAn`: on `outline-with-arcs` (a 50 x 30 mm outline with
+//!   3 mm corner arcs) Altium lists the vertices clockwise, so each arc's vertex sits at `EAn`
+//!   and the next one at `SAn`. The reader hands such a contour over reversed, counter-clockwise,
+//!   as `Segment::Arc` has no other direction.
 //! - The layer stack is in `V9_STACK_LAYERn_…` keys: each solder mask and dielectric has a
 //!   `DIELHEIGHT`, each copper layer a `COPTHICK`. Their sum is the 1.600 mm we typed in.
 //! - `/Regions6/Data` is a run of records: a type byte (`0x0b`), a `u32` length, then 18 bytes we
 //!   do not read yet, a `u32` text length, the text (with `ISBOARDCUTOUT=TRUE` for a board
 //!   cutout), a `u32` vertex count, and that many pairs of little-endian `f64` (x, y) in
 //!   1/10000 mil. The polygon does not repeat its first vertex.
+//! - A cutout with arcs (the round one on `outline-with-arcs`) is only a polygon there (35
+//!   corners); its arcs are in `/ShapeBasedRegions6/Data` (see `shape_based.rs`), which is read
+//!   for it instead.
 
 use std::collections::BTreeMap;
 
@@ -97,10 +106,31 @@ pub(crate) fn board_record(data: &[u8]) -> Result<Properties, String> {
     Ok(Properties::parse(text))
 }
 
-/// The board shape from the `KINDn`/`VXn`/`VYn` vertex list.
+/// One vertex of an outline that may have arcs: the edge from it to the next vertex is straight
+/// (`arc` is `None`) or the arc given.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Vertex {
+    pub at: Point,
+    pub arc: Option<Arc>,
+}
+
+/// A circle piece running counter-clockwise from `start_deg` to `end_deg`, as Altium stores it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Arc {
+    pub center: Point,
+    pub radius: f64,
+    pub start_deg: f64,
+    pub end_deg: f64,
+}
+
+/// How far (mm) a vertex may be from its arc's end and still count as on it.
+const ARC_END_TOLERANCE: f64 = 0.001;
+
+/// The board shape from the `KINDn`/`VXn`/`VYn` vertex list, with `CXn`/`CYn`/`Rn`/`SAn`/`EAn`
+/// for the arcs.
 pub(crate) fn outline(board: &Properties, notes: &mut Vec<Note>) -> Result<Contour, String> {
-    let mut points = Vec::new();
-    let mut arcs = 0usize;
+    let mut vertices = Vec::new();
+    let mut unknown = 0usize;
     for i in 0..=MAX_VERTICES {
         let Some(kind) = board.get(&format!("KIND{i}")) else {
             break;
@@ -110,31 +140,175 @@ pub(crate) fn outline(board: &Properties, notes: &mut Vec<Note>) -> Result<Conto
                 "the board outline has more than {MAX_VERTICES} vertices"
             ));
         }
-        if kind.trim() != "0" {
-            arcs += 1;
-        }
-        let x = board.length_mm(&format!("VX{i}"))?;
-        let y = board.length_mm(&format!("VY{i}"))?;
-        match (x, y) {
-            (Some(x), Some(y)) => points.push(Point { x, y }),
+        let at = match (
+            board.length_mm(&format!("VX{i}"))?,
+            board.length_mm(&format!("VY{i}"))?,
+        ) {
+            (Some(x), Some(y)) => Point { x, y },
             _ => return Err(format!("outline vertex {i} has no VX{i}/VY{i}")),
-        }
+        };
+        let arc = match kind.trim() {
+            "0" => None,
+            "1" => Some(outline_arc(board, i)?),
+            _ => {
+                unknown += 1;
+                None
+            }
+        };
+        vertices.push(Vertex { at, arc });
     }
-    if points.len() < 3 {
-        return Err(format!(
-            "the board outline has {} vertices; a board needs at least 3",
-            points.len()
-        ));
-    }
-    if arcs > 0 {
+    if unknown > 0 {
         notes.push(Note {
             severity: Severity::Warning,
             message: format!(
-                "{arcs} board outline edge(s) are not straight (KIND not 0); read as straight lines"
+                "{unknown} board outline edge(s) have an unknown KIND (not 0 or 1); read as \
+                 straight lines"
             ),
         });
     }
-    Ok(closed_polygon(&points))
+    let has_arcs = vertices.iter().any(|v| v.arc.is_some());
+    let corners = distinct(&vertices).len();
+    if corners < 3 && !(has_arcs && corners >= 1) {
+        return Err(format!(
+            "the board outline has {corners} vertices; a board needs at least 3"
+        ));
+    }
+    Ok(contour("the board outline", &vertices, notes))
+}
+
+/// The arc of outline vertex `i`.
+fn outline_arc(board: &Properties, i: usize) -> Result<Arc, String> {
+    let length = |key: String| -> Result<f64, String> {
+        board
+            .length_mm(&key)?
+            .ok_or_else(|| format!("outline arc {i} has no {key}"))
+    };
+    let angle = |key: String| -> Result<f64, String> {
+        board
+            .get(&key)
+            .and_then(|v| v.trim().parse::<f64>().ok())
+            .filter(|a| a.is_finite() && a.abs() <= 3600.0)
+            .ok_or_else(|| format!("outline arc {i} has no usable {key}"))
+    };
+    Ok(Arc {
+        center: Point {
+            x: length(format!("CX{i}"))?,
+            y: length(format!("CY{i}"))?,
+        },
+        radius: length(format!("R{i}"))?,
+        start_deg: angle(format!("SA{i}"))?,
+        end_deg: angle(format!("EA{i}"))?,
+    })
+}
+
+/// The vertices without a last one that repeats the first.
+fn distinct(vertices: &[Vertex]) -> &[Vertex] {
+    match vertices {
+        [first, .., last] if near(first.at, last.at) => vertices.split_last().map_or(&[], |s| s.1),
+        _ => vertices,
+    }
+}
+
+fn near(a: Point, b: Point) -> bool {
+    (a.x - b.x).hypot(a.y - b.y) <= ARC_END_TOLERANCE
+}
+
+fn on_circle(arc: &Arc, deg: f64) -> Point {
+    let (sin, cos) = deg.to_radians().sin_cos();
+    Point {
+        x: arc.center.x + arc.radius * cos,
+        y: arc.center.y + arc.radius * sin,
+    }
+}
+
+/// Joins the vertices into a closed contour, each to the next by a line or by its arc. Altium
+/// may list them clockwise (each arc then runs from its end angle to its start angle); since
+/// [`Segment::Arc`] only runs counter-clockwise, such a contour is handed over reversed. An arc
+/// whose ends are not its two vertices, or that runs against the others, becomes a straight
+/// line with a warning that names `what`.
+pub(crate) fn contour(what: &str, vertices: &[Vertex], notes: &mut Vec<Note>) -> Contour {
+    /// One edge before the direction is settled: a line, or an arc and whether it runs
+    /// counter-clockwise from `from` to `to`.
+    enum Edge {
+        Line,
+        Arc(Arc, bool),
+    }
+    let vertices = distinct(vertices);
+    let mut edges = Vec::with_capacity(vertices.len());
+    let mut unmatched = 0usize;
+    for (i, v) in vertices.iter().enumerate() {
+        let to = vertices
+            .get(i + 1)
+            .or(vertices.first())
+            .map_or(v.at, |n| n.at);
+        let edge = match v.arc {
+            None => Edge::Line,
+            Some(arc) if arc.radius.is_finite() && arc.radius > ARC_END_TOLERANCE => {
+                let (start, end) = (on_circle(&arc, arc.start_deg), on_circle(&arc, arc.end_deg));
+                if near(v.at, start) && near(to, end) {
+                    Edge::Arc(arc, true)
+                } else if near(v.at, end) && near(to, start) {
+                    Edge::Arc(arc, false)
+                } else {
+                    unmatched += 1;
+                    Edge::Line
+                }
+            }
+            Some(_) => {
+                unmatched += 1;
+                Edge::Line
+            }
+        };
+        edges.push((v.at, to, edge));
+    }
+    let ccw = edges
+        .iter()
+        .filter(|e| matches!(e.2, Edge::Arc(_, true)))
+        .count();
+    let cw = edges
+        .iter()
+        .filter(|e| matches!(e.2, Edge::Arc(_, false)))
+        .count();
+    let reversed = cw > ccw;
+    if reversed {
+        edges.reverse();
+        for e in &mut edges {
+            std::mem::swap(&mut e.0, &mut e.1);
+            if let Edge::Arc(_, forward) = &mut e.2 {
+                *forward = !*forward;
+            }
+        }
+    }
+    let against = ccw.min(cw);
+    let segments = edges
+        .into_iter()
+        .map(|(from, to, edge)| match edge {
+            Edge::Arc(arc, true) => Segment::Arc {
+                center: arc.center,
+                radius: arc.radius,
+                start_deg: arc.start_deg,
+                end_deg: arc.end_deg,
+            },
+            Edge::Arc(_, false) | Edge::Line => Segment::Line { from, to },
+        })
+        .collect();
+    if unmatched > 0 {
+        notes.push(Note {
+            severity: Severity::Warning,
+            message: format!(
+                "{what}: {unmatched} arc(s) do not end at their vertices; read as straight lines"
+            ),
+        });
+    }
+    if against > 0 {
+        notes.push(Note {
+            severity: Severity::Warning,
+            message: format!(
+                "{what}: {against} arc(s) turn against the others; read as straight lines"
+            ),
+        });
+    }
+    Contour { segments }
 }
 
 /// Joins the points with straight lines and closes the loop. A last point equal to the first
@@ -217,10 +391,17 @@ pub(crate) struct Regions {
 }
 
 /// Reads `/Regions6/Data`. A board cutout that cannot be read is an error (the board shape would
-/// be wrong); any other region that cannot be read is left out with a Dropped note.
-pub(crate) fn regions(data: &[u8], notes: &mut Vec<Note>) -> Result<Regions, String> {
+/// be wrong); any other region that cannot be read is left out with a Dropped note. `shaped`
+/// holds, by record number, the outline with arcs from `/ShapeBasedRegions6/Data` where that
+/// copy has arcs: a cutout takes it instead of its polygon.
+pub(crate) fn regions(
+    data: &[u8],
+    shaped: &[Option<Vec<Vertex>>],
+    notes: &mut Vec<Note>,
+) -> Result<Regions, String> {
     let mut found = Regions::default();
     let mut unreadable = 0usize;
+    let mut other_arcs = 0usize;
     let mut at = 0usize;
     let mut count = 0usize;
     while at < data.len() {
@@ -260,11 +441,20 @@ pub(crate) fn regions(data: &[u8], notes: &mut Vec<Note>) -> Result<Regions, Str
             .ok_or("region text is longer than its record")?;
         let props = Properties::parse(text);
         let corners = region_points(body, text_end);
+        let arcs = shaped.get(count - 1).and_then(Option::as_ref);
         if props.get("ISBOARDCUTOUT") == Some("TRUE") {
-            found.cutouts.push(closed_polygon(
-                &corners.map_err(|e| format!("a board cutout {e}"))?,
-            ));
+            match arcs {
+                Some(vertices) => found
+                    .cutouts
+                    .push(contour("a board cutout", vertices, notes)),
+                None => found.cutouts.push(closed_polygon(
+                    &corners.map_err(|e| format!("a board cutout {e}"))?,
+                )),
+            }
         } else {
+            if arcs.is_some() {
+                other_arcs += 1;
+            }
             match corners {
                 Ok(points) => found.others.push(OtherRegion {
                     layer: body.first().copied().unwrap_or(0),
@@ -284,6 +474,15 @@ pub(crate) fn regions(data: &[u8], notes: &mut Vec<Note>) -> Result<Regions, Str
         notes.push(Note {
             severity: Severity::Dropped,
             message: format!("/Regions6/Data: {unreadable} region(s) could not be read"),
+        });
+    }
+    if other_arcs > 0 {
+        notes.push(Note {
+            severity: Severity::Warning,
+            message: format!(
+                "{other_arcs} region(s) that are not board cutouts have arcs (in \
+                 /ShapeBasedRegions6/Data); read as the polygon of /Regions6/Data"
+            ),
         });
     }
     Ok(found)
@@ -322,7 +521,7 @@ fn read_f64(data: &[u8], at: usize) -> Option<f64> {
 }
 
 /// An internal coordinate (1/10000 mil) in millimetres.
-fn unit_to_mm(v: f64) -> Result<f64, String> {
+pub(crate) fn unit_to_mm(v: f64) -> Result<f64, String> {
     let mm = v * MM_PER_UNIT;
     if mm.is_finite() && mm.abs() <= MAX_LENGTH_MM {
         Ok(mm)
@@ -343,12 +542,13 @@ pub(crate) struct ShapeAndThickness {
 pub(crate) fn read(
     board: &Properties,
     regions6: Option<&[u8]>,
+    shaped: &[Option<Vec<Vertex>>],
     notes: &mut Vec<Note>,
 ) -> Result<ShapeAndThickness, String> {
     let outer = outline(board, notes)?;
     let thickness = thickness(board, notes)?;
     let Regions { cutouts, others } = match regions6 {
-        Some(data) => regions(data, notes)?,
+        Some(data) => regions(data, shaped, notes)?,
         None => Regions::default(),
     };
     let origin = (board.length_mm("ORIGINX")?, board.length_mm("ORIGINY")?);
@@ -415,17 +615,17 @@ mod tests {
     #[test]
     fn hostile_region_streams_are_errors_not_panics() {
         let mut notes = Vec::new();
-        assert!(regions(&[REGION_RECORD], &mut notes).is_err());
-        assert!(regions(&[REGION_RECORD, 0xff, 0xff, 0xff, 0x7f], &mut notes).is_err());
+        assert!(regions(&[REGION_RECORD], &[], &mut notes).is_err());
+        assert!(regions(&[REGION_RECORD, 0xff, 0xff, 0xff, 0x7f], &[], &mut notes).is_err());
         // A text length that runs past the end of its record.
         let mut long_text = vec![REGION_RECORD, 30, 0, 0, 0];
         long_text.extend_from_slice(&[0u8; 30]);
         long_text[5 + REGION_SKIPPED..5 + REGION_SKIPPED + 4].copy_from_slice(&[0xff; 4]);
-        assert!(regions(&long_text, &mut notes).is_err());
+        assert!(regions(&long_text, &[], &mut notes).is_err());
         // An empty text is a region that is not a cutout; without corners it is a note, not an error.
         let mut plain = vec![REGION_RECORD, 30, 0, 0, 0];
         plain.extend_from_slice(&[0u8; 30]);
-        assert!(regions(&plain, &mut notes).unwrap().cutouts.is_empty());
+        assert!(regions(&plain, &[], &mut notes).unwrap().cutouts.is_empty());
         // A cutout whose vertex count runs past the record.
         let text = b"|ISBOARDCUTOUT=TRUE\0";
         let mut body = vec![0u8; REGION_SKIPPED];
@@ -435,12 +635,151 @@ mod tests {
         let mut cut = vec![REGION_RECORD];
         cut.extend_from_slice(&(body.len() as u32).to_le_bytes());
         cut.extend_from_slice(&body);
-        assert!(regions(&cut, &mut notes).is_err());
-        assert!(regions(&[0x42, 1, 2, 3], &mut notes)
+        assert!(regions(&cut, &[], &mut notes).is_err());
+        assert!(regions(&[0x42, 1, 2, 3], &[], &mut notes)
             .unwrap()
             .cutouts
             .is_empty());
         assert_eq!(notes.last().map(|n| n.severity), Some(Severity::Dropped));
+    }
+
+    fn p(x: f64, y: f64) -> Point {
+        Point { x, y }
+    }
+
+    fn arc(cx: f64, cy: f64, r: f64, start_deg: f64, end_deg: f64) -> Option<Arc> {
+        Some(Arc {
+            center: p(cx, cy),
+            radius: r,
+            start_deg,
+            end_deg,
+        })
+    }
+
+    /// A 10 x 10 square with its lower right corner rounded (r 2), listed `ccw` or clockwise.
+    fn rounded_square(ccw: bool) -> Vec<Vertex> {
+        let v = |x, y, a| Vertex {
+            at: p(x, y),
+            arc: a,
+        };
+        if ccw {
+            vec![
+                v(0.0, 0.0, None),
+                v(8.0, 0.0, arc(8.0, 2.0, 2.0, 270.0, 360.0)),
+                v(10.0, 2.0, None),
+                v(10.0, 10.0, None),
+                v(0.0, 10.0, None),
+            ]
+        } else {
+            // Altium's way: the arc's vertex at its end angle, the next one at its start.
+            vec![
+                v(0.0, 0.0, None),
+                v(0.0, 10.0, None),
+                v(10.0, 10.0, None),
+                v(10.0, 2.0, arc(8.0, 2.0, 2.0, 270.0, 360.0)),
+                v(8.0, 0.0, None),
+                v(0.0, 0.0, None),
+            ]
+        }
+    }
+
+    fn arcs_of(c: &Contour) -> usize {
+        c.segments
+            .iter()
+            .filter(|s| matches!(s, Segment::Arc { .. }))
+            .count()
+    }
+
+    /// True when every segment starts where the one before it ends.
+    fn chained(c: &Contour) -> bool {
+        let ends = |s: &Segment| match *s {
+            Segment::Line { from, to } => (from, to),
+            Segment::Arc {
+                center,
+                radius,
+                start_deg,
+                end_deg,
+            } => {
+                let a = Arc {
+                    center,
+                    radius,
+                    start_deg,
+                    end_deg,
+                };
+                (on_circle(&a, start_deg), on_circle(&a, end_deg))
+            }
+        };
+        let n = c.segments.len();
+        (0..n).all(|i| near(ends(&c.segments[(i + n - 1) % n]).1, ends(&c.segments[i]).0))
+    }
+
+    #[test]
+    fn arcs_listed_either_way_give_one_counter_clockwise_chain() {
+        for ccw in [true, false] {
+            let mut notes = Vec::new();
+            let c = contour("test", &rounded_square(ccw), &mut notes);
+            assert_eq!((c.segments.len(), arcs_of(&c)), (5, 1), "{ccw}");
+            assert!(chained(&c), "{ccw}: {c:?}");
+            assert!(notes.is_empty(), "{notes:?}");
+        }
+    }
+
+    #[test]
+    fn a_stray_arc_or_one_against_the_rest_becomes_a_line() {
+        // An arc whose ends are not its vertices.
+        let mut square = rounded_square(true);
+        square[1].arc = arc(5.0, 5.0, 1.0, 0.0, 90.0);
+        let mut notes = Vec::new();
+        let c = contour("test", &square, &mut notes);
+        assert_eq!((c.segments.len(), arcs_of(&c)), (5, 0));
+        assert!(chained(&c));
+        assert_eq!(notes.len(), 1);
+        // A slot (two counter-clockwise half circles) with a dent turning the other way.
+        let v = |x, y, a| Vertex {
+            at: p(x, y),
+            arc: a,
+        };
+        let dented = [
+            v(0.0, 0.0, None),
+            v(4.0, 0.0, arc(5.0, 0.0, 1.0, 0.0, 180.0)),
+            v(6.0, 0.0, None),
+            v(10.0, 0.0, arc(10.0, 5.0, 5.0, 270.0, 90.0)),
+            v(10.0, 10.0, None),
+            v(0.0, 10.0, arc(0.0, 5.0, 5.0, 90.0, 270.0)),
+        ];
+        let mut notes = Vec::new();
+        let c = contour("test", &dented, &mut notes);
+        assert_eq!((c.segments.len(), arcs_of(&c)), (6, 2));
+        assert!(chained(&c));
+        assert!(
+            notes[0].message.contains("1 arc(s) turn against"),
+            "{notes:?}"
+        );
+    }
+
+    #[test]
+    fn an_outline_with_arcs_reads_from_the_board_record() {
+        // Two half circles of radius 50 mil round a 100 x 100 mil square's left and right.
+        let rec = record(
+            "|KIND0=1|VX0=0mil|VY0=0mil|CX0=0mil|CY0=50mil|R0=50mil|SA0= 9.0E+0001|EA0=270\
+             |KIND1=0|VX1=0mil|VY1=100mil\
+             |KIND2=1|VX2=100mil|VY2=100mil|CX2=100mil|CY2=50mil|R2=50mil|SA2=-90|EA2=90\
+             |KIND3=0|VX3=100mil|VY3=0mil|KIND4=0|VX4=0mil|VY4=0mil",
+        );
+        let mut notes = Vec::new();
+        let c = outline(&board_record(&rec).unwrap(), &mut notes).unwrap();
+        assert_eq!((c.segments.len(), arcs_of(&c)), (4, 2));
+        assert!(chained(&c));
+        assert!(notes.is_empty(), "{notes:?}");
+        // An arc without its radius is an error, an unknown KIND a straight line and a warning.
+        let no_radius = record("|KIND0=1|VX0=0mil|VY0=0mil|CX0=0mil|CY0=0mil|SA0=0|EA0=90");
+        assert!(outline(&board_record(&no_radius).unwrap(), &mut notes).is_err());
+        let rec = record(
+            "|KIND0=7|VX0=0mil|VY0=0mil|KIND1=0|VX1=100mil|VY1=0mil|KIND2=0|VX2=0mil|VY2=100mil",
+        );
+        let c = outline(&board_record(&rec).unwrap(), &mut notes).unwrap();
+        assert_eq!((c.segments.len(), arcs_of(&c)), (3, 0));
+        assert_eq!(notes.len(), 1);
     }
 
     #[test]

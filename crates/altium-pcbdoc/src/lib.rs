@@ -130,20 +130,9 @@ impl InputFormat for Altium {
         let models6 = read_stream(&mut container, "/Models/Data")?;
 
         let mut notes = Vec::new();
-        let record = board::board_record(&board6).map_err(ReadError::Invalid)?;
-        let shape =
-            board::read(&record, regions6.as_deref(), &mut notes).map_err(ReadError::Invalid)?;
-        let mut components = match &components6 {
-            Some(data) => components::read(
-                data,
-                texts6.as_deref(),
-                wide_strings6.as_deref(),
-                &mut notes,
-            )
-            .map_err(ReadError::Invalid)?,
-            None => components::Components::default(),
-        };
-        // The shape-based streams only repeat these two (see `shape_based.rs`); check that.
+        // The shape-based streams repeat these two, with arcs where an outline has them (see
+        // `shape_based.rs`). Only a region's arcs are read (a board cutout's); a body's are not.
+        let mut region_arcs = Vec::new();
         for (copy, plain, data, kind) in [
             (
                 "/ShapeBasedComponentBodies6/Data",
@@ -158,18 +147,42 @@ impl InputFormat for Altium {
                 0x0b,
             ),
         ] {
-            if let Some(shape) = read_stream(&mut container, copy)?.filter(|s| !s.is_empty()) {
-                if !shape_based::repeats(&shape, data.as_deref().unwrap_or_default(), kind) {
-                    notes.push(Note {
-                        severity: Severity::Warning,
-                        message: format!(
-                            "{copy} does not just repeat {plain} (an outline with arcs?); only \
-                             {plain} was read"
-                        ),
-                    });
+            let Some(shape) = read_stream(&mut container, copy)?.filter(|s| !s.is_empty()) else {
+                continue;
+            };
+            match shape_based::compare(&shape, data.as_deref().unwrap_or_default(), kind) {
+                None => notes.push(Note {
+                    severity: Severity::Warning,
+                    message: format!("{copy} does not repeat {plain}; only {plain} was read"),
+                }),
+                Some(records) if kind == 0x0b => region_arcs = records,
+                Some(records) => {
+                    let arcs = records.iter().filter(|r| r.is_some()).count();
+                    if arcs > 0 {
+                        notes.push(Note {
+                            severity: Severity::Warning,
+                            message: format!(
+                                "{arcs} record(s) of {copy} have arcs, which are not read; only \
+                                 the straight-edged {plain} was read"
+                            ),
+                        });
+                    }
                 }
             }
         }
+        let record = board::board_record(&board6).map_err(ReadError::Invalid)?;
+        let shape = board::read(&record, regions6.as_deref(), &region_arcs, &mut notes)
+            .map_err(ReadError::Invalid)?;
+        let mut components = match &components6 {
+            Some(data) => components::read(
+                data,
+                texts6.as_deref(),
+                wide_strings6.as_deref(),
+                &mut notes,
+            )
+            .map_err(ReadError::Invalid)?,
+            None => components::Components::default(),
+        };
         let mut embedded = Vec::new();
         if let Some(data) = &bodies6 {
             let stored = models::attach(data, models6.as_deref(), &mut components, &mut notes)
