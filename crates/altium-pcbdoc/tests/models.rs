@@ -17,6 +17,29 @@ fn near(a: f64, b: f64) -> bool {
     (a - b).abs() <= TOLERANCE
 }
 
+/// The MODELIDs Altium gave our two STEP boxes (see tests/boards/README.txt).
+const BOX_1608_ID: &str = "{2F7959BF-FEB0-48A0-A2AE-FD0E192F11AA}";
+const BOX_OFFSET_ID: &str = "{46A6A6F0-03C2-4649-BD81-931DF1E87BA7}";
+
+/// The smallest and largest x of the points in a STEP file, rounded to 0.001: shows which of
+/// our two boxes it is (x -0.8 to 0.8, or 0 to 1.6) and that it was unpacked whole.
+fn x_range(step: &[u8]) -> Option<(f64, f64)> {
+    let text = std::str::from_utf8(step).ok()?;
+    if !text.starts_with("ISO-10303-21;") || !text.trim_end().ends_with("END-ISO-10303-21;") {
+        return None;
+    }
+    let xs: Vec<f64> = text
+        .split("CARTESIAN_POINT(")
+        .skip(1)
+        .filter_map(|p| p.split_once(",(")?.1.split(',').next()?.trim().parse().ok())
+        .collect();
+    let round = |v: f64| (v * 1000.0).round() / 1000.0;
+    Some((
+        round(xs.iter().copied().fold(f64::MAX, f64::min)),
+        round(xs.iter().copied().fold(f64::MIN, f64::max)),
+    ))
+}
+
 /// R1's model on a board with exactly one component.
 fn r1_model(out: &ReadOutcome) -> Option<&ModelRef> {
     let [r1] = out.board.components.as_slice() else {
@@ -69,9 +92,18 @@ fn one_step_resistor_has_its_embedded_step_box() -> Result<(), Box<dyn std::erro
     assert_eq!(
         model.source,
         ModelSource::Embedded {
-            stream: "/Models/0".into()
+            id: BOX_1608_ID.into()
         }
     );
+    // The board hands over the unpacked STEP file once.
+    let [stored] = out.models.as_slice() else {
+        return Err(format!("expected one model, got {}", out.models.len()).into());
+    };
+    assert_eq!(
+        (stored.id.as_str(), stored.name.as_str()),
+        (BOX_1608_ID, "box-1608.step")
+    );
+    assert_eq!(x_range(&stored.step).ok_or("no points")?, (-0.8, 0.8));
     // The model's origin is R1's centre, not rotated, not raised.
     assert!(
         model.offset.iter().all(|v| near(*v, 0.0)),
@@ -96,5 +128,79 @@ fn the_embedded_model_stream_exists() -> Result<(), Box<dyn std::error::Error>> 
         .find(|s| s.path == "/Models/0")
         .ok_or("no /Models/0 stream")?;
     assert!(model.len > 0);
+    Ok(())
+}
+
+/// The designator, centre and model ID of each part, sorted by designator.
+fn parts(out: &ReadOutcome) -> Vec<(String, f64, f64, Option<String>)> {
+    let mut found: Vec<_> = out
+        .board
+        .components
+        .iter()
+        .map(|p| {
+            let id = match p.model.as_ref().map(|m| &m.source) {
+                Some(ModelSource::Embedded { id }) => Some(id.clone()),
+                _ => None,
+            };
+            (p.designator.clone(), p.at.x, p.at.y, id)
+        })
+        .collect();
+    found.sort_by(|a, b| a.0.cmp(&b.0));
+    found
+}
+
+#[test]
+fn two_parts_share_one_embedded_model() -> Result<(), Box<dyn std::error::Error>> {
+    let out = read("shared-step-model.PcbDoc")?;
+    let p = parts(&out);
+    assert_eq!(p.len(), 2, "{p:?}");
+    for (part, (name, x)) in p.iter().zip([("R1", 25.0), ("R2", 35.0)]) {
+        assert_eq!(part.0, name);
+        assert!(near(part.1, x) && near(part.2, 15.0), "{p:?}");
+        assert_eq!(part.3.as_deref(), Some(BOX_1608_ID), "{p:?}");
+    }
+    let [stored] = out.models.as_slice() else {
+        return Err(format!("expected one model, got {}", out.models.len()).into());
+    };
+    assert_eq!(stored.name, "box-1608.step");
+    assert_eq!(x_range(&stored.step).ok_or("no points")?, (-0.8, 0.8));
+    // Only the usual note about /ShapeBasedComponentBodies6 (on every board with a 3D body).
+    assert!(
+        out.notes
+            .iter()
+            .all(|n| n.message.contains("ShapeBasedComponentBodies6")),
+        "{:?}",
+        out.notes
+    );
+    Ok(())
+}
+
+#[test]
+fn two_parts_with_two_embedded_models() -> Result<(), Box<dyn std::error::Error>> {
+    let out = read("two-step-models.PcbDoc")?;
+    let p = parts(&out);
+    assert_eq!(p.len(), 2, "{p:?}");
+    assert_eq!(p[0].3.as_deref(), Some(BOX_1608_ID), "{p:?}");
+    assert_eq!(p[1].3.as_deref(), Some(BOX_OFFSET_ID), "{p:?}");
+    assert_eq!(out.models.len(), 2);
+    let model = |id: &str| {
+        out.models
+            .iter()
+            .find(|m| m.id == id)
+            .ok_or("model missing")
+    };
+    let (centred, offset) = (model(BOX_1608_ID)?, model(BOX_OFFSET_ID)?);
+    assert_eq!(centred.name, "box-1608.step");
+    assert_eq!(x_range(&centred.step).ok_or("no points")?, (-0.8, 0.8));
+    assert_eq!(offset.name, "box-offset.step");
+    assert_eq!(x_range(&offset.step).ok_or("no points")?, (0.0, 1.6));
+    // Only the usual note about /ShapeBasedComponentBodies6 (on every board with a 3D body).
+    assert!(
+        out.notes
+            .iter()
+            .all(|n| n.message.contains("ShapeBasedComponentBodies6")),
+        "{:?}",
+        out.notes
+    );
     Ok(())
 }

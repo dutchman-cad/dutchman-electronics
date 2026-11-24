@@ -42,7 +42,8 @@ fn check_r1(
     let model = r1.model.as_ref().ok_or("R1 has no model")?;
     assert_eq!(model.name, "box-offset.step", "{name}");
     assert!(
-        matches!(&model.source, ModelSource::Embedded { stream } if stream == "/Models/0"),
+        matches!(&model.source, ModelSource::Embedded { id }
+            if out.models.iter().any(|m| &m.id == id && m.name == "box-offset.step")),
         "{name}: {:?}",
         model.source
     );
