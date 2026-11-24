@@ -223,14 +223,16 @@ fn a_model_turned_on_a_flipped_part_at_90_keeps_its_place() -> Result<(), Box<dy
     )
 }
 
-/// Checks R1's tilted STEP model on one of the tenth-batch boards: in the part's own frame it is
-/// tilted 90 degrees about X, turned `turn` about Z, its origin at `offset` from R1's centre.
+/// Checks R1's tilted STEP model on one of the tenth- or thirteenth-batch boards: in the part's
+/// own frame it is tilted by `tilt` (degrees about X and Y), turned `turn` about Z, its origin at
+/// `offset` from R1's centre, with no warning.
 fn check_tilted_model(
     name: &str,
     at: (f64, f64),
     rotation: f64,
     side: Side,
     offset: (f64, f64),
+    tilt: (f64, f64),
     turn: f64,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let out = read(name)?;
@@ -258,8 +260,8 @@ fn check_tilted_model(
         model.offset
     );
     assert!(
-        near(model.rotation_deg[0], 90.0)
-            && near(model.rotation_deg[1], 0.0)
+        near(model.rotation_deg[0], tilt.0)
+            && near(model.rotation_deg[1], tilt.1)
             && near(model.rotation_deg[2], turn),
         "{name}: {:?}",
         model.rotation_deg
@@ -280,6 +282,7 @@ fn a_model_tilted_about_x_on_a_top_side_part() -> Result<(), Box<dyn std::error:
         0.0,
         Side::Top,
         (0.0, 0.05),
+        (90.0, 0.0),
         0.0,
     )
 }
@@ -293,6 +296,7 @@ fn a_model_tilted_about_x_keeps_its_tilt_on_a_flipped_part(
         180.0,
         Side::Bottom,
         (0.0, 0.05),
+        (90.0, 0.0),
         0.0,
     )
 }
@@ -307,6 +311,52 @@ fn a_model_tilted_about_x_and_turned_on_its_part() -> Result<(), Box<dyn std::er
         0.0,
         Side::Top,
         (-0.05 * sin, 0.05 * cos),
+        (90.0, 0.0),
+        30.0,
+    )
+}
+
+#[test]
+fn a_model_tilted_about_y_on_a_top_side_part() -> Result<(), Box<dyn std::error::Error>> {
+    check_tilted_model(
+        "one-y-tilted-step-resistor.PcbDoc",
+        (25.0, 15.0),
+        0.0,
+        Side::Top,
+        (0.0, 0.4),
+        (0.0, 90.0),
+        0.0,
+    )
+}
+
+#[test]
+fn a_model_tilted_about_y_keeps_its_tilt_on_a_flipped_part(
+) -> Result<(), Box<dyn std::error::Error>> {
+    // In the part's own frame (turned 180, then flipped about its X axis) this is the model of
+    // the top-side board; a tilt of -90 would put the body at x 25 to 25.45, not Altium's
+    // x 24.55 to 25.
+    check_tilted_model(
+        "one-bottom-y-tilted-step-resistor.PcbDoc",
+        (25.0, 15.0),
+        180.0,
+        Side::Bottom,
+        (0.0, 0.4),
+        (0.0, 90.0),
+        0.0,
+    )
+}
+
+#[test]
+fn a_model_tilted_about_y_and_turned_on_its_part() -> Result<(), Box<dyn std::error::Error>> {
+    // The origin (0, 0.4) turned by 30 degrees with the model.
+    let (sin, cos) = 30f64.to_radians().sin_cos();
+    check_tilted_model(
+        "one-turned-y-tilted-step-resistor.PcbDoc",
+        (25.0, 15.0),
+        0.0,
+        Side::Top,
+        (-0.4 * sin, 0.4 * cos),
+        (0.0, 90.0),
         30.0,
     )
 }
