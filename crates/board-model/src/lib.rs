@@ -120,12 +120,27 @@ pub struct Color {
 }
 
 /// How the board's faces look, as the file records it. `None` where the file says nothing.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Appearance {
     pub top_solder_mask: Option<Color>,
     pub bottom_solder_mask: Option<Color>,
     pub top_silkscreen: Option<Color>,
     pub bottom_silkscreen: Option<Color>,
+    /// The finish plated on the outer copper where the mask leaves it bare.
+    pub top_finish: Option<SurfaceFinish>,
+    pub bottom_finish: Option<SurfaceFinish>,
+}
+
+/// A surface finish on the outer copper, as the file names it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SurfaceFinish {
+    /// The process, such as `ENIG` or `HASL`.
+    pub process: String,
+    /// The material, such as `Nickel, Gold` or `PbSn`.
+    pub material: String,
+    pub color: Option<Color>,
+    /// Millimetres.
+    pub thickness: Option<f64>,
 }
 
 /// A pad's shape.
