@@ -191,7 +191,8 @@ one-net.PcbDoc  (from one-track)
     the track (Top Layer, (10, 15) to (20, 15), width 0.500) now belongs to a net named "GND";
     nothing else has a net.
 
-Scripted boards, fifth batch: an off-centre STEP model, rotated and flipped; a rotated fill
+Scripted boards, fifth batch: an off-centre STEP model, rotated and flipped; a rotated fill;
+TrueType text
 -------------------------------------------------------------------------------------------
 Made on 2026-11-24 by my own script; every number was read back and logged.
 
@@ -216,14 +217,24 @@ one-rotated-fill.PcbDoc  (from empty-outline)
     degrees, counter-clockwise about its centre (25, 15); its bounding box is x 18.170 to
     31.830, y 8.170 to 21.830.
 
-A TrueType-text board was made too, but Altium embeds the font file (Arial) in the board, and
-that font may not be shared under CC0, so it is not in this folder.
+one-ttf-text.PcbDoc  (from empty-outline)
+    text "TTF" in the TrueType font Arial (not the stroke font), layer Top Overlay, position
+    (10.000, 10.000), height 2.000, rotation 0, not mirrored, no component and no net.
+
+    Altium always embeds the TrueType font file it uses in the board (in EmbeddedFonts6), and
+    Arial may not be shared under CC0. So after the last save I removed the font file: my own
+    small tool copied every stream of the saved board into a new file unchanged, except
+    EmbeddedFonts6, which it wrote the way a board without TrueType text has it (Header 4 zero
+    bytes, Data empty). The board still names the font "Arial" in its text record. Altium
+    Designer 26.12.2 opens it normally and draws the text with the Arial font installed on the
+    PC.
 
 Paths inside the files
 ----------------------
 Altium writes a few paths from the PC that saved a board into the file. After the last save, I
 blanked their values: each value is overwritten with spaces of exactly the same length, so no
-record, stream or container size changed and no other byte moved. The fields are:
+record or stream size changed and no other byte in the stream moved (one-ttf-text also lost
+its embedded font, see above). The fields are:
     Board6 FILENAME                    the board's own save path
     Board6 2DCONFIGFULLFILENAME        the 2D view settings file (it contains the Windows login
                                        and the Altium install ID)
