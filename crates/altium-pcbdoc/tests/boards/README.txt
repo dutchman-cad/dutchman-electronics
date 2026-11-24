@@ -290,6 +290,22 @@ one-bottom-rotated-extruded-resistor.PcbDoc  (from one-offset-extruded-resistor)
     (25.4, 15), rotation 180) and turned to 90: R1 at (25.4, 15), rotation 90, bottom side. The
     body's outline is (25, 16.6), (25.4, 16.6), (25.8, 15), (25, 15), height 0.450.
 
+Scripted boards, ninth batch: lines and arcs on the overlay (silkscreen) layers
+-------------------------------------------------------------------------------
+Made on 2026-11-24 by my own script, each from a file copy of a board above with exactly one
+object added; every number was read back and logged. No net on any of them.
+
+one-overlay-line.PcbDoc  (from empty-outline)
+    a line on Top Overlay from (10, 10) to (20, 10), width 0.200
+one-overlay-arc.PcbDoc  (from empty-outline)
+    an arc on Top Overlay, centre (25, 15), radius 3.000, from 30 to 300 degrees
+    (counter-clockwise), width 0.200
+one-bottom-overlay-line.PcbDoc  (from empty-outline)
+    a line on Bottom Overlay from (30, 20) to (40, 25), width 0.150
+one-resistor-silkscreen.PcbDoc  (from one-resistor)
+    R1 got its own silkscreen line, added to the component: Top Overlay, (24, 15.8) to
+    (26, 15.8), width 0.150. It belongs to R1 the way its pads do.
+
 Paths inside the files
 ----------------------
 Altium writes a few paths from the PC that saved a board into the file. After the last save, I
