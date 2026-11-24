@@ -264,6 +264,32 @@ two-step-models.PcbDoc
     to 1.6 once unpacked), and record 1 is box-1608.step, stored in Models/1 (x -0.8 to 0.8).
     So the n-th record (from 0) is stored in Models/n; Altium put the newer model first.
 
+Scripted boards, eighth batch: a STEP model turned on its part; bottom-side parts at 90
+---------------------------------------------------------------------------------------
+Made on 2026-11-24 by my own script; every number was read back and logged.
+
+The first three are made from one-resistor. R1's extruded box was replaced by a 3D body holding
+the embedded box-offset.step (fifth batch), its origin first put 0.7 above R1's centre. Then the
+model was turned 30 degrees on the part: R1 was turned to 30 degrees with its body, the body
+was taken off R1, R1 was turned back to 0 and the body put back. On the part the model's origin
+is then at (-0.350, 0.606) from R1's centre (the point (0, 0.7) turned by 30 degrees), and the
+model is turned 30 degrees counter-clockwise.
+
+one-turned-step-resistor.PcbDoc
+    R1 at (25, 15), rotation 0, top side. The model's origin (MODEL.2D) is at
+    (24.650, 15.606), MODEL.3D.ROTZ 30. The body spans x 24.45 to 26.236, y 15.260 to 16.753.
+one-bottom-turned-step-resistor.PcbDoc  (the same, then R1 flipped to the bottom)
+    Altium turned R1 about the middle of everything it holds: R1 at (25.036, 15), rotation
+    180, bottom side. Model origin (25.386, 15.606), ROTZ 210. The body spans x 23.8 to
+    25.586, y 15.260 to 16.753.
+one-bottom-rotated-turned-step-resistor.PcbDoc  (the same, flipped, then R1 turned to 90)
+    R1 at (23.747, 15), rotation 90, bottom side. Model origin (24.354, 14.650), ROTZ 300. The
+    body spans x 24.007 to 25.5, y 14.45 to 16.236.
+one-bottom-rotated-extruded-resistor.PcbDoc  (from one-offset-extruded-resistor)
+    R1 with the lopsided extruded body of the sixth batch, flipped to the bottom (R1 then at
+    (25.4, 15), rotation 180) and turned to 90: R1 at (25.4, 15), rotation 90, bottom side. The
+    body's outline is (25, 16.6), (25.4, 16.6), (25.8, 15), (25, 15), height 0.450.
+
 Paths inside the files
 ----------------------
 Altium writes a few paths from the PC that saved a board into the file. After the last save, I
