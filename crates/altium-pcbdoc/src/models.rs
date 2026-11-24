@@ -46,12 +46,7 @@
 //!   the origin's y is negated, like an extruded outline's, and the model's turn is ROTZ plus the
 //!   part's rotation on a bottom-side part (ROTZ minus it on a top-side part). ROTX and ROTY are 0
 //!   on all our boards, so how they change on a flip is not known yet.
-//! - `/ShapeBasedComponentBodies6/Data` repeats `/ComponentBodies6/Data` record by record on all
-//!   our boards with a 3D body (15 records on 13 boards): the same 18 bytes and text, then the
-//!   same outline as a `u32` count n and n + 1 vertices of 37 bytes (a byte 0, x and y as `i32`
-//!   in 1/10000 mil, 28 bytes 0; the last vertex repeats the first). The leading byte and the
-//!   zeros look like room for arcs, which none of our bodies has. The reader checks that the copy
-//!   matches and warns when it does not.
+//! - `/ShapeBasedComponentBodies6/Data` repeats the bodies; see `shape_based.rs`.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -461,110 +456,9 @@ fn records<'a>(data: &'a [u8], notes: &mut Vec<Note>) -> Result<Vec<&'a [u8]>, S
     Ok(bodies)
 }
 
-/// Bytes per outline vertex in `/ShapeBasedComponentBodies6/Data`.
-const SHAPE_VERTEX: usize = 37;
-
-/// True when `/ShapeBasedComponentBodies6/Data` only repeats `/ComponentBodies6/Data`: as many
-/// records, each with the same bytes up to the end of its text and the same outline corners,
-/// with no arcs. False for anything else, including a stream that cannot be split.
-pub(crate) fn shape_based_repeats(shape: &[u8], bodies: &[u8]) -> bool {
-    let mut quiet = Vec::new();
-    let (Ok(plain), Ok(shaped)) = (records(bodies, &mut quiet), records(shape, &mut quiet)) else {
-        return false;
-    };
-    quiet.is_empty()
-        && plain.len() == shaped.len()
-        && plain
-            .iter()
-            .zip(&shaped)
-            .all(|(p, s)| same_body(p, s).unwrap_or(false))
-}
-
-/// One record of each stream: see [`shape_based_repeats`]. `None` when either is cut short.
-fn same_body(plain: &[u8], shaped: &[u8]) -> Option<bool> {
-    let text_end = (BODY_SKIPPED + 4).checked_add(read_u32(plain, BODY_SKIPPED)?)?;
-    if plain.get(..text_end)? != shaped.get(..text_end)? {
-        return Some(false);
-    }
-    let n = read_u32(plain, text_end)?;
-    if read_u32(shaped, text_end)? != n {
-        return Some(false);
-    }
-    let first = text_end.checked_add(4)?;
-    let want_len = first.checked_add(SHAPE_VERTEX.checked_mul(n.checked_add(1)?)?)?;
-    if shaped.len() != want_len || n > MAX_VERTICES {
-        return Some(false);
-    }
-    let vertex = |k: usize| shaped.get(first + SHAPE_VERTEX * k..first + SHAPE_VERTEX * (k + 1));
-    for k in 0..=n {
-        let v = vertex(k)?;
-        let straight = v.first() == Some(&0) && v.get(9..)?.iter().all(|&b| b == 0);
-        if !straight || (k == n && v != vertex(0)?) {
-            return Some(false);
-        }
-        if k < n {
-            let at = first + 16 * k;
-            for (offset, coord_at) in [(1usize, at), (5, at + 8)] {
-                let int: [u8; 4] = v.get(offset..offset + 4)?.try_into().ok()?;
-                let float: [u8; 8] = plain.get(coord_at..coord_at + 8)?.try_into().ok()?;
-                let diff = f64::from_le_bytes(float) - f64::from(i32::from_le_bytes(int));
-                if diff.abs() >= 0.5 {
-                    return Some(false);
-                }
-            }
-        }
-    }
-    Some(true)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// A body record with the given outline, plain (`f64` pairs) or shape-based (37-byte
-    /// vertices, the first repeated), framed as in the streams.
-    fn body_record(points: &[(i32, i32)], shaped: bool) -> Vec<u8> {
-        let text = b"|MODEL.MODELTYPE=0|OVERALLHEIGHT=10mil";
-        let mut body = vec![0u8; BODY_SKIPPED];
-        body.extend_from_slice(&(text.len() as u32).to_le_bytes());
-        body.extend_from_slice(text);
-        body.extend_from_slice(&(points.len() as u32).to_le_bytes());
-        if shaped {
-            for (x, y) in points.iter().chain(points.first()) {
-                body.push(0);
-                body.extend_from_slice(&x.to_le_bytes());
-                body.extend_from_slice(&y.to_le_bytes());
-                body.extend_from_slice(&[0u8; 28]);
-            }
-        } else {
-            for (x, y) in points {
-                body.extend_from_slice(&f64::from(*x).to_le_bytes());
-                body.extend_from_slice(&f64::from(*y).to_le_bytes());
-            }
-        }
-        let mut data = vec![BODY_RECORD];
-        data.extend_from_slice(&(body.len() as u32).to_le_bytes());
-        data.extend_from_slice(&body);
-        data
-    }
-
-    #[test]
-    fn a_shape_based_copy_must_repeat_the_bodies() {
-        let square = [(0, 0), (1000, 0), (1000, 1000), (0, 1000)];
-        let plain = body_record(&square, false);
-        let shaped = body_record(&square, true);
-        assert!(shape_based_repeats(&shaped, &plain));
-        // A moved corner, an arc flag, a missing record and garbage all count as different.
-        let moved = body_record(&[(0, 0), (1000, 0), (1000, 2000), (0, 1000)], true);
-        assert!(!shape_based_repeats(&moved, &plain));
-        let mut arc = shaped.clone();
-        let first_vertex = arc.len() - 5 * SHAPE_VERTEX;
-        arc[first_vertex] = 1;
-        assert!(!shape_based_repeats(&arc, &plain));
-        assert!(!shape_based_repeats(&[], &plain));
-        assert!(!shape_based_repeats(&[0x42, 1, 2], &plain));
-        assert!(!shape_based_repeats(&shaped[..shaped.len() - 3], &plain));
-    }
 
     #[test]
     fn hostile_streams_are_errors_or_notes_not_panics() {

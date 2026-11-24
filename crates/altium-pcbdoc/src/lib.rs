@@ -17,6 +17,7 @@ mod components;
 mod copper;
 mod models;
 pub mod privacy;
+mod shape_based;
 mod texts;
 
 use board_model::{
@@ -25,10 +26,7 @@ use board_model::{
 
 /// Streams holding board objects that this version does not read yet. Each one that has data
 /// gets a Dropped note, so nothing is lost silently.
-const NOT_READ_YET: &[(&str, &str)] = &[
-    ("/Dimensions6/Data", "dimensions"),
-    ("/ShapeBasedRegions6/Data", "shape-based regions"),
-];
+const NOT_READ_YET: &[(&str, &str)] = &[("/Dimensions6/Data", "dimensions")];
 
 /// The first eight bytes of every OLE / Compound File Binary file.
 pub const OLE_MAGIC: [u8; 8] = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
@@ -145,18 +143,31 @@ impl InputFormat for Altium {
             .map_err(ReadError::Invalid)?,
             None => components::Components::default(),
         };
-        if let Some(shape) = read_stream(&mut container, "/ShapeBasedComponentBodies6/Data")?
-            .filter(|s| !s.is_empty())
-        {
-            let bodies = bodies6.as_deref().unwrap_or_default();
-            if !models::shape_based_repeats(&shape, bodies) {
-                notes.push(Note {
-                    severity: Severity::Warning,
-                    message: "/ShapeBasedComponentBodies6/Data does not just repeat \
-                              /ComponentBodies6/Data (an outline with arcs?); only \
-                              /ComponentBodies6/Data was read"
-                        .into(),
-                });
+        // The shape-based streams only repeat these two (see `shape_based.rs`); check that.
+        for (copy, plain, data, kind) in [
+            (
+                "/ShapeBasedComponentBodies6/Data",
+                "/ComponentBodies6/Data",
+                &bodies6,
+                0x0c,
+            ),
+            (
+                "/ShapeBasedRegions6/Data",
+                "/Regions6/Data",
+                &regions6,
+                0x0b,
+            ),
+        ] {
+            if let Some(shape) = read_stream(&mut container, copy)?.filter(|s| !s.is_empty()) {
+                if !shape_based::repeats(&shape, data.as_deref().unwrap_or_default(), kind) {
+                    notes.push(Note {
+                        severity: Severity::Warning,
+                        message: format!(
+                            "{copy} does not just repeat {plain} (an outline with arcs?); only \
+                             {plain} was read"
+                        ),
+                    });
+                }
             }
         }
         let mut embedded = Vec::new();
