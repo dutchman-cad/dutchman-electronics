@@ -19,6 +19,10 @@
 //! radius 2, 0 to 180 and 180 to 360 degrees, the last vertex with byte 0) but a polygon of 35
 //! corners in `/Regions6/Data`. So the reader reads the plain streams, takes the arcs from here
 //! where a record has them, and checks that the rest only repeats the plain records.
+//!
+//! A region's holes (see `board.rs`) follow the outline in both streams in the same plain form,
+//! `u32` count and `f64` pairs: on `small-board` the bytes after the outline are the same in
+//! both, byte for byte.
 
 use board_model::Point;
 
@@ -78,7 +82,11 @@ fn same_record(plain: &[u8], shaped: &[u8]) -> Option<Option<Vec<Vertex>>> {
         return None;
     }
     let first = text_end.checked_add(4)?;
-    if shaped.len() != first.checked_add(VERTEX.checked_mul(n.checked_add(1)?)?)? {
+    // What follows the outline (a region's holes) is the same in both, byte for byte.
+    let shaped_end = first.checked_add(VERTEX.checked_mul(n.checked_add(1)?)?)?;
+    let plain_n = read_u32(plain, text_end)?;
+    let plain_end = first.checked_add(16usize.checked_mul(plain_n)?)?;
+    if shaped.get(shaped_end..)? != plain.get(plain_end..)? {
         return None;
     }
     let vertices = (0..=n)
@@ -96,7 +104,7 @@ fn same_record(plain: &[u8], shaped: &[u8]) -> Option<Option<Vec<Vertex>>> {
             .collect::<Option<Vec<_>>>()
             .map(Some);
     }
-    if read_u32(plain, text_end)? != n || tail != head {
+    if plain_n != n || tail != head {
         return None;
     }
     for (k, v) in vertices.iter().take(n).enumerate() {

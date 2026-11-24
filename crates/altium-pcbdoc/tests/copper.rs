@@ -456,3 +456,33 @@ fn four_layer_has_inner_layers_with_a_track_each() -> Result<(), Box<dyn std::er
     assert!(out.notes.is_empty(), "{:?}", out.notes);
     Ok(())
 }
+
+#[test]
+fn small_board_pours_have_holes_that_are_reported() -> Result<(), Box<dyn std::error::Error>> {
+    let out = read("small-board.PcbDoc")?;
+    let mut regions: Vec<&str> = out
+        .board
+        .copper
+        .iter()
+        .filter_map(|c| match c {
+            CopperItem::Region { layer, .. } => Some(layer_name(&out, *layer)),
+            _ => None,
+        })
+        .collect();
+    regions.sort_unstable();
+    assert_eq!(regions, ["Bottom Layer", "Top Layer"]);
+    // Each GND pour has 7 holes (clearances and thermal-relief gaps), which the board model
+    // cannot hold yet. The shape-based copy repeats them, so it gets no note of its own.
+    let warnings: Vec<&str> = out
+        .notes
+        .iter()
+        .filter(|n| n.severity == board_model::Severity::Warning)
+        .map(|n| n.message.as_str())
+        .collect();
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(
+        warnings[0].starts_with("2 copper region(s) have 14 hole(s)"),
+        "{warnings:?}"
+    );
+    Ok(())
+}
