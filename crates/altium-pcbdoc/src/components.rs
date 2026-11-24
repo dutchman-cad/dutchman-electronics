@@ -58,6 +58,8 @@ pub(crate) struct Components {
     /// (`COMMENTON=TRUE`), by the same index.
     pub name_on: Vec<bool>,
     pub comment_on: Vec<bool>,
+    /// For each component (same index), its place in `placements`, if it was placed.
+    pub placement_of: Vec<Option<usize>>,
 }
 
 impl Components {
@@ -90,6 +92,7 @@ pub(crate) fn read(
         designator_texts(data, &wide, &mut designators, notes)?;
     }
     let mut placements = Vec::new();
+    let mut placement_of = vec![None; records.len()];
     let mut bottom = 0usize;
     let mut unnamed = 0usize;
     for (index, record) in records.iter().enumerate() {
@@ -104,6 +107,9 @@ pub(crate) fn read(
                 }
                 if designator.is_none() {
                     unnamed += 1;
+                }
+                if let Some(slot) = placement_of.get_mut(index) {
+                    *slot = Some(placements.len());
                 }
                 placements.push(p);
             }
@@ -134,6 +140,7 @@ pub(crate) fn read(
         designators,
         name_on: records.iter().map(|r| flag(r, "NAMEON")).collect(),
         comment_on: records.iter().map(|r| flag(r, "COMMENTON")).collect(),
+        placement_of,
     })
 }
 
@@ -167,7 +174,7 @@ fn placement(record: &Properties, designator: String) -> Result<Placement, Strin
 }
 
 /// Splits a run of `[u32 length][text]` records into their key-value pairs.
-fn text_records(data: &[u8], stream: &str) -> Result<Vec<Properties>, String> {
+pub(crate) fn text_records(data: &[u8], stream: &str) -> Result<Vec<Properties>, String> {
     let mut records = Vec::new();
     let mut at = 0usize;
     while at < data.len() {

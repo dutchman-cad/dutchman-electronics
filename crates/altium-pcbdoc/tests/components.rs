@@ -27,12 +27,12 @@ fn one_resistor_is_r1_at_25_15_on_top() -> Result<(), Box<dyn std::error::Error>
     assert!(near(r1.at.x, 25.0) && near(r1.at.y, 15.0), "{:?}", r1.at);
     assert!(near(r1.rotation_deg, 0.0), "{}", r1.rotation_deg);
     assert_eq!(r1.side, Side::Top);
-    // The 3D body is not read yet: still reported, not lost.
-    assert_eq!(r1.model, None);
+    // The 3D body is read; tests/models.rs checks it.
+    assert!(r1.model.is_some());
     assert!(
-        out.notes
+        !out.notes
             .iter()
-            .any(|n| n.severity == Severity::Dropped && n.message.contains("component 3D bodies")),
+            .any(|n| n.severity == Severity::Dropped && n.message.contains("3D bod")),
         "{:?}",
         out.notes
     );
