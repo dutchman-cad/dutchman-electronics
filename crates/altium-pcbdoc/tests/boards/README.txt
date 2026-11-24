@@ -3,7 +3,8 @@ Original test board made for Dutchman Electronics. Released under CC0 1.0 (publi
 (This line covers every board in this folder: empty-outline, outline-with-hole, one-track,
 one-resistor, one-via, one-plated-pad, one-rotated-pad, one-oval-pad, one-bottom-track,
 one-arc, one-fill, one-region, one-pour, one-text, one-rotated-text,
-one-bottom-text and one-step-resistor.)
+one-bottom-text, one-step-resistor, one-rotated-resistor, one-bottom-resistor and
+one-net.)
 
 Made in Altium Designer 26.12.2 (build 26.12.2.9), saved as "PCB Binary Files (*.PcbDoc)".
 The first four boards (empty-outline, outline-with-hole, one-track, one-resistor) were drawn by
@@ -168,6 +169,26 @@ The STEP model (box-1608.step) is my own: a box 1.600 x 0.800 x 0.450, centred o
 X and Y, from z = 0 to z = 0.450, written by this repository's board-step crate (CC0 like the
 board). Altium was given no rotation and no standoff; the script read back the body's extent:
 x 24.2 to 25.8, y 14.6 to 15.4, height 0.450 above the top surface.
+
+Scripted boards, fourth batch: one-rotated-resistor, one-bottom-resistor, one-net
+----------------------------------------------------------------------------------
+Made on 2026-11-24 by my own script, each from a file copy of a board above with exactly one
+change; the script read every number back and logged it.
+
+one-rotated-resistor.PcbDoc  (from one-resistor)
+    R1 rotated to 90 degrees (counter-clockwise) about its centre, which stays at (25, 15);
+    still on the top side. Its pads moved with it:
+        pad 1 at (25.000, 14.200), pad 2 at (25.000, 15.800), both with rotation 90
+    Its extruded box turned with it: x 24.6 to 25.4, y 14.2 to 15.8, still 0.450 high.
+one-bottom-resistor.PcbDoc  (from one-resistor)
+    R1 flipped to the bottom side, centre still (25, 15). Altium itself then shows R1 with
+    rotation 180 (I set only the side). Its pads are on Bottom Layer and mirrored:
+        pad 1 at (25.800, 15.000), pad 2 at (24.200, 15.000), both with rotation 180
+    Its extruded box went to the bottom side too (Altium marks it as projecting from the bottom):
+    x 24.2 to 25.8, y 14.6 to 15.4, standoff 0, height 0.450.
+one-net.PcbDoc  (from one-track)
+    the track (Top Layer, (10, 15) to (20, 15), width 0.500) now belongs to a net named "GND";
+    nothing else has a net.
 
 Paths inside the files
 ----------------------

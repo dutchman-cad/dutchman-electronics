@@ -108,6 +108,9 @@ fn every_board_has_the_same_outline_and_thickness() -> Result<(), Box<dyn std::e
         "one-rotated-text.PcbDoc",
         "one-bottom-text.PcbDoc",
         "one-step-resistor.PcbDoc",
+        "one-rotated-resistor.PcbDoc",
+        "one-bottom-resistor.PcbDoc",
+        "one-net.PcbDoc",
     ] {
         let out = read(name)?;
         assert!(
