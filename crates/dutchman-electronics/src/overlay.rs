@@ -458,7 +458,13 @@ fn mask_outline(board: &Board) -> (Option<MultiPolygon>, Pile, usize, usize) {
 /// its bottom at z = 0, in the frame of the part named `board_part`), and notes on what was left
 /// out.
 pub fn overlays(board: &Board, thickness: f64, board_part: &str) -> (Vec<Value>, Vec<Value>) {
-    overlays_within(board, thickness, board_part, MAX_TEXT_SEGMENTS, MAX_HOLE_VERTICES)
+    overlays_within(
+        board,
+        thickness,
+        board_part,
+        MAX_TEXT_SEGMENTS,
+        MAX_HOLE_VERTICES,
+    )
 }
 
 /// [`overlays`] with `text_budget` as the most text segments drawn (a parameter so a test can
