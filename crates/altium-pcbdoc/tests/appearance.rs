@@ -1,7 +1,7 @@
 //! Solder mask and silkscreen colours, checked against tests/boards/README.txt.
 
 use altium_pcbdoc::Altium;
-use board_model::{Appearance, Color, InputFormat, ReadOutcome};
+use board_model::{Appearance, Color, InputFormat, ReadOutcome, SurfaceFinish};
 
 fn read(name: &str) -> Result<ReadOutcome, Box<dyn std::error::Error>> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -21,6 +21,7 @@ fn both_sides(mask: Option<Color>, silk: Option<Color>) -> Appearance {
         bottom_solder_mask: mask,
         top_silkscreen: silk,
         bottom_silkscreen: silk,
+        ..Appearance::default()
     }
 }
 
@@ -59,5 +60,52 @@ fn a_yellow_silkscreen() -> Result<(), Box<dyn std::error::Error>> {
         both_sides(rgba(m.0, m.1, m.2, 0.6), rgba(255, 255, 0, 1.0))
     );
     assert!(out.notes.is_empty(), "{:?}", out.notes);
+    Ok(())
+}
+
+/// The finish both sides of a board have.
+fn finish_on_both_sides(
+    name: &str,
+    want: &SurfaceFinish,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let out = read(name)?;
+    let a = &out.board.appearance;
+    assert_eq!(a.top_finish.as_ref(), Some(want), "{name}");
+    assert_eq!(a.bottom_finish.as_ref(), Some(want), "{name}");
+    assert!(out.notes.is_empty(), "{name}: {:?}", out.notes);
+    Ok(())
+}
+
+#[test]
+fn an_enig_surface_finish() -> Result<(), Box<dyn std::error::Error>> {
+    finish_on_both_sides(
+        "one-enig-resistor.PcbDoc",
+        &SurfaceFinish {
+            process: "ENIG".into(),
+            material: "Nickel, Gold".into(),
+            color: rgba(255, 196, 0, 1.0),
+            thickness: Some(0.004),
+        },
+    )
+}
+
+#[test]
+fn a_hasl_surface_finish() -> Result<(), Box<dyn std::error::Error>> {
+    finish_on_both_sides(
+        "one-hasl-resistor.PcbDoc",
+        &SurfaceFinish {
+            process: "HASL".into(),
+            material: "PbSn".into(),
+            color: rgba(242, 242, 242, 1.0),
+            thickness: Some(0.02),
+        },
+    )
+}
+
+#[test]
+fn boards_without_a_finish_layer_have_none() -> Result<(), Box<dyn std::error::Error>> {
+    let out = read("one-resistor.PcbDoc")?;
+    assert_eq!(out.board.appearance.top_finish, None);
+    assert_eq!(out.board.appearance.bottom_finish, None);
     Ok(())
 }
