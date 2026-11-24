@@ -417,12 +417,44 @@ outline-with-notch.PcbDoc
     (30, 29) to (30, 22), (28, 20) to (22, 20), (20, 22) to (20, 29), (19, 30) to (0, 30) and
     (0, 30) to (0, 0). Nothing else is on the board.
 
+Fifteenth board: a small board where the features meet
+------------------------------------------------------
+Made on 2026-11-24 by my own script from a file copy of one-resistor-silkscreen.PcbDoc. Every
+number was read back and logged. Saving put an embedded copy of the Arial font into the file
+although the board has no text; it was removed the same way as for one-ttf-text (see above).
+
+small-board.PcbDoc
+    Parts (R2 and R3 are copies of R1 with its pads, extruded body and silkscreen line):
+        R1  centre (25, 15), rotation 0, top side (as on one-resistor-silkscreen)
+        R2  centre (13, 22), rotation 0, top side
+        R3  centre (37, 8), copied to (37, 8) and then flipped: rotation 180, bottom side;
+            its pads at (37.8, 8) (pad 1) and (36.2, 8) (pad 2), its silkscreen line on Bottom
+            Overlay from (36, 8.8) to (38, 8.8)
+    Nets:
+        GND  R2 pad 1; a track on Top Layer (8, 22) to (12.2, 22), width 0.250; a via at
+             (8, 22), diameter 0.600, hole 0.300, Top to Bottom; both pours
+        SIG  R1 pad 2; a track on Top Layer (25.8, 15) to (30, 15), width 0.250; a via at
+             (30, 15), diameter 0.600, hole 0.300, Top to Bottom; tracks on Bottom Layer
+             (30, 15) to (30, 8) and (30, 8) to (35, 8), width 0.250
+        N2   R1 pad 1 and R2 pad 2; tracks on Top Layer (13.8, 22) to (20, 22) and (20, 22) to
+             (24.2, 15), width 0.250
+        R3's pads belong to no net.
+    Pours: one on Top Layer and one on Bottom Layer, both on net GND, solid, "remove dead
+    copper" off, outline (2, 2), (48, 2), (48, 28), (2, 28). Altium cut the copper away around
+    everything that is not GND (with its own default clearance) and joined the GND pad and via
+    with thermal-relief spokes. The edges of those cuts come from Altium's rules, so they are not
+    among the numbers here.
+    Silkscreen (not owned by a part): a line on Top Overlay (5, 27) to (45, 27), width 0.200, and
+    an arc on Top Overlay, centre (40, 18), radius 3.000, from 0 to 270 degrees
+    (counter-clockwise), width 0.200, both over the top pour; a line on Bottom Overlay
+    (10, 4) to (40, 4), width 0.150, over the bottom pour.
+
 Paths inside the files
 ----------------------
 Altium writes a few paths from the PC that saved a board into the file. After the last save, I
 blanked their values: each value is overwritten with spaces of exactly the same length, so no
-record or stream size changed and no other byte in the stream moved (one-ttf-text and
-four-layer also lost their embedded font, see above). The fields are:
+record or stream size changed and no other byte in the stream moved (one-ttf-text,
+four-layer and small-board also lost their embedded font, see above). The fields are:
     Board6 FILENAME                    the board's own save path
     Board6 2DCONFIGFULLFILENAME        the 2D view settings file (it contains the Windows login
                                        and the Altium install ID)
