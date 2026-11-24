@@ -350,12 +350,40 @@ outline-with-arcs.PcbDoc
     One round board cutout: centre (40, 15), radius 2.000.
     Nothing else is on the board; the layer stack and thickness are those of empty-outline.
 
+Twelfth board: four copper layers
+---------------------------------
+Made on 2026-11-24 from a file copy of empty-outline.PcbDoc. By hand, in Design > Layer Stack
+Manager: one "Insert layer below > Signal" on Top Layer. With the stack kept symmetric, Altium
+added two signal layers and a thin dielectric next to each, all with its default names and
+thicknesses, then the stack and board were saved. Then my own script added the copper below
+and saved again. Saving put an embedded copy of the Arial font into the file although the board
+has no text; it was removed the same way as for one-ttf-text (see above).
+
+four-layer.PcbDoc
+    Layer stack (total 1.812):
+
+        Top Overlay      (no thickness)
+        Top Solder       solder resist   0.010
+        Top Layer        copper          0.035
+        Dielectric 2                     0.071   (2.8 mil)
+        Layer 1          copper          0.035   (Altium's "Mid Layer 1")
+        Dielectric 1     FR-4            1.510
+        Layer 2          copper          0.035   (Altium's "Mid Layer 2")
+        Dielectric 3                     0.071   (2.8 mil)
+        Bottom Layer     copper          0.035
+        Bottom Solder    solder resist   0.010
+        Bottom Overlay   (no thickness)
+
+    a track on Layer 1 from (10, 10) to (20, 10), width 0.250
+    a track on Layer 2 from (10, 20) to (20, 20), width 0.250
+    a via at (30, 15), diameter 0.600, hole 0.300, from Top Layer to Bottom Layer
+
 Paths inside the files
 ----------------------
 Altium writes a few paths from the PC that saved a board into the file. After the last save, I
 blanked their values: each value is overwritten with spaces of exactly the same length, so no
-record or stream size changed and no other byte in the stream moved (one-ttf-text also lost
-its embedded font, see above). The fields are:
+record or stream size changed and no other byte in the stream moved (one-ttf-text and
+four-layer also lost their embedded font, see above). The fields are:
     Board6 FILENAME                    the board's own save path
     Board6 2DCONFIGFULLFILENAME        the 2D view settings file (it contains the Windows login
                                        and the Altium install ID)

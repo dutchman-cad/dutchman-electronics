@@ -392,3 +392,67 @@ fn the_shape_based_copy_of_the_regions_raises_no_note() -> Result<(), Box<dyn st
     }
     Ok(())
 }
+
+#[test]
+fn four_layer_has_inner_layers_with_a_track_each() -> Result<(), Box<dyn std::error::Error>> {
+    let out = read("four-layer.PcbDoc")?;
+    let copper: Vec<(&str, Option<Side>)> = out
+        .board
+        .layers
+        .iter()
+        .filter(|l| l.kind == LayerKind::Copper && l.name != "Multi-Layer")
+        .map(|l| (l.name.as_str(), l.side))
+        .collect();
+    assert_eq!(
+        copper,
+        [
+            ("Top Layer", Some(Side::Top)),
+            ("Layer 1", None),
+            ("Layer 2", None),
+            ("Bottom Layer", Some(Side::Bottom)),
+        ]
+    );
+    // 1.600 of empty-outline, two more copper layers of 0.035 and two dielectrics of 2.8 mil.
+    let t = out.board.thickness.ok_or("no thickness")?;
+    assert!(
+        near(t, 1.6 + 2.0 * 0.035 + 2.0 * 2.8 * 0.0254),
+        "thickness {t}"
+    );
+    let mut tracks = Vec::new();
+    let mut vias = Vec::new();
+    for item in &out.board.copper {
+        match item {
+            CopperItem::Track {
+                layer,
+                from,
+                to,
+                width,
+                ..
+            } => tracks.push((layer_name(&out, *layer), *from, *to, *width)),
+            CopperItem::Via {
+                at,
+                diameter,
+                drill,
+            } => vias.push((*at, *diameter, *drill)),
+            other => return Err(format!("unexpected copper item {other:?}").into()),
+        }
+    }
+    let [(l1, f1, t1, w1), (l2, f2, t2, w2)] = tracks.as_slice() else {
+        return Err(format!("expected two tracks: {tracks:?}").into());
+    };
+    assert_eq!((*l1, *l2), ("Layer 1", "Layer 2"));
+    for (from, to, y) in [(f1, t1, 10.0), (f2, t2, 20.0)] {
+        assert!(
+            near(from.x, 10.0) && near(from.y, y) && near(to.x, 20.0) && near(to.y, y),
+            "{from:?} {to:?}"
+        );
+    }
+    assert!(near(*w1, 0.25) && near(*w2, 0.25));
+    let [(at, diameter, drill)] = vias.as_slice() else {
+        return Err(format!("expected one via: {vias:?}").into());
+    };
+    assert!(near(at.x, 30.0) && near(at.y, 15.0), "{at:?}");
+    assert!(near(*diameter, 0.6) && near(*drill, 0.3));
+    assert!(out.notes.is_empty(), "{:?}", out.notes);
+    Ok(())
+}
