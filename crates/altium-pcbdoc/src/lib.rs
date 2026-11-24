@@ -27,10 +27,6 @@ use board_model::{
 /// gets a Dropped note, so nothing is lost silently.
 const NOT_READ_YET: &[(&str, &str)] = &[
     ("/Dimensions6/Data", "dimensions"),
-    (
-        "/ShapeBasedComponentBodies6/Data",
-        "shape-based component bodies",
-    ),
     ("/ShapeBasedRegions6/Data", "shape-based regions"),
 ];
 
@@ -149,6 +145,20 @@ impl InputFormat for Altium {
             .map_err(ReadError::Invalid)?,
             None => components::Components::default(),
         };
+        if let Some(shape) = read_stream(&mut container, "/ShapeBasedComponentBodies6/Data")?
+            .filter(|s| !s.is_empty())
+        {
+            let bodies = bodies6.as_deref().unwrap_or_default();
+            if !models::shape_based_repeats(&shape, bodies) {
+                notes.push(Note {
+                    severity: Severity::Warning,
+                    message: "/ShapeBasedComponentBodies6/Data does not just repeat \
+                              /ComponentBodies6/Data (an outline with arcs?); only \
+                              /ComponentBodies6/Data was read"
+                        .into(),
+                });
+            }
+        }
         let mut embedded = Vec::new();
         if let Some(data) = &bodies6 {
             let stored = models::attach(data, models6.as_deref(), &mut components, &mut notes)

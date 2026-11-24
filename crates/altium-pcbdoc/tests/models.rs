@@ -164,14 +164,7 @@ fn two_parts_share_one_embedded_model() -> Result<(), Box<dyn std::error::Error>
     };
     assert_eq!(stored.name, "box-1608.step");
     assert_eq!(x_range(&stored.step).ok_or("no points")?, (-0.8, 0.8));
-    // Only the usual note about /ShapeBasedComponentBodies6 (on every board with a 3D body).
-    assert!(
-        out.notes
-            .iter()
-            .all(|n| n.message.contains("ShapeBasedComponentBodies6")),
-        "{:?}",
-        out.notes
-    );
+    assert!(out.notes.is_empty(), "{:?}", out.notes);
     Ok(())
 }
 
@@ -194,13 +187,28 @@ fn two_parts_with_two_embedded_models() -> Result<(), Box<dyn std::error::Error>
     assert_eq!(x_range(&centred.step).ok_or("no points")?, (-0.8, 0.8));
     assert_eq!(offset.name, "box-offset.step");
     assert_eq!(x_range(&offset.step).ok_or("no points")?, (0.0, 1.6));
-    // Only the usual note about /ShapeBasedComponentBodies6 (on every board with a 3D body).
-    assert!(
-        out.notes
-            .iter()
-            .all(|n| n.message.contains("ShapeBasedComponentBodies6")),
-        "{:?}",
-        out.notes
-    );
+    assert!(out.notes.is_empty(), "{:?}", out.notes);
+    Ok(())
+}
+
+/// Every board with a 3D body also has /ShapeBasedComponentBodies6/Data, which only repeats the
+/// bodies: no note about it.
+#[test]
+fn the_shape_based_copy_of_the_bodies_raises_no_note() -> Result<(), Box<dyn std::error::Error>> {
+    for name in [
+        "one-resistor.PcbDoc",
+        "one-rotated-resistor.PcbDoc",
+        "one-bottom-extruded-resistor.PcbDoc",
+        "one-step-resistor.PcbDoc",
+        "shared-step-model.PcbDoc",
+        "one-bottom-rotated-turned-step-resistor.PcbDoc",
+    ] {
+        let out = read(name)?;
+        assert!(
+            !out.notes.iter().any(|n| n.message.contains("ShapeBased")),
+            "{name}: {:?}",
+            out.notes
+        );
+    }
     Ok(())
 }
