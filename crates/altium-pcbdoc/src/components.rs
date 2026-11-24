@@ -34,14 +34,16 @@ use crate::copper::{read_u16, read_u32};
 
 /// The most records or entries read from one stream before the file is treated as hostile.
 const MAX_RECORDS: usize = 1_000_000;
-const TEXT_RECORD: u8 = 0x05;
+pub(crate) const TEXT_RECORD: u8 = 0x05;
 /// Where a record body holds the index of the component it belongs to.
 pub(crate) const COMPONENT_AT: usize = 7;
 pub(crate) const NO_COMPONENT: u16 = 0xffff;
 /// The byte that is 1 on a component's designator text.
-const DESIGNATOR_FLAG_AT: usize = 41;
+pub(crate) const DESIGNATOR_FLAG_AT: usize = 41;
+/// Body byte that is 1 on a component's comment text ("10k" on `one-resistor`).
+pub(crate) const COMMENT_FLAG_AT: usize = 40;
 /// Where a text body holds its index into `/WideStrings6/Data`.
-const WIDE_STRING_AT: usize = 115;
+pub(crate) const WIDE_STRING_AT: usize = 115;
 /// Rotations beyond this many degrees (either way) are refused as not real.
 const MAX_ROTATION_DEG: f64 = 360.0;
 
@@ -52,6 +54,10 @@ pub(crate) struct Components {
     /// The designator of each component, by its place in `/Components6/Data` (the index that
     /// pads, tracks and texts refer to). Also kept for a component that was not placed.
     pub designators: Vec<Option<String>>,
+    /// Whether each component shows its designator text (`NAMEON=TRUE`) and its comment text
+    /// (`COMMENTON=TRUE`), by the same index.
+    pub name_on: Vec<bool>,
+    pub comment_on: Vec<bool>,
 }
 
 impl Components {
@@ -122,9 +128,12 @@ pub(crate) fn read(
             message: format!("{unnamed} component(s) have no designator text; left blank"),
         });
     }
+    let flag = |r: &Properties, key: &str| r.get(key).map(str::trim) == Some("TRUE");
     Ok(Components {
         placements,
         designators,
+        name_on: records.iter().map(|r| flag(r, "NAMEON")).collect(),
+        comment_on: records.iter().map(|r| flag(r, "COMMENTON")).collect(),
     })
 }
 
@@ -178,7 +187,7 @@ fn text_records(data: &[u8], stream: &str) -> Result<Vec<Properties>, String> {
 }
 
 /// The UTF-16 texts of `/WideStrings6/Data`, by index.
-fn wide_strings(data: &[u8]) -> Result<BTreeMap<usize, String>, String> {
+pub(crate) fn wide_strings(data: &[u8]) -> Result<BTreeMap<usize, String>, String> {
     let mut strings = BTreeMap::new();
     let mut at = 0usize;
     let mut count = 0usize;
@@ -273,7 +282,7 @@ fn designator_texts(
 }
 
 /// A block holding one length byte and that many 8-bit (Latin-1) characters.
-fn short_string(block: &[u8]) -> Option<String> {
+pub(crate) fn short_string(block: &[u8]) -> Option<String> {
     let (&len, rest) = block.split_first()?;
     let bytes = rest.get(..usize::from(len))?;
     Some(bytes.iter().map(|&b| char::from(b)).collect())
@@ -281,7 +290,7 @@ fn short_string(block: &[u8]) -> Option<String> {
 
 /// The start and end of `len` bytes that follow a `header`-byte field at `at`, if they fit in
 /// `total` bytes.
-fn span(at: usize, header: usize, len: usize, total: usize) -> Option<(usize, usize)> {
+pub(crate) fn span(at: usize, header: usize, len: usize, total: usize) -> Option<(usize, usize)> {
     let start = at.checked_add(header)?;
     let end = start.checked_add(len)?;
     (end <= total).then_some((start, end))

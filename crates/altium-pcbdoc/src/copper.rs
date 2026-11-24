@@ -146,6 +146,39 @@ impl CopperLayers {
         )
     }
 
+    /// The index in `layers` for a text on layer byte `number`: a copper layer, or an overlay
+    /// layer (named "… Overlay" in `/Board6/Data`), which is added as silkscreen the first time a
+    /// text uses it. `None` for any other layer.
+    pub(crate) fn text_layer(&mut self, number: u8) -> Option<usize> {
+        if let Some(index) = self.copper_index(number) {
+            return Some(index);
+        }
+        let name = self.names.get(usize::from(number)).cloned().flatten()?;
+        if !name.ends_with("Overlay") {
+            return None;
+        }
+        if let Some(index) = self.layers.iter().position(|l| l.name == name) {
+            return Some(index);
+        }
+        let side = if name.starts_with("Top") {
+            Some(Side::Top)
+        } else if name.starts_with("Bottom") {
+            Some(Side::Bottom)
+        } else {
+            None
+        };
+        self.layers.push(Layer {
+            name,
+            kind: LayerKind::Silkscreen,
+            side,
+        });
+        Some(self.layers.len() - 1)
+    }
+
+    pub(crate) fn layer_name(&self, number: u8) -> String {
+        self.name(number)
+    }
+
     fn copper_index(&self, number: u8) -> Option<usize> {
         self.by_number.get(usize::from(number)).copied().flatten()
     }
