@@ -236,7 +236,7 @@ fn contour(c: &Contour) -> Option<Polygon> {
                 center,
                 radius,
                 start_deg,
-                end_deg,
+                ..
             } => {
                 if !(radius.is_finite() && radius > 0.0) {
                     return None;
@@ -245,7 +245,7 @@ fn contour(c: &Contour) -> Option<Polygon> {
                     center,
                     radius,
                     start_deg,
-                    sweep(start_deg, end_deg),
+                    segment.sweep_deg().unwrap_or(360.0),
                     &mut ring,
                 );
             }

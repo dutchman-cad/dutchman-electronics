@@ -60,13 +60,41 @@ pub enum Segment {
         from: Point,
         to: Point,
     },
-    /// A circular arc from `start_deg` to `end_deg`, counter-clockwise.
+    /// A circular arc from `start_deg` to `end_deg`: counter-clockwise, or clockwise when
+    /// `clockwise` is set (a concave rounded corner on a contour that runs counter-clockwise).
+    /// Equal angles make a whole circle. [`Segment::sweep_deg`] gives the signed sweep.
     Arc {
         center: Point,
         radius: f64,
         start_deg: f64,
         end_deg: f64,
+        clockwise: bool,
     },
+}
+
+impl Segment {
+    /// The angle an arc sweeps from `start_deg` to `end_deg`, in degrees: in (0, 360] when it
+    /// runs counter-clockwise, in [-360, 0) when clockwise. Equal angles are a whole circle.
+    /// `None` for a line.
+    pub fn sweep_deg(&self) -> Option<f64> {
+        let Segment::Arc {
+            start_deg,
+            end_deg,
+            clockwise,
+            ..
+        } = *self
+        else {
+            return None;
+        };
+        let raw = if clockwise {
+            start_deg - end_deg
+        } else {
+            end_deg - start_deg
+        };
+        let s = raw.rem_euclid(360.0);
+        let s = if s < 1e-9 { 360.0 } else { s };
+        Some(if clockwise { -s } else { s })
+    }
 }
 
 /// A chain of segments. Closed when the last ends where the first starts.
@@ -342,5 +370,41 @@ mod tests {
     fn display_of_errors_is_plain_english() {
         let e = ReadError::NotYet("copper".into());
         assert_eq!(e.to_string(), "not supported yet: copper");
+    }
+}
+
+#[cfg(test)]
+mod sweep_tests {
+    use super::*;
+
+    fn arc(start_deg: f64, end_deg: f64, clockwise: bool) -> Segment {
+        Segment::Arc {
+            center: Point { x: 0.0, y: 0.0 },
+            radius: 1.0,
+            start_deg,
+            end_deg,
+            clockwise,
+        }
+    }
+
+    #[test]
+    fn an_arc_sweeps_in_its_own_direction() {
+        assert_eq!(arc(0.0, 90.0, false).sweep_deg(), Some(90.0));
+        assert_eq!(arc(90.0, 0.0, true).sweep_deg(), Some(-90.0));
+        assert_eq!(arc(0.0, 90.0, true).sweep_deg(), Some(-270.0));
+        assert_eq!(arc(350.0, 10.0, false).sweep_deg(), Some(20.0));
+        assert_eq!(arc(30.0, 30.0, false).sweep_deg(), Some(360.0));
+        assert_eq!(arc(30.0, 390.0, true).sweep_deg(), Some(-360.0));
+        assert_eq!(arc(-90.0, 90.0, false).sweep_deg(), Some(180.0));
+        assert_eq!(arc(720.0, 10.0, false).sweep_deg(), Some(10.0));
+        assert_eq!(arc(720.0, 10.0, true).sweep_deg(), Some(-350.0));
+        // Ends a hair apart are a whole circle, not a sliver, in either direction.
+        assert_eq!(arc(30.0, 30.0 + 1e-12, false).sweep_deg(), Some(360.0));
+        assert_eq!(arc(30.0, 30.0 - 1e-12, true).sweep_deg(), Some(-360.0));
+        let line = Segment::Line {
+            from: Point { x: 0.0, y: 0.0 },
+            to: Point { x: 1.0, y: 0.0 },
+        };
+        assert_eq!(line.sweep_deg(), None);
     }
 }

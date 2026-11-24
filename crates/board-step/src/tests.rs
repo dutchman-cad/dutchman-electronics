@@ -198,6 +198,7 @@ fn arcs_become_cylinders() {
                 radius: 10.0,
                 start_deg: -90.0,
                 end_deg: 90.0,
+                clockwise: false,
             },
             Segment::Line {
                 from: p(30.0, 20.0),
@@ -208,6 +209,7 @@ fn arcs_become_cylinders() {
                 radius: 10.0,
                 start_deg: 90.0,
                 end_deg: 270.0,
+                clockwise: false,
             },
         ],
     };
@@ -225,6 +227,7 @@ fn a_round_board_from_one_full_circle() {
             radius: 25.0,
             start_deg: 0.0,
             end_deg: 360.0,
+            clockwise: false,
         }],
     };
     let out = write(&board(outer, vec![], vec![]), "round").unwrap();
@@ -404,6 +407,7 @@ fn a_round_prism_has_its_cylinder_between_its_heights() {
             radius: 0.5,
             start_deg: 0.0,
             end_deg: 360.0,
+            clockwise: false,
         }],
     };
     let out = prism(&circle, 0.2, 1.2, "pin").unwrap();
@@ -479,4 +483,113 @@ fn step_reals_and_strings() {
     assert_eq!(real(-2.5), "-2.5");
     assert_eq!(text("it's"), "'it''s'");
     assert_eq!(text("Ü-1"), "'_-1'");
+}
+
+/// A 40 x 20 board, counter-clockwise, whose top right corner is a concave quarter circle of
+/// radius 5 around (40, 20): the arc runs clockwise from (40, 15) to (35, 20). Its area is
+/// 800 - 25π/4.
+fn notched() -> Contour {
+    Contour {
+        segments: vec![
+            Segment::Line {
+                from: p(0.0, 0.0),
+                to: p(40.0, 0.0),
+            },
+            Segment::Line {
+                from: p(40.0, 0.0),
+                to: p(40.0, 15.0),
+            },
+            Segment::Arc {
+                center: p(40.0, 20.0),
+                radius: 5.0,
+                start_deg: 270.0,
+                end_deg: 180.0,
+                clockwise: true,
+            },
+            Segment::Line {
+                from: p(35.0, 20.0),
+                to: p(0.0, 20.0),
+            },
+            Segment::Line {
+                from: p(0.0, 20.0),
+                to: p(0.0, 0.0),
+            },
+        ],
+    }
+}
+
+#[test]
+fn a_clockwise_arc_is_a_concave_corner() {
+    let edges = contour_edges(&notched()).unwrap();
+    // The arc is one quarter circle, so one edge: five in all.
+    assert_eq!(edges.len(), 5);
+    let area = signed_area2(&polygon(&edges)) / 2.0;
+    let exact = 800.0 - 25.0 * PI / 4.0;
+    assert!((area - exact).abs() < 0.05, "{area} vs {exact}");
+    let out = write(&board(notched(), vec![], vec![]), "notched").unwrap();
+    assert_eq!(out.stats.faces, 7);
+    assert_eq!(out.text.matches("CYLINDRICAL_SURFACE(").count(), 1);
+    check_topology(&out.text);
+}
+
+#[test]
+fn a_clockwise_circle_is_a_round_board() {
+    // Listed clockwise, so the writer turns it round: two half arcs, as for the round board.
+    let outer = Contour {
+        segments: vec![Segment::Arc {
+            center: p(0.0, 0.0),
+            radius: 25.0,
+            start_deg: 90.0,
+            end_deg: 90.0,
+            clockwise: true,
+        }],
+    };
+    let edges = contour_edges(&outer).unwrap();
+    assert_eq!(edges.len(), 2);
+    // Sampled every 5 degrees, the inscribed 72-gon is short of the circle by
+    // 625π (1 - sin 5° / 5°), about 2.49.
+    let area = signed_area2(&polygon(&edges)) / 2.0;
+    assert!(area < 0.0 && (area + PI * 625.0).abs() < 3.0, "{area}");
+    let out = write(&board(outer, vec![], vec![]), "round").unwrap();
+    assert_eq!(
+        (out.stats.vertices, out.stats.edges, out.stats.faces),
+        (4, 6, 4)
+    );
+    check_topology(&out.text);
+}
+
+#[test]
+fn a_clockwise_arc_past_a_half_circle_is_split() {
+    // A 40 x 20 board with a round cutout of radius 3 at (20, 10), listed clockwise as a 270
+    // degree arc and a 90 degree one. Its inscribed 72-gon is short by about 0.04.
+    let hole = Contour {
+        segments: vec![
+            Segment::Arc {
+                center: p(20.0, 10.0),
+                radius: 3.0,
+                start_deg: 0.0,
+                end_deg: 90.0,
+                clockwise: true,
+            },
+            Segment::Arc {
+                center: p(20.0, 10.0),
+                radius: 3.0,
+                start_deg: 90.0,
+                end_deg: 0.0,
+                clockwise: true,
+            },
+        ],
+    };
+    let edges = contour_edges(&hole).unwrap();
+    // 270 degrees in two pieces, then 90 in one.
+    assert_eq!(edges.len(), 3);
+    let area = signed_area2(&polygon(&edges)) / 2.0;
+    assert!(area < 0.0 && (area + PI * 9.0).abs() < 0.1, "{area}");
+    let out = write(
+        &board(rect(0.0, 0.0, 40.0, 20.0), vec![hole], vec![]),
+        "bite",
+    )
+    .unwrap();
+    assert_eq!(out.text.matches("CYLINDRICAL_SURFACE(").count(), 3);
+    check_topology(&out.text);
 }

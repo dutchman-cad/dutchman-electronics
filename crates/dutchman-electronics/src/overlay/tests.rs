@@ -317,6 +317,7 @@ fn a_region_with_an_arc_is_drawn_within_the_chord() {
                 radius: 5.0,
                 start_deg: 0.0,
                 end_deg: 180.0,
+                clockwise: false,
             },
             Segment::Line {
                 from: p(-5.0, 0.0),
@@ -528,4 +529,48 @@ fn items_far_off_the_board_or_on_other_layers_are_left_out() {
         notes[0]["message"],
         "3 copper or silkscreen item(s) have unusable sizes or layers and were left out"
     );
+}
+
+#[test]
+fn a_clockwise_arc_in_a_region_is_a_concave_corner() {
+    use board_model::{Contour, Segment};
+    // A 40 x 20 pour whose top right corner is a concave quarter circle of radius 5 around
+    // (40, 20), running clockwise from (40, 15) to (35, 20): 800 - 25π/4.
+    let line = |a: (f64, f64), b: (f64, f64)| Segment::Line {
+        from: p(a.0, a.1),
+        to: p(b.0, b.1),
+    };
+    let c = Contour {
+        segments: vec![
+            line((0.0, 0.0), (40.0, 0.0)),
+            line((40.0, 0.0), (40.0, 15.0)),
+            Segment::Arc {
+                center: p(40.0, 20.0),
+                radius: 5.0,
+                start_deg: 270.0,
+                end_deg: 180.0,
+                clockwise: true,
+            },
+            line((35.0, 20.0), (0.0, 20.0)),
+            line((0.0, 20.0), (0.0, 0.0)),
+        ],
+    };
+    let (list, _) = overlays(
+        &board(
+            vec![CopperItem::Region {
+                layer: 0,
+                contour: c,
+            }],
+            vec![],
+        ),
+        1.6,
+        "Board",
+    );
+    let a = area(&list[0]);
+    // The polyline's points sit on the circle, so it cuts the concave corner short by at most
+    // the chord limit along the arc's 2.5π length: a little more area, never less.
+    let exact = 800.0 - 25.0 * PI / 4.0;
+    assert!(a > exact && a < exact + 0.02 * 2.5 * PI, "{a} vs {exact}");
+    assert!(!covers(&list[0], 39.0, 19.0));
+    assert!(covers(&list[0], 34.0, 19.0));
 }
