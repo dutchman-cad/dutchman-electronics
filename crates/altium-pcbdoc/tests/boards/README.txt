@@ -1,8 +1,8 @@
 Original test board made for Dutchman Electronics. Released under CC0 1.0 (public domain): https://creativecommons.org/publicdomain/zero/1.0/
 
 (This line covers every board in this folder: empty-outline, outline-with-hole, one-track,
-one-resistor, one-via, one-plated-pad, one-rotated-pad, one-oval-pad, one-bottom-track and
-one-arc.)
+one-resistor, one-via, one-plated-pad, one-rotated-pad, one-oval-pad, one-bottom-track,
+one-arc, one-fill, one-region and one-pour.)
 
 Made in Altium Designer 26.12.2 (build 26.12.2.9), saved as "PCB Binary Files (*.PcbDoc)".
 The first four boards (empty-outline, outline-with-hole, one-track, one-resistor) were drawn by
@@ -118,6 +118,27 @@ one-arc.PcbDoc
     one arc (a curved track), layer Top Layer
     centre (25.000, 15.000), radius 5.000, width 0.500
     from 0 degrees to 90 degrees, counter-clockwise: it starts at (30, 15) and ends at (25, 20)
+
+
+Scripted boards, second batch: one-fill, one-region, one-pour
+--------------------------------------------------------------
+Made on 2026-11-24 the same way as the first scripted batch (a file copy of empty-outline plus
+exactly one object, added by my own script, every number read back and logged). None of these
+objects has a net.
+
+one-fill.PcbDoc
+    one fill (a filled rectangle), layer Top Layer, rotation 0
+    corners (20.000, 10.000) and (30.000, 20.000): 10.000 x 10.000
+one-region.PcbDoc
+    one solid copper region, layer Top Layer
+    corners (20.000, 10.000), (30.000, 10.000), (30.000, 20.000), (20.000, 20.000)
+one-pour.PcbDoc
+    one polygon pour, layer Top Layer, solid (not hatched), no net, "remove dead copper" off
+    pour outline (the shape I drew): corners (5.000, 5.000), (45.000, 5.000), (45.000, 25.000),
+    (5.000, 25.000)
+    Altium filled it with copper when the script rebuilt the pour; the poured copper is stored
+    in the file as well. Its exact edge comes from Altium's own clearance rules, so it is not
+    one of the numbers above.
 
 
 Paths inside the files
