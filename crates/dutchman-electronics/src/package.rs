@@ -611,6 +611,28 @@ mod tests {
 
     #[cfg(feature = "altium")]
     #[test]
+    fn the_flipped_off_centre_body_lands_where_altium_drew_it() {
+        // one-bottom-extruded-resistor's README: the outline on the board is (23.8, 14.6),
+        // (23.8, 15), (25.4, 15.4), (25.4, 14.6), projecting from the bottom. In R1's own frame
+        // that body is (1.6, -0.4), (1.6, 0), (0, 0.4), (0, -0.4) (the same as on the top-side
+        // one-offset-extruded-resistor), 0.45 high.
+        let bytes =
+            include_bytes!("../../altium-pcbdoc/tests/boards/one-bottom-extruded-resistor.PcbDoc");
+        let package = build(Path::new("one-bottom-extruded-resistor.PcbDoc"), bytes).unwrap();
+        let t = &package.manifest["parts"][1]["transform"];
+        let on_board = [
+            ([1.6, -0.4, 0.0], [23.8, 14.6, 0.0]),
+            ([1.6, 0.0, 0.0], [23.8, 15.0, 0.0]),
+            ([0.0, 0.4, 0.0], [25.4, 15.4, 0.0]),
+            ([0.0, -0.4, 0.45], [25.4, 14.6, -0.45]),
+        ];
+        for (model, board) in on_board {
+            assert!(close(apply(t, model), board), "{model:?} -> {:?}", apply(t, model));
+        }
+    }
+
+    #[cfg(feature = "altium")]
+    #[test]
     fn the_one_bottom_resistor_board_hangs_r1_below_the_board() {
         let bytes = include_bytes!("../../altium-pcbdoc/tests/boards/one-bottom-resistor.PcbDoc");
         let package = build(Path::new("one-bottom-resistor.PcbDoc"), bytes).unwrap();
