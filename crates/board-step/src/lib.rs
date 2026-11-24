@@ -157,7 +157,8 @@ fn segments_meet(a0: Point, a1: Point, b0: Point, b1: Point) -> bool {
     let side = |p: Point, q: Point, r: Point| (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
     let (d1, d2) = (side(b0, b1, a0), side(b0, b1, a1));
     let (d3, d4) = (side(a0, a1, b0), side(a0, a1, b1));
-    let apart = |u: f64, v: f64| (u > TOLERANCE && v > TOLERANCE) || (u < -TOLERANCE && v < -TOLERANCE);
+    let apart =
+        |u: f64, v: f64| (u > TOLERANCE && v > TOLERANCE) || (u < -TOLERANCE && v < -TOLERANCE);
     !apart(d1, d2) && !apart(d3, d4)
 }
 

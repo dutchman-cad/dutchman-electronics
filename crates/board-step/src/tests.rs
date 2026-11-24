@@ -372,8 +372,15 @@ fn a_prism_is_a_box_between_its_heights() {
     // Every point of the solid (vertices, line starts, plane origins) is at one of its two
     // heights; only the representation's own origin is at z = 0.
     let heights = point_heights(&out.text);
-    assert_eq!(heights.iter().filter(|z| **z == 0.0).count(), 1, "{heights:?}");
-    assert!(heights.iter().all(|z| [0.0, 0.1, 0.45].contains(z)), "{heights:?}");
+    assert_eq!(
+        heights.iter().filter(|z| **z == 0.0).count(),
+        1,
+        "{heights:?}"
+    );
+    assert!(
+        heights.iter().all(|z| [0.0, 0.1, 0.45].contains(z)),
+        "{heights:?}"
+    );
 }
 
 /// The z of every CARTESIAN_POINT in a STEP file.
@@ -404,7 +411,10 @@ fn a_round_prism_has_its_cylinder_between_its_heights() {
     assert!(out.text.contains("CARTESIAN_POINT('',(1.,2.,0.2))"));
     check_topology(&out.text);
     let heights = point_heights(&out.text);
-    assert!(heights.iter().all(|z| [0.0, 0.2, 1.2].contains(z)), "{heights:?}");
+    assert!(
+        heights.iter().all(|z| [0.0, 0.2, 1.2].contains(z)),
+        "{heights:?}"
+    );
 }
 
 #[test]
@@ -416,7 +426,14 @@ fn a_prism_outline_that_crosses_itself_is_an_error() {
         Err(StepError::Outline("the outline crosses itself".into()))
     );
     // A plain L shape is fine.
-    let l = polyline(&[(0.0, 0.0), (2.0, 0.0), (2.0, 1.0), (1.0, 1.0), (1.0, 2.0), (0.0, 2.0)]);
+    let l = polyline(&[
+        (0.0, 0.0),
+        (2.0, 0.0),
+        (2.0, 1.0),
+        (1.0, 1.0),
+        (1.0, 2.0),
+        (0.0, 2.0),
+    ]);
     check_topology(&prism(&l, 0.0, 1.0, "l").unwrap().text);
 }
 
