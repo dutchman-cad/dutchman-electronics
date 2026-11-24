@@ -20,6 +20,10 @@ A reader, or a written description of a format, may be derived only from:
 - **Public information**: open standards, published papers, and public vendor documentation with no restriction on use.
 - **Open-source code under a permissive licence** (MIT, BSD, Apache-2.0), with attribution: name the source in the pull request, and keep its licence and copyright notice wherever code is reused.
 
+### KiCad
+
+The KiCad reader (`.kicad_pcb`) is derived only from KiCad's published file-format documentation (the "File Formats" section of KiCad's developer documentation) and from real board files: boards we make in KiCad ourselves, and openly licensed open-hardware boards. Never from KiCad's source code, which is GPL (see below).
+
 ## Forbidden sources
 
 Reader code and format descriptions must not be derived from, and must not contain, any of these:
@@ -27,7 +31,7 @@ Reader code and format descriptions must not be derived from, and must not conta
 1. **Vendor SDKs and toolkits**: Altium's SDK, its scripting API documentation, headers, type libraries and sample code, and any other vendor's format toolkit. (Test-board builder scripts may use Altium's scripting; see below. Reader code may not learn from it.)
 2. **Decompiled or disassembled vendor programs.** You may study the files a program writes, never the program that writes them.
 3. **Confidential material**: anything under NDA, internal vendor documents, leaked specifications, or anything obtained by breaking an agreement or an access control.
-4. **Copyleft code**: anything under GPL, LGPL or AGPL. This explicitly includes KiCad's Altium importer (`pcbnew/plugins/altium`, GPL-3) and every other copyleft Altium parser. Do not read such code at all while working on reader code, not even as a hint.
+4. **Copyleft code**: anything under GPL, LGPL or AGPL. This explicitly includes KiCad's Altium importer (`pcbnew/plugins/altium`, GPL-3), every other copyleft Altium parser, and all of KiCad's own source code (GPL). Do not read such code at all while working on reader code, not even as a hint.
 5. **Files you may not possess or share**, including any employer's or customer's boards.
 6. **Circumventing protection.** We do not decode content protected by encryption, licence enforcement or other access controls, and we accept no keys, tools or format knowledge whose purpose is getting around such a measure.
 
