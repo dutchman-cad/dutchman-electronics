@@ -2,7 +2,8 @@ Original test board made for Dutchman Electronics. Released under CC0 1.0 (publi
 
 (This line covers every board in this folder: empty-outline, outline-with-hole, one-track,
 one-resistor, one-via, one-plated-pad, one-rotated-pad, one-oval-pad, one-bottom-track,
-one-arc, one-fill, one-region and one-pour.)
+one-arc, one-fill, one-region, one-pour, one-text, one-rotated-text and
+one-bottom-text.)
 
 Made in Altium Designer 26.12.2 (build 26.12.2.9), saved as "PCB Binary Files (*.PcbDoc)".
 The first four boards (empty-outline, outline-with-hole, one-track, one-resistor) were drawn by
@@ -140,6 +141,23 @@ one-pour.PcbDoc
     in the file as well. Its exact edge comes from Altium's own clearance rules, so it is not
     one of the numbers above.
 
+
+Scripted boards, third batch: one-text, one-rotated-text, one-bottom-text
+--------------------------------------------------------------------------
+Made on 2026-11-24 the same way as the other scripted boards (a file copy of empty-outline plus
+exactly one object, added by my own script, every number read back and logged). Each is a text
+in Altium's stroke font (not a TrueType font), height 2.000, stroke width 0.200, with no
+component and no net. The position is the text's reference point as Altium shows it in the
+text's properties (X/Y), before rotation and mirroring.
+
+one-text.PcbDoc
+    text "TEST", layer Top Overlay, position (10.000, 10.000), rotation 0, not mirrored
+one-rotated-text.PcbDoc
+    text "ROT", layer Top Overlay, position (25.000, 15.000), rotation 90 degrees
+    (counter-clockwise), not mirrored
+one-bottom-text.PcbDoc
+    text "BOT", layer Bottom Overlay, position (40.000, 10.000), rotation 0, mirrored (so it
+    reads correctly when the board is seen from below)
 
 Paths inside the files
 ----------------------
