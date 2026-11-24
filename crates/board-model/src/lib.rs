@@ -151,6 +151,14 @@ pub enum ModelSource {
     Embedded { stream: String },
     /// A file name the board refers to; the user's library may or may not have it.
     External { file: String },
+    /// No file: a prism made by extruding a flat outline, in component coordinates (mm, the
+    /// component's origin at (0, 0), not rotated), from `standoff` above the board face the
+    /// component sits on up to `height`. Altium calls this an extruded 3D body.
+    Extruded {
+        outline: Contour,
+        standoff: f64,
+        height: f64,
+    },
 }
 
 /// A reference to a component's 3D model, with the model's own placement on the component.

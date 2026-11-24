@@ -2,7 +2,7 @@
 //! Roadmap steps 1 and 2 are done: open the container and list its streams; read the board
 //! outline, its cutouts and the board thickness (`board.rs`). Step 3 has started: tracks, track
 //! arcs, pads, vias, fills and copper regions (`copper.rs`). Step 5 has started: component placements
-//! (`components.rs`). Step 4 has started: texts on overlay and copper layers (`texts.rs`). Everything else in the file is reported as a "not read yet"
+//! (`components.rs`) and their 3D models (`models.rs`). Step 4 has started: texts on overlay and copper layers (`texts.rs`). Everything else in the file is reported as a "not read yet"
 //! note.
 //!
 //! A `.PcbDoc` is an OLE / Compound File Binary container: a small file system inside one file,
@@ -15,6 +15,7 @@ use std::io::{Cursor, Read};
 mod board;
 mod components;
 mod copper;
+mod models;
 pub mod privacy;
 mod texts;
 
@@ -25,7 +26,6 @@ use board_model::{
 /// Streams holding board objects that this version does not read yet. Each one that has data
 /// gets a Dropped note, so nothing is lost silently.
 const NOT_READ_YET: &[(&str, &str)] = &[
-    ("/ComponentBodies6/Data", "component 3D bodies"),
     ("/Dimensions6/Data", "dimensions"),
     (
         "/ShapeBasedComponentBodies6/Data",
@@ -132,12 +132,14 @@ impl InputFormat for Altium {
         let arcs6 = read_stream(&mut container, "/Arcs6/Data")?;
         let vias6 = read_stream(&mut container, "/Vias6/Data")?;
         let fills6 = read_stream(&mut container, "/Fills6/Data")?;
+        let bodies6 = read_stream(&mut container, "/ComponentBodies6/Data")?;
+        let models6 = read_stream(&mut container, "/Models/Data")?;
 
         let mut notes = Vec::new();
         let record = board::board_record(&board6).map_err(ReadError::Invalid)?;
         let shape =
             board::read(&record, regions6.as_deref(), &mut notes).map_err(ReadError::Invalid)?;
-        let components = match &components6 {
+        let mut components = match &components6 {
             Some(data) => components::read(
                 data,
                 texts6.as_deref(),
@@ -147,6 +149,10 @@ impl InputFormat for Altium {
             .map_err(ReadError::Invalid)?,
             None => components::Components::default(),
         };
+        if let Some(data) = &bodies6 {
+            models::attach(data, models6.as_deref(), &mut components, &mut notes)
+                .map_err(ReadError::Invalid)?;
+        }
         let mut layers = copper::CopperLayers::new(&record);
         let mut copper = Vec::new();
         if let Some(data) = &tracks6 {

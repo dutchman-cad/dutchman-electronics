@@ -2,7 +2,7 @@
 //! in tests/boards/README.txt (to 0.001 mm, as AGENTS.md asks).
 
 use altium_pcbdoc::Altium;
-use board_model::{Contour, InputFormat, ReadOutcome, Segment, Severity};
+use board_model::{Contour, InputFormat, ReadOutcome, Segment};
 
 const TOLERANCE: f64 = 0.001;
 
@@ -117,19 +117,5 @@ fn every_board_has_the_same_outline_and_thickness() -> Result<(), Box<dyn std::e
         let t = out.board.thickness.ok_or("no thickness")?;
         assert!((t - 1.6).abs() <= TOLERANCE, "{name}: thickness {t}");
     }
-    Ok(())
-}
-
-#[test]
-fn what_is_not_read_yet_is_reported() -> Result<(), Box<dyn std::error::Error>> {
-    let resistor = read("one-resistor.PcbDoc")?;
-    // The component's 3D body is the one thing on this board not read yet.
-    assert!(
-        resistor.notes.iter().any(
-            |n| n.severity == Severity::Dropped && n.message.contains("/ComponentBodies6/Data")
-        ),
-        "{:?}",
-        resistor.notes
-    );
     Ok(())
 }
