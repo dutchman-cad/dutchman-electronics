@@ -196,7 +196,10 @@ fn an_outline_that_cannot_be_drawn_is_a_dropped_note_and_no_mask() {
     assert!(list.iter().all(|o| o["kind"] != "mask"));
     assert_eq!(notes.len(), 1);
     assert_eq!(notes[0]["severity"], "Dropped");
-    assert!(notes[0]["message"].as_str().unwrap().contains("solder mask"));
+    assert!(notes[0]["message"]
+        .as_str()
+        .unwrap()
+        .contains("solder mask"));
     // A cutout that cannot be drawn is counted, and the mask still comes.
     let mut b = board(vec![], vec![]);
     b.outline.outer = square(0.0, 0.0, 10.0, 10.0);

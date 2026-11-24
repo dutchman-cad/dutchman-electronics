@@ -658,9 +658,15 @@ fn tubes_refuse_unusable_sizes() {
 fn a_tube_whose_extent_is_not_finite_is_refused() {
     // 1e308 + 1e308 overflows to infinity, which would print as "inf" in the STEP text.
     let huge = tube(1e308, 0.0, 1e308, 1.0);
-    assert!(matches!(tubes(&[huge], 0.0, 1.6, "t"), Err(StepError::Size(_))));
+    assert!(matches!(
+        tubes(&[huge], 0.0, 1.6, "t"),
+        Err(StepError::Size(_))
+    ));
     let huge = tube(0.0, -1e308, 1e308, 1.0);
-    assert!(matches!(tubes(&[huge], 0.0, 1.6, "t"), Err(StepError::Size(_))));
+    assert!(matches!(
+        tubes(&[huge], 0.0, 1.6, "t"),
+        Err(StepError::Size(_))
+    ));
 }
 
 #[test]
@@ -700,5 +706,8 @@ fn the_board_says_which_holes_it_cut() {
 #[test]
 fn too_many_tubes_are_refused() {
     let many = vec![tube(0.0, 0.0, 0.5, 0.4); MAX_TUBES + 1];
-    assert!(matches!(tubes(&many, 0.0, 1.6, "t"), Err(StepError::TooLarge(_))));
+    assert!(matches!(
+        tubes(&many, 0.0, 1.6, "t"),
+        Err(StepError::TooLarge(_))
+    ));
 }

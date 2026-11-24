@@ -317,10 +317,8 @@ fn named(list: &[String]) -> String {
 /// Each component with a model the package can build becomes a part named by its designator.
 fn components(list: &[Placement], embedded: &[EmbeddedModel], thickness: f64) -> Placed {
     let mut placed = Placed::default();
-    let mut used = std::collections::BTreeSet::from([
-        BOARD_PART.to_string(),
-        PLATING_PART.to_string(),
-    ]);
+    let mut used =
+        std::collections::BTreeSet::from([BOARD_PART.to_string(), PLATING_PART.to_string()]);
     // Equal extruded bodies share one model file; so do parts naming the same embedded model.
     let mut extruded: std::collections::BTreeMap<String, String> = Default::default();
     let mut unpacked: std::collections::BTreeMap<&str, String> = Default::default();
@@ -1072,7 +1070,11 @@ mod tests {
         let package = package_of("outline-with-arcs");
         let top = overlay_named(&package.manifest, "outline-with-arcs", "Solder mask top");
         let want = 1500.0 - (4.0 - std::f64::consts::PI) * 9.0 - std::f64::consts::PI * 4.0;
-        assert!((overlay_area(top) - want).abs() < 0.3, "{}", overlay_area(top));
+        assert!(
+            (overlay_area(top) - want).abs() < 0.3,
+            "{}",
+            overlay_area(top)
+        );
         assert_eq!(top["areas"][0]["holes"].as_array().unwrap().len(), 1);
     }
 
@@ -1096,7 +1098,10 @@ mod tests {
         assert_eq!(bottom["z"].as_f64().unwrap(), -0.005);
         // Masked copper and silkscreen: boards that have them.
         let track = package_of("one-track");
-        assert_eq!(overlay_named(&track.manifest, "one-track", "Copper top")["color"], "#3f8f4f");
+        assert_eq!(
+            overlay_named(&track.manifest, "one-track", "Copper top")["color"],
+            "#3f8f4f"
+        );
         let silk = package_of("one-overlay-line");
         assert_eq!(
             overlay_named(&silk.manifest, "one-overlay-line", "Silkscreen top")["color"],
@@ -1158,12 +1163,18 @@ mod tests {
         radii.sort_by(f64::total_cmp);
         // Two half cylinders on each of the two circles (to the 0.001 mm of the README).
         let want = [0.225, 0.225, 0.25, 0.25];
-        assert!(radii.iter().zip(want).all(|(r, w)| (r - w).abs() < 1e-3), "{radii:?}");
+        assert!(
+            radii.iter().zip(want).all(|(r, w)| (r - w).abs() < 1e-3),
+            "{radii:?}"
+        );
         // From z 0 up to the board's thickness.
         let zs = point_heights(&text);
         let top = zs.iter().copied().fold(f64::MIN, f64::max);
         let bottom = zs.iter().copied().fold(f64::MAX, f64::min);
-        assert!(bottom.abs() < 1e-9 && (top - 1.6).abs() < 1e-3, "{bottom} {top}");
+        assert!(
+            bottom.abs() < 1e-9 && (top - 1.6).abs() < 1e-3,
+            "{bottom} {top}"
+        );
         let assumed = m["notes"].as_array().unwrap().iter().any(|n| {
             n["severity"] == "Info" && n["message"].as_str().unwrap().contains("0.025 mm thick")
         });
@@ -1183,13 +1194,24 @@ mod tests {
         let mut radii = cylinder_radii(&String::from_utf8(bytes.clone()).unwrap());
         radii.sort_by(f64::total_cmp);
         let want = [0.475, 0.475, 0.5, 0.5];
-        assert!(radii.iter().zip(want).all(|(r, w)| (r - w).abs() < 1e-3), "{radii:?}");
+        assert!(
+            radii.iter().zip(want).all(|(r, w)| (r - w).abs() < 1e-3),
+            "{radii:?}"
+        );
         // outline-with-hole: an unplated hole, and one-resistor: no hole at all.
         for board in ["outline-with-hole", "one-resistor"] {
             let package = package_of(board);
             let m = &package.manifest;
-            assert!(m["parts"].as_array().unwrap().iter().all(|p| p["name"] != "Plating"));
-            assert!(m["models"].as_array().unwrap().iter().all(|x| x["id"] != "plating"));
+            assert!(m["parts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|p| p["name"] != "Plating"));
+            assert!(m["models"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|x| x["id"] != "plating"));
             assert!(package.files.iter().all(|(name, _)| name != "plating.step"));
         }
     }
