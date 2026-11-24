@@ -5,14 +5,21 @@
 //! - `models`: each geometry file once, `{id, file}` (file names relative to the folder),
 //! - `parts`: placed instances, `{name, model, transform, notes}`; `name` is the stable
 //!   identity (the board itself is `Board`, each component its designator),
-//! - `overlays`: copper and silkscreen as flat areas on the board's faces (see `overlay`),
+//! - `overlays`: copper, silkscreen and solder mask as flat areas on the board's faces (see
+//!   `overlay`), each with a colour,
+//! - a `Plating` part when the board has plated holes: the copper lining them, one tube each, all
+//!   in one STEP file,
 //! - `notes`: everything read but not in the package, as `Info`, `Degraded` or `Dropped`.
 
 use std::io::Read;
 use std::path::Path;
 
-use board_model::{EmbeddedModel, ModelSource, Note, Placement, Severity, Side, MAX_INPUT_BYTES};
+use board_model::{
+    Board, CopperItem, EmbeddedModel, ModelSource, Note, Placement, Severity, Side, MAX_INPUT_BYTES,
+};
 use serde_json::{json, Value};
+
+use crate::colors::{BOARD_COLOR, PLATING_COLOR};
 
 /// Schema of the package manifest.
 pub const PARTS_SCHEMA: &str = "dutchman.parts/1";
@@ -23,6 +30,14 @@ pub const BOARD_MODEL: &str = "board";
 /// The manifest's file in the package folder (the same JSON the command prints).
 pub const MANIFEST_FILE: &str = "manifest.json";
 pub const BOARD_FILE: &str = "board.step";
+/// The plating's part name, reserved like [`BOARD_PART`]: no component takes it.
+pub const PLATING_PART: &str = "Plating";
+/// The plating's model id and file.
+pub const PLATING_MODEL: &str = "plating";
+pub const PLATING_FILE: &str = "plating.step";
+/// How thick the copper lining a plated hole is, in mm (a common 25 micrometres). Board files do
+/// not give it, so it is assumed and a note says so.
+pub const PLATING_THICKNESS: f64 = 0.025;
 
 /// A package before it is written: the manifest and its files.
 #[derive(Clone, Debug, PartialEq)]
@@ -83,6 +98,7 @@ pub fn build(path: &Path, bytes: &[u8]) -> Result<Package, String> {
         "name": BOARD_PART,
         "model": BOARD_MODEL,
         "transform": IDENTITY,
+        "color": BOARD_COLOR,
         "notes": board_notes,
     })];
     let mut files = vec![(BOARD_FILE.to_string(), step.text.into_bytes())];
@@ -101,6 +117,19 @@ pub fn build(path: &Path, bytes: &[u8]) -> Result<Package, String> {
     );
     parts.extend(placed.parts);
     notes.extend(placed.notes);
+    let plated = plating(&board, step.thickness);
+    notes.extend(plated.notes);
+    if let Some(text) = plated.text {
+        models.push(json!({ "id": PLATING_MODEL, "file": PLATING_FILE }));
+        parts.push(json!({
+            "name": PLATING_PART,
+            "model": PLATING_MODEL,
+            "transform": IDENTITY,
+            "color": PLATING_COLOR,
+            "notes": [],
+        }));
+        files.push((PLATING_FILE.to_string(), text.into_bytes()));
+    }
     let (overlays, overlay_notes) = crate::overlay::overlays(&board, step.thickness, BOARD_PART);
     notes.extend(overlay_notes);
     let manifest = json!({
@@ -115,6 +144,86 @@ pub fn build(path: &Path, bytes: &[u8]) -> Result<Package, String> {
         "notes": notes,
     });
     Ok(Package { manifest, files })
+}
+
+/// The plating's STEP file (when there is any) and the notes on it.
+struct Plating {
+    text: Option<String>,
+    notes: Vec<Value>,
+}
+
+/// The copper lining the plated holes: one tube for each, from the board's bottom (z 0) to its top
+/// (z = `thickness`), in the Board's frame. Plated holes are every via, and every pad whose drill
+/// the board model marks `plated`. A tube's outer radius is the drill radius, its inner one that
+/// less [`PLATING_THICKNESS`]. No text when no hole is plated, or when the tubes cannot be
+/// written; a hole too small to line, or past the cap, or a failure, says so in a note.
+fn plating(board: &Board, thickness: f64) -> Plating {
+    let mut list = Vec::new();
+    let mut left_out = 0usize;
+    for item in &board.copper {
+        let (at, drill) = match *item {
+            CopperItem::Via { at, drill, .. } => (at, drill),
+            CopperItem::Pad {
+                at,
+                drill: Some(drill),
+                plated: true,
+                ..
+            } => (at, drill),
+            _ => continue,
+        };
+        let outer_radius = drill / 2.0;
+        let inner_radius = outer_radius - PLATING_THICKNESS;
+        let usable = at.x.is_finite()
+            && at.y.is_finite()
+            && inner_radius > board_step::TOLERANCE
+            && outer_radius.is_finite();
+        if !usable || list.len() >= board_step::MAX_TUBES {
+            left_out = left_out.saturating_add(1);
+            continue;
+        }
+        list.push(board_step::Tube {
+            at,
+            outer_radius,
+            inner_radius,
+        });
+    }
+    let mut notes = Vec::new();
+    if left_out > 0 {
+        notes.push(json!({
+            "severity": "Dropped",
+            "message": format!(
+                "{left_out} plated hole(s) are too small to line with {PLATING_THICKNESS} mm of \
+                 plating, or past the first {} tubes, and have no plating",
+                board_step::MAX_TUBES
+            ),
+        }));
+    }
+    if list.is_empty() {
+        return Plating { text: None, notes };
+    }
+    match board_step::tubes(&list, 0.0, thickness, PLATING_PART) {
+        Ok(step) => {
+            notes.push(json!({
+                "severity": "Info",
+                "message": format!(
+                    "the plating inside each plated hole (every via, and every pad with a \
+                     plated drill) is assumed {PLATING_THICKNESS} mm thick: the board file does \
+                     not give it"
+                ),
+            }));
+            Plating {
+                text: Some(step.text),
+                notes,
+            }
+        }
+        Err(why) => {
+            notes.push(json!({
+                "severity": "Dropped",
+                "message": format!("the plating of plated holes could not be written: {why}"),
+            }));
+            Plating { text: None, notes }
+        }
+    }
 }
 
 /// A part's placement: 3 rows of 4, rotation then translation (mm) in the last column.
@@ -202,7 +311,10 @@ fn named(list: &[String]) -> String {
 /// Each component with a model the package can build becomes a part named by its designator.
 fn components(list: &[Placement], embedded: &[EmbeddedModel], thickness: f64) -> Placed {
     let mut placed = Placed::default();
-    let mut used = std::collections::BTreeSet::from([BOARD_PART.to_string()]);
+    let mut used = std::collections::BTreeSet::from([
+        BOARD_PART.to_string(),
+        PLATING_PART.to_string(),
+    ]);
     // Equal extruded bodies share one model file; so do parts naming the same embedded model.
     let mut extruded: std::collections::BTreeMap<String, String> = Default::default();
     let mut unpacked: std::collections::BTreeMap<&str, String> = Default::default();
@@ -854,10 +966,271 @@ mod tests {
                     "{}: drawn off the faces",
                     path.display()
                 );
+                let color = o["color"].as_str().unwrap_or_default();
+                assert!(
+                    color.len() == 7 && color.starts_with('#'),
+                    "{}: {o}",
+                    path.display()
+                );
+                if o["kind"] == "mask" {
+                    // The mask rides 0.005 mm off the face: above the top, below the bottom.
+                    let ok = if o["side"] == "top" {
+                        z > 1.6
+                    } else {
+                        (z + 0.005).abs() < 1e-9
+                    };
+                    assert!(ok, "{}: mask z {z}", path.display());
+                    assert_eq!(o["opacity"], 0.85);
+                } else {
+                    assert!(o.get("opacity").is_none(), "{}: {o}", path.display());
+                }
             }
+            // Every test board has a usable outline, so each has both masks.
+            let masks = package.manifest["overlays"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|o| o["kind"] == "mask")
+                .count();
+            assert_eq!(masks, 2, "{}", path.display());
             seen += 1;
         }
         assert!(seen >= 37, "{seen} boards");
+    }
+
+    #[cfg(feature = "altium")]
+    fn overlay_named<'a>(m: &'a Value, board: &str, name: &str) -> &'a Value {
+        m["overlays"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|o| o["name"] == name)
+            .unwrap_or_else(|| panic!("{board}: no {name}"))
+    }
+
+    #[cfg(feature = "altium")]
+    #[test]
+    fn the_solder_mask_is_the_board_less_pads_and_drills() {
+        let mask = |board: &str, side: &str| {
+            let package = package_of(board);
+            overlay_area(overlay_named(
+                &package.manifest,
+                board,
+                &format!("Solder mask {side}"),
+            ))
+        };
+        // The outline is 50 x 30 = 1500 mm2 (README.txt, empty-outline).
+        assert!((mask("empty-outline", "top") - 1500.0).abs() < 1e-3);
+        // one-resistor: two bare SMD pads of 0.8 x 1.0 = 0.8 mm2 each on the top. The top mask is
+        // 1500 - 2 * 0.8 = 1498.4; the bottom has no pads, so it stays 1500.
+        assert!((mask("one-resistor", "top") - 1498.4).abs() < 1e-3);
+        assert!((mask("one-resistor", "bottom") - 1500.0).abs() < 1e-3);
+        // one-via: the via's ring is tented (copper under the mask, not a bare pad), so only its
+        // 0.5 mm drill is open: 1500 - pi * 0.25^2 = 1499.80365. The drill is drawn as a 32-sided
+        // polygon, a little under the circle (16 * 0.25^2 * sin(11.25 deg) = 0.19509 mm2), so the
+        // tolerance is 0.003.
+        let tented = 1500.0 - std::f64::consts::PI * 0.0625;
+        assert!((mask("one-via", "top") - tented).abs() < 0.003);
+        assert!((mask("one-via", "bottom") - tented).abs() < 0.003);
+        // one-plated-pad: a round 2.0 mm pad on all layers with a 1.0 mm hole. Its bare copper
+        // and its drill together open the whole pad, on both faces: 1500 - pi * 1^2 = 1496.85841,
+        // less a little for the 32-sided polygon (16 * sin(11.25 deg) = 3.12145 mm2 against
+        // 3.14159), so the tolerance is 0.03.
+        let open = 1500.0 - std::f64::consts::PI;
+        assert!((mask("one-plated-pad", "top") - open).abs() < 0.03);
+        assert!((mask("one-plated-pad", "bottom") - open).abs() < 0.03);
+    }
+
+    #[cfg(feature = "altium")]
+    #[test]
+    fn the_mask_cuts_the_boards_cutout_and_hole() {
+        // outline-with-hole: a 10 x 10 cutout and a 3.0 mm unplated hole. The hole's pad is bare
+        // copper (a ring of no width), so the hole is open all the same: 1500 - 100 - pi * 1.5^2
+        // = 1392.93141. The hole is a 32-sided polygon, a little under the circle (16 * 1.5^2 *
+        // sin(11.25 deg) = 7.0235 mm2 against 7.0686), so the tolerance is 0.08.
+        let package = package_of("outline-with-hole");
+        let top = overlay_named(&package.manifest, "outline-with-hole", "Solder mask top");
+        let area = overlay_area(top);
+        let want = 1400.0 - std::f64::consts::PI * 2.25;
+        assert!((area - want).abs() < 0.08, "{area}");
+    }
+
+    #[cfg(feature = "altium")]
+    #[test]
+    fn a_rounded_outline_with_a_round_cutout_gives_its_mask() {
+        // outline-with-arcs: the 50 x 30 rectangle with corners rounded at radius 3, and a round
+        // cutout of radius 2. Each corner loses (4 - pi) / 4 * 3^2 = 1.93142 mm2, four of them
+        // 7.72567: 1500 - 7.72567 - pi * 2^2 = 1479.70796. The arcs are polylines a little inside
+        // the true curves (the corners lose 0.18 mm2 more, the cutout 0.08 less), so the
+        // tolerance is 0.3.
+        let package = package_of("outline-with-arcs");
+        let top = overlay_named(&package.manifest, "outline-with-arcs", "Solder mask top");
+        let want = 1500.0 - (4.0 - std::f64::consts::PI) * 9.0 - std::f64::consts::PI * 4.0;
+        assert!((overlay_area(top) - want).abs() < 0.3, "{}", overlay_area(top));
+        assert_eq!(top["areas"][0]["holes"].as_array().unwrap().len(), 1);
+    }
+
+    #[cfg(feature = "altium")]
+    #[test]
+    fn overlays_and_the_board_part_carry_their_colours() {
+        let package = package_of("one-plated-pad");
+        let m = &package.manifest;
+        let colour = |name: &str| overlay_named(m, "one-plated-pad", name)["color"].clone();
+        for side in ["top", "bottom"] {
+            assert_eq!(colour(&format!("Solder mask {side}")), "#1f5f3a");
+            assert_eq!(colour(&format!("Copper {side} pads")), "#d4af37");
+        }
+        assert_eq!(part_named(m, "Board")["color"], "#c8b27a");
+        let mask = overlay_named(m, "one-plated-pad", "Solder mask top");
+        assert_eq!(mask["opacity"], 0.85);
+        assert_eq!(mask["kind"], "mask");
+        // The board is 1.6 mm thick (the file stores 1.600002 after its unit conversion).
+        assert!((mask["z"].as_f64().unwrap() - 1.605).abs() < 1e-4);
+        let bottom = overlay_named(m, "one-plated-pad", "Solder mask bottom");
+        assert_eq!(bottom["z"].as_f64().unwrap(), -0.005);
+        // Masked copper and silkscreen: boards that have them.
+        let track = package_of("one-track");
+        assert_eq!(overlay_named(&track.manifest, "one-track", "Copper top")["color"], "#3f8f4f");
+        let silk = package_of("one-overlay-line");
+        assert_eq!(
+            overlay_named(&silk.manifest, "one-overlay-line", "Silkscreen top")["color"],
+            "#f2f2f2"
+        );
+        // Components carry no colour.
+        let resistor = package_of("one-resistor");
+        assert!(part_named(&resistor.manifest, "R1").get("color").is_none());
+    }
+
+    /// The radius of each cylinder in a STEP text, in mm.
+    #[cfg(feature = "altium")]
+    fn cylinder_radii(step: &str) -> Vec<f64> {
+        step.lines()
+            .filter(|l| l.contains("CYLINDRICAL_SURFACE("))
+            .map(|l| {
+                let tail = l.trim_end_matches(");").rsplit(',').next().unwrap();
+                tail.parse().unwrap()
+            })
+            .collect()
+    }
+
+    /// The z of every `CARTESIAN_POINT` in a STEP text.
+    #[cfg(feature = "altium")]
+    fn point_heights(step: &str) -> Vec<f64> {
+        step.lines()
+            .filter(|l| l.contains("CARTESIAN_POINT("))
+            .filter_map(|l| {
+                let inner = l.split_once("'',(")?.1.split_once(')')?.0;
+                inner.rsplit(',').next()?.parse().ok()
+            })
+            .collect()
+    }
+
+    #[cfg(feature = "altium")]
+    #[test]
+    fn a_via_gets_one_plating_tube_with_the_drills_radius() {
+        // one-via: a through via at (25, 15), hole 0.5 mm, in a board 1.6 mm thick. Drill radius
+        // 0.25 mm; the plating is 0.025 mm thick, so the inside radius is 0.225 mm.
+        let package = package_of("one-via");
+        let m = &package.manifest;
+        let part = part_named(m, "Plating");
+        assert_eq!(part["model"], "plating");
+        assert_eq!(part["color"], "#d4af37");
+        assert_eq!(part["transform"], json!(IDENTITY));
+        assert!(m["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|x| x["id"] == "plating" && x["file"] == "plating.step"));
+        let (_, bytes) = package
+            .files
+            .iter()
+            .find(|(name, _)| name == "plating.step")
+            .unwrap();
+        let text = String::from_utf8(bytes.clone()).unwrap();
+        assert_eq!(text.matches("MANIFOLD_SOLID_BREP(").count(), 1);
+        let mut radii = cylinder_radii(&text);
+        radii.sort_by(f64::total_cmp);
+        // Two half cylinders on each of the two circles (to the 0.001 mm of the README).
+        let want = [0.225, 0.225, 0.25, 0.25];
+        assert!(radii.iter().zip(want).all(|(r, w)| (r - w).abs() < 1e-3), "{radii:?}");
+        // From z 0 up to the board's thickness.
+        let zs = point_heights(&text);
+        let top = zs.iter().copied().fold(f64::MIN, f64::max);
+        let bottom = zs.iter().copied().fold(f64::MAX, f64::min);
+        assert!(bottom.abs() < 1e-9 && (top - 1.6).abs() < 1e-3, "{bottom} {top}");
+        let assumed = m["notes"].as_array().unwrap().iter().any(|n| {
+            n["severity"] == "Info" && n["message"].as_str().unwrap().contains("0.025 mm thick")
+        });
+        assert!(assumed, "{}", m["notes"]);
+    }
+
+    #[cfg(feature = "altium")]
+    #[test]
+    fn a_plated_pad_is_plated_and_an_unplated_hole_is_not() {
+        // one-plated-pad: a 1.0 mm plated hole: radii 0.5 and 0.475.
+        let package = package_of("one-plated-pad");
+        let (_, bytes) = package
+            .files
+            .iter()
+            .find(|(name, _)| name == "plating.step")
+            .unwrap();
+        let mut radii = cylinder_radii(&String::from_utf8(bytes.clone()).unwrap());
+        radii.sort_by(f64::total_cmp);
+        let want = [0.475, 0.475, 0.5, 0.5];
+        assert!(radii.iter().zip(want).all(|(r, w)| (r - w).abs() < 1e-3), "{radii:?}");
+        // outline-with-hole: an unplated hole, and one-resistor: no hole at all.
+        for board in ["outline-with-hole", "one-resistor"] {
+            let package = package_of(board);
+            let m = &package.manifest;
+            assert!(m["parts"].as_array().unwrap().iter().all(|p| p["name"] != "Plating"));
+            assert!(m["models"].as_array().unwrap().iter().all(|x| x["id"] != "plating"));
+            assert!(package.files.iter().all(|(name, _)| name != "plating.step"));
+        }
+    }
+
+    #[test]
+    fn no_component_takes_the_plating_part_name() {
+        let placed = components(
+            &[
+                part("Plating", 1.0, 1.0, 0.0, Side::Top),
+                part("Board", 2.0, 1.0, 0.0, Side::Top),
+            ],
+            &[],
+            1.6,
+        );
+        let names: Vec<&str> = placed
+            .parts
+            .iter()
+            .map(|p| p["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, vec!["Plating (2)", "Board (2)"]);
+    }
+
+    #[test]
+    fn holes_too_small_to_line_are_a_note() {
+        use board_model::{Board, CopperItem, Point};
+        let via = |drill| CopperItem::Via {
+            at: Point { x: 1.0, y: 1.0 },
+            diameter: 1.0,
+            drill,
+        };
+        // A 0.05 mm drill has radius 0.025: nothing left inside the plating.
+        let small = Board {
+            copper: vec![via(0.05)],
+            ..Board::default()
+        };
+        let p = plating(&small, 1.6);
+        assert!(p.text.is_none());
+        assert_eq!(p.notes.len(), 1);
+        assert_eq!(p.notes[0]["severity"], "Dropped");
+        // A usable one beside it still gets its tube.
+        let both = Board {
+            copper: vec![via(0.05), via(0.3)],
+            ..Board::default()
+        };
+        let p = plating(&both, 1.6);
+        assert!(p.text.is_some());
+        assert!(p.notes.iter().any(|n| n["severity"] == "Dropped"));
     }
 
     /// The bounding box of an overlay's outer rings: (min x, min y, max x, max y).

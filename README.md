@@ -19,8 +19,10 @@ Open an Altium board in SolidCraft and see what SolidCraft already shows for a K
 
 | Part of the board | How it arrives |
 |---|---|
-| The board | An exact solid, with its cutouts and drilled holes |
-| Copper traces, pads, vias, pours | Flat surfaces on the board (overlay), or modelled with thickness |
+| The board | An exact solid, with its cutouts and drilled holes, in the colour of its FR4 edge |
+| Plated holes | The copper lining every via and every plated pad hole, as thin tubes (`Plating`) |
+| Copper traces, pads, vias, pours | Flat surfaces on the board (overlay): green under the mask, gold where bare, or modelled with thickness |
+| Solder mask | A translucent green surface over the whole board face, open at the bare pads and every drill |
 | Silkscreen | Text and lines as outlines, in white |
 | Components | Each one placed on the board with its 3D model (STEP) |
 
@@ -34,14 +36,14 @@ Dutchman finds add-ons by name. Any program called `dutchman-<something>` that s
 board.PcbDoc --reader--> neutral board model --package writer--> parts package --Dutchman--> board.sc
 ```
 
-The parts package (`dutchman.parts/1`) is what Dutchman reads back from `dutchman-electronics read <file> --out <dir> --json`: one STEP file per distinct 3D model (the board itself included), a list of parts named by designator with their placement, and, later, copper and silkscreen as flat overlays. The contract is in dutchman-cad/dutchman#1005; a summary is in issue #1.
+The parts package (`dutchman.parts/1`) is what Dutchman reads back from `dutchman-electronics read <file> --out <dir> --json`: one STEP file per distinct 3D model (the board itself included), a list of parts named by designator with their placement, copper, silkscreen and solder mask as flat overlays, and the copper lining plated holes. The contract is in dutchman-cad/dutchman#1005; a summary is in issue #1.
 
 The "neutral board model" is plain Rust types in `crates/board-model`: outline, layers, copper, text, component placements and model references. It does not know Altium and it does not know SolidCraft. That is the one boundary to keep clean.
 
 | Crate | What it is |
 |---|---|
 | `crates/board-model` | The neutral board model and the `InputFormat` trait |
-| `crates/board-step` | Writes the board substrate (outline, cutouts, drilled holes, thickness) as an exact STEP solid |
+| `crates/board-step` | Writes the board substrate (outline, cutouts, drilled holes, thickness) as an exact STEP solid, and the tubes of plated holes |
 | `crates/altium-pcbdoc` | Reads `.PcbDoc` into the board model. No Dutchman dependencies |
 | `crates/dutchman-electronics` | The `dutchman-electronics` command; gathers the formats |
 
@@ -57,7 +59,7 @@ Dutchman runs this program as `dutchman electronics ...` and reads one JSON obje
 |---|---|
 | `dutchman-electronics info --json` | `dutchman.module-info/1`: `name`, `display_name`, `version`, `repository`, `interface` (1), `extensions`, and `formats` (`id`, `name`, `extension`, `extensions`) |
 | `dutchman-electronics detect <file> --json` | `dutchman.module-detect/1`: `detection` (`yes`, `maybe_by_name` or `no`) and `format` (the format id, or `null`) |
-| `dutchman-electronics read <file> --out <dir> --json` | Writes a placed-parts package into `<dir>` (the STEP files, then `manifest.json`) and prints the same manifest, `dutchman.parts/1`: `models` (`id`, `file`), `parts` (`name`, `model`, 3x4 `transform`, `notes`), `overlays` (copper and silkscreen as flat areas: `name`, `part`, `kind`, `finish`, `side`, `z`, `areas` of `outer` and `holes` rings, agreed on dutchman-cad/dutchman#1005), `notes` (`Info`, `Degraded`, `Dropped`). Today the package holds the board itself (`Board`, `board.step`: outline, cutouts and drilled holes, exact), each component as a part named by its designator, with its 3D model: an embedded STEP model as the board holds it, or an extruded body written as an exact solid (`model-1.step`, ..., each distinct model once), copper and silkscreen as overlays for each face (tracks, arcs, pours, vias and pads united, drills cut out, masked copper stopping at the pads, within 0.02 mm), text drawn as pen strokes in the Hershey Roman Simplex font (the board's own font is not used yet, which a Degraded note says), and notes for what is not in it (models that live outside the board file, not yet; inner copper layers, which lie inside the board and are left out). |
+| `dutchman-electronics read <file> --out <dir> --json` | Writes a placed-parts package into `<dir>` (the STEP files, then `manifest.json`) and prints the same manifest, `dutchman.parts/1`: `models` (`id`, `file`), `parts` (`name`, `model`, 3x4 `transform`, `color` (the `Board` and `Plating` parts only), `notes`), `overlays` (copper, silkscreen and solder mask as flat areas: `name`, `part`, `kind` (`copper`, `silkscreen` or `mask`), `finish`, `side`, `z`, `color`, `opacity` (the mask only), `areas` of `outer` and `holes` rings, agreed on dutchman-cad/dutchman#1005), `notes` (`Info`, `Degraded`, `Dropped`). Today the package holds the board itself (`Board`, `board.step`: outline, cutouts and drilled holes, exact), each component as a part named by its designator, with its 3D model: an embedded STEP model as the board holds it, or an extruded body written as an exact solid (`model-1.step`, ..., each distinct model once), the copper lining plated holes (`Plating`, `plating.step`: one closed solid per hole in one file, each a tube from the drill radius in to 0.025 mm less, from the board's bottom to its top; every via and every pad whose drill is plated; none when no hole is plated; the thickness is assumed, which an Info note says), copper, silkscreen and solder mask as overlays for each face (tracks, arcs, pours, vias and pads united, drills cut out, masked copper stopping at the pads, within 0.02 mm; the mask is the board outline, arcs included, less its cutouts, the bare pads and every drill, lifted 0.005 mm off the face with `opacity` 0.85), a `color` on every overlay and on the `Board` and `Plating` parts as lowercase `#rrggbb` (module defaults, since the board model holds no colours yet: mask `#1f5f3a`, copper under the mask `#3f8f4f`, bare pads and plating `#d4af37`, silkscreen `#f2f2f2`, board edge `#c8b27a`; component parts carry none), text drawn as pen strokes in the Hershey Roman Simplex font (the board's own font is not used yet, which a Degraded note says), and notes for what is not in it (models that live outside the board file, not yet; inner copper layers, which lie inside the board and are left out). |
 
 A part's `transform` is 3 rows of 4 numbers, row by row: the first three columns are the rotation, the last column the translation in mm, so a model point `p` lands at `R p + t`. A top-side component's model sits on the board's top face (z = thickness), turned by the component's rotation; a bottom-side one is turned over by half a turn about its own X axis onto the bottom face (z = 0). The frame is written out in `board_model::Placement`.
 

@@ -90,6 +90,84 @@ fn track(layer: usize, from: Point, to: Point, width: f64) -> CopperItem {
     }
 }
 
+fn square(x0: f64, y0: f64, x1: f64, y1: f64) -> board_model::Contour {
+    let c = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)];
+    board_model::Contour {
+        segments: c
+            .iter()
+            .zip(c.iter().cycle().skip(1))
+            .map(|(a, b)| board_model::Segment::Line {
+                from: p(a.0, a.1),
+                to: p(b.0, b.1),
+            })
+            .collect(),
+    }
+}
+
+#[test]
+fn the_mask_is_the_outline_less_cutouts_bare_pads_and_drills() {
+    // A 20 x 10 board (200 mm2) with a 2 x 2 cutout (4 mm2) and, on the top, a bare 1 x 1 SMD
+    // pad (1 mm2) and a via with a 0.5 mm drill (pi * 0.25^2 = 0.19635 mm2, drawn as a 32-sided
+    // polygon of 0.19509). Top mask: 200 - 4 - 1 - 0.19509 = 194.80491. Bottom: no pad, so
+    // 200 - 4 - 0.19509 = 195.80491.
+    let mut b = board(
+        vec![
+            CopperItem::Pad {
+                layer: 0,
+                at: p(5.0, 5.0),
+                shape: PadShape::Rectangle,
+                size_x: 1.0,
+                size_y: 1.0,
+                rotation_deg: 0.0,
+                drill: None,
+                plated: false,
+                owner: None,
+            },
+            CopperItem::Via {
+                at: p(15.0, 5.0),
+                diameter: 1.0,
+                drill: 0.5,
+            },
+        ],
+        vec![],
+    );
+    b.outline.outer = square(0.0, 0.0, 20.0, 10.0);
+    b.outline.cutouts = vec![square(8.0, 4.0, 10.0, 6.0)];
+    let (list, notes) = overlays(&b, 1.6, "Board");
+    assert!(notes.is_empty(), "{notes:?}");
+    let top = named(&list, "Solder mask top");
+    let bottom = named(&list, "Solder mask bottom");
+    assert_eq!(top["kind"], "mask");
+    assert_eq!(top["z"], 1.605);
+    assert_eq!(top["opacity"], 0.85);
+    assert_eq!(top["color"], "#1f5f3a");
+    assert_eq!(bottom["z"], -0.005);
+    assert!((area(top) - 194.80491).abs() < 1e-3, "{}", area(top));
+    assert!((area(bottom) - 195.80491).abs() < 1e-3, "{}", area(bottom));
+    // Three holes in the top mask: the cutout, the pad and the drill.
+    assert_eq!(top["areas"][0]["holes"].as_array().unwrap().len(), 3);
+}
+
+#[test]
+fn an_outline_that_cannot_be_drawn_is_a_dropped_note_and_no_mask() {
+    let mut b = board(vec![], vec![]);
+    // A line of no area.
+    b.outline.outer = square(0.0, 0.0, 10.0, 0.0);
+    let (list, notes) = overlays(&b, 1.6, "Board");
+    assert!(list.iter().all(|o| o["kind"] != "mask"));
+    assert_eq!(notes.len(), 1);
+    assert_eq!(notes[0]["severity"], "Dropped");
+    assert!(notes[0]["message"].as_str().unwrap().contains("solder mask"));
+    // A cutout that cannot be drawn is counted, and the mask still comes.
+    let mut b = board(vec![], vec![]);
+    b.outline.outer = square(0.0, 0.0, 10.0, 10.0);
+    b.outline.cutouts = vec![square(1.0, 1.0, 2.0, 1.0)];
+    let (list, notes) = overlays(&b, 1.6, "Board");
+    assert!((area(named(&list, "Solder mask top")) - 100.0).abs() < 1e-6);
+    assert_eq!(notes.len(), 1);
+    assert_eq!(notes[0]["severity"], "Dropped");
+}
+
 #[test]
 fn a_track_is_a_stroke_with_round_ends_on_its_face() {
     // one-track's numbers: (10, 15) to (20, 15), 0.5 wide, on Top Layer.

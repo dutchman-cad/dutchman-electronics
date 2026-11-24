@@ -6,6 +6,7 @@
 
 pub use board_model;
 
+pub mod colors;
 pub mod module;
 pub mod overlay;
 pub mod package;
