@@ -24,12 +24,17 @@ use crate::colors::{
 
 /// The most an arc's polyline strays from the true arc, in mm.
 pub const CHORD: f64 = 0.02;
-/// How far copper is drawn off the board face, in mm (as SolidCraft's KiCad import does).
+/// How far bare copper (the pads, seen through the mask openings) is drawn off the board face,
+/// in mm (as SolidCraft's KiCad import does).
 pub const COPPER_LIFT: f64 = 0.001;
+/// How far copper under the mask is drawn off the board face, in mm: just above the mask, in
+/// the mask-tinted colour, so tracks and pours show the way they do through a real mask even
+/// where a viewer draws the mask opaque.
+pub const MASKED_COPPER_LIFT: f64 = 0.007;
 /// How far silkscreen is drawn off the board face, in mm.
 pub const SILK_LIFT: f64 = 0.01;
-/// How far the solder mask is drawn off the board face, in mm: above the copper, below the
-/// silkscreen.
+/// How far the solder mask is drawn off the board face, in mm: above the bare pads, below the
+/// copper under it (see [`MASKED_COPPER_LIFT`]) and the silkscreen.
 pub const MASK_LIFT: f64 = 0.005;
 /// The most points one arc is drawn with: enough to hold [`CHORD`] on a whole circle as big as
 /// [`MAX_COORDINATE`] allows.
@@ -660,7 +665,7 @@ fn overlays_within(
                 format!("Copper {side}"),
                 "copper",
                 Some("masked"),
-                COPPER_LIFT,
+                MASKED_COPPER_LIFT,
                 masked,
                 COPPER_MASKED_COLOR,
             ));

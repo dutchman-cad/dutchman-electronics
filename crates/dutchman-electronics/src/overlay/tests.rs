@@ -226,7 +226,8 @@ fn a_track_is_a_stroke_with_round_ends_on_its_face() {
     assert_eq!(o["kind"], "copper");
     assert_eq!(o["finish"], "masked");
     assert_eq!(o["side"], "top");
-    assert_eq!(o["z"], 1.601);
+    // Masked copper sits MASKED_COPPER_LIFT (0.007) above the 1.6 top face: 1.607.
+    assert_eq!(o["z"], 1.607);
     // 10 x 0.5 plus two half circles of radius 0.25; the polyline loses at most 0.02 mm a side.
     let exact = 5.0 + PI * 0.25 * 0.25;
     assert!(area(o) < exact && area(o) > exact - 0.01, "{}", area(o));
@@ -240,7 +241,8 @@ fn a_bottom_track_is_drawn_below_the_board() {
         "Board",
     );
     let o = named(&list, "Copper bottom");
-    assert_eq!(o["z"], -0.001);
+    // Masked copper sits MASKED_COPPER_LIFT (0.007) below the bottom face at 0: -0.007.
+    assert_eq!(o["z"], -0.007);
     assert_eq!(o["side"], "bottom");
 }
 
