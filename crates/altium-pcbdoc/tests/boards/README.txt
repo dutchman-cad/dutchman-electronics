@@ -327,6 +327,29 @@ one-turned-tilted-step-resistor.PcbDoc  (like the first, then the model turned 3
     side. Model origin (24.975, 15.043), ROTX 90, ROTZ 30. The body spans x 24.975 to 26.586,
     y 14.654 to 15.843, 0.4 above and below the top surface.
 
+Eleventh board: an outline with arcs and a round cutout
+-------------------------------------------------------
+Made on 2026-11-24 from a file copy of empty-outline.PcbDoc, partly by my own script and partly
+with two of Altium's own menu commands, since a script cannot reshape the board:
+
+1. The script drew the new outline as helper lines and arcs (width 0.1) on Mechanical 1 and
+   selected them, and a circle as two half arcs on Mechanical 2.
+2. By hand: Design > Board Shape > Define Board Shape from Selected Objects.
+3. The script selected the circle instead.
+4. By hand: Tools > Convert > Create Board Cutout from Selected Primitives.
+5. The script removed all helpers on Mechanical 1 and 2 and saved the board.
+
+outline-with-arcs.PcbDoc
+    The board shape is the 50 x 30 rectangle of empty-outline with every corner rounded,
+    radius 3.000:
+        straight edges  (3, 0) to (47, 0), (50, 3) to (50, 27), (47, 30) to (3, 30),
+                        (0, 27) to (0, 3)
+        corner arcs     centre (47, 3) from 270 to 360 degrees, centre (47, 27) from 0 to 90,
+                        centre (3, 27) from 90 to 180, centre (3, 3) from 180 to 270
+                        (counter-clockwise)
+    One round board cutout: centre (40, 15), radius 2.000.
+    Nothing else is on the board; the layer stack and thickness are those of empty-outline.
+
 Paths inside the files
 ----------------------
 Altium writes a few paths from the PC that saved a board into the file. After the last save, I
