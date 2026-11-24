@@ -154,6 +154,13 @@ impl InputFormat for Altium {
                 .map_err(ReadError::Invalid)?;
         }
         let mut layers = copper::CopperLayers::new(&record);
+        if let Some(data) = read_stream(&mut container, "/Nets6/Data")? {
+            layers.nets = components::text_records(&data, "/Nets6/Data")
+                .map_err(ReadError::Invalid)?
+                .iter()
+                .map(|r| r.get("NAME").unwrap_or_default().trim().to_string())
+                .collect();
+        }
         let mut copper = Vec::new();
         if let Some(data) = &tracks6 {
             copper.extend(copper::tracks(data, &layers, &mut notes).map_err(ReadError::Invalid)?);

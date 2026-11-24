@@ -9,8 +9,10 @@
 //!   the form `|KEY=VALUE…` ending in a NUL byte (the framing of `/Board6/Data`). Our board has one
 //!   record, with `X=984.252mil` and `Y=590.5512mil` (the centre, 25 x 15 mm),
 //!   `ROTATION= 0.00000000000000E+0000` (degrees), `LAYER=TOP` and `PATTERN=R0603-TEST` (the
-//!   footprint). The designator is not in this record. No board of ours has a bottom-side part yet;
-//!   `LAYER=BOTTOM` is read as the bottom side with a warning until one confirms it.
+//!   footprint). The designator is not in this record. `one-rotated-resistor` has
+//!   `ROTATION= 9.00000000000000E+0001` (90 degrees, counter-clockwise); `one-bottom-resistor`
+//!   has `LAYER=BOTTOM` and `ROTATION= 1.80000000000000E+0002`, the 180 degrees Altium itself
+//!   gives a part when it is flipped to the bottom.
 //! - A component is referred to by its place in that run, counting from 0. In the record bodies of
 //!   `/Tracks6/Data`, `/Pads6/Data` (geometry block) and `/Texts6/Data`, bytes 7..9 hold it as a
 //!   `u16`, `ff ff` for none: the resistor's two pads and its two texts hold 0, the free pad in
@@ -93,7 +95,6 @@ pub(crate) fn read(
     }
     let mut placements = Vec::new();
     let mut placement_of = vec![None; records.len()];
-    let mut bottom = 0usize;
     let mut unnamed = 0usize;
     for (index, record) in records.iter().enumerate() {
         let designator = designators.get(index).cloned().flatten();
@@ -102,9 +103,6 @@ pub(crate) fn read(
             .unwrap_or_else(|| format!("component {}", index.saturating_add(1)));
         match placement(record, designator.clone().unwrap_or_default()) {
             Ok(p) => {
-                if p.side == Side::Bottom {
-                    bottom += 1;
-                }
                 if designator.is_none() {
                     unnamed += 1;
                 }
@@ -118,15 +116,6 @@ pub(crate) fn read(
                 message: format!("{label} was not read: {why}"),
             }),
         }
-    }
-    if bottom > 0 {
-        notes.push(Note {
-            severity: Severity::Warning,
-            message: format!(
-                "{bottom} component(s) have LAYER=BOTTOM, read as the bottom side; no test board \
-                 confirms this yet"
-            ),
-        });
     }
     if unnamed > 0 {
         notes.push(Note {
@@ -376,7 +365,8 @@ mod tests {
             .filter(|n| n.severity == Severity::Dropped)
             .count();
         assert_eq!(dropped, 3, "{notes:?}");
-        assert!(notes.iter().any(|n| n.message.contains("LAYER=BOTTOM")));
+        // A bottom-side part is confirmed by one-bottom-resistor: no warning any more.
+        assert!(!notes.iter().any(|n| n.message.contains("LAYER=BOTTOM")));
         assert!(notes.iter().any(|n| n.message.contains("no designator")));
     }
 
