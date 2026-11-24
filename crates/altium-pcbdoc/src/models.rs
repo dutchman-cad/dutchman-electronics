@@ -37,7 +37,15 @@
 //!   as (23.8, 14.6), (23.8, 15), (25.4, 15.4), (25.4, 14.6). Turned back by 180 degrees that is
 //!   the top-side outline with y negated: the part is turned over about its own X axis before
 //!   it is rotated. So the reader negates y again for a bottom-side part, and the outline is the
-//!   same on both boards.
+//!   same on both boards. `one-bottom-rotated-extruded-resistor` (R1 flipped, then at 90) gives the
+//!   same outline too.
+//! - A STEP model turned 30 degrees on R1 with its origin at (-0.350, 0.606) from R1's centre
+//!   (`one-turned-step-resistor`, top, ROTZ 30) keeps that place on the part when R1 is flipped
+//!   (`one-bottom-turned-step-resistor`, R1 at 180, ROTZ 210) and then turned to 90
+//!   (`one-bottom-rotated-turned-step-resistor`, ROTZ 300): turned back by the part's rotation,
+//!   the origin's y is negated, like an extruded outline's, and the model's turn is ROTZ plus the
+//!   part's rotation on a bottom-side part (ROTZ minus it on a top-side part). ROTX and ROTY are 0
+//!   on all our boards, so how they change on a flip is not known yet.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -81,6 +89,7 @@ pub(crate) fn attach(
     let mut extra = 0usize;
     let mut free = 0usize;
     let mut unread: BTreeMap<String, usize> = BTreeMap::new();
+    let mut tilted = 0usize;
     for body in records(bodies6, notes)? {
         let Some(component) = read_u16(body, COMPONENT_AT).filter(|&c| c != NO_COMPONENT) else {
             free += 1;
@@ -100,9 +109,24 @@ pub(crate) fn attach(
             continue;
         }
         match model(body, placement, &models) {
-            Ok(m) => placement.model = Some(m),
+            Ok(m) => {
+                if placement.side == Side::Bottom
+                    && (m.rotation_deg[0] != 0.0 || m.rotation_deg[1] != 0.0)
+                {
+                    tilted += 1;
+                }
+                placement.model = Some(m);
+            }
             Err(why) => *unread.entry(why).or_default() += 1,
         }
+    }
+    if tilted > 0 {
+        notes.push(Note {
+            severity: Severity::Warning,
+            message: format!(
+                "{tilted} 3D model(s) on bottom-side parts are tilted (MODEL.3D.ROTX or ROTY); how                  a flip changes that tilt is not confirmed by a test board yet"
+            ),
+        });
     }
     if extra > 0 {
         notes.push(Note {
@@ -285,11 +309,18 @@ fn model(
                 x: props.length_mm("MODEL.2D.X")?.ok_or("no MODEL.2D.X")?,
                 y: props.length_mm("MODEL.2D.Y")?.ok_or("no MODEL.2D.Y")?,
             };
-            let local = to_component(at);
+            let local = on_part(to_component(at), placement.side);
             let dz = props.length_mm("MODEL.3D.DZ")?.unwrap_or(0.0);
-            // MODEL.3D.ROTZ includes the part's own rotation (90 on `one-rotated-step-resistor`,
-            // 180 on `one-bottom-step-resistor`), so the model's turn on the part is the difference.
-            let on_part = normalize(angle(&props, "MODEL.3D.ROTZ")? - placement.rotation_deg);
+            // MODEL.3D.ROTZ includes the part's own rotation, seen from the top: on a top-side
+            // part it is the model's turn plus the part's (`one-rotated-step-resistor`,
+            // `one-turned-step-resistor`), on a bottom-side part the model's turn minus the
+            // part's (`one-bottom-turned-step-resistor`: 210 at 180, and
+            // `one-bottom-rotated-turned-step-resistor`: 300 at 90, both a turn of 30 on the part).
+            let rotz = angle(&props, "MODEL.3D.ROTZ")?;
+            let turn = normalize(match placement.side {
+                Side::Top => rotz - placement.rotation_deg,
+                Side::Bottom => rotz + placement.rotation_deg,
+            });
             Ok(ModelRef {
                 name,
                 source,
@@ -297,7 +328,7 @@ fn model(
                 rotation_deg: [
                     angle(&props, "MODEL.3D.ROTX")?,
                     angle(&props, "MODEL.3D.ROTY")?,
-                    on_part,
+                    turn,
                 ],
             })
         }
@@ -327,8 +358,8 @@ fn to_component(p: Point, placement: &Placement) -> Point {
 }
 
 /// A point in the component's coordinates as it lies on the part itself: a bottom-side part is
-/// the part turned over about its own X axis, so its stored outline is flipped back (y negated).
-/// This keeps the outline's turning direction, since Altium stores the flipped one reversed.
+/// the part turned over about its own X axis, so a stored point is flipped back (y negated). For
+/// an outline this keeps its turning direction, since Altium stores the flipped one reversed.
 fn on_part(p: Point, side: Side) -> Point {
     match side {
         Side::Top => p,
