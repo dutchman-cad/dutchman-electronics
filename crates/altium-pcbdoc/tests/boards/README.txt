@@ -3,8 +3,9 @@ Original test board made for Dutchman Electronics. Released under CC0 1.0 (publi
 (This line covers every board in this folder: empty-outline, outline-with-hole, one-track,
 one-resistor, one-via, one-plated-pad, one-rotated-pad, one-oval-pad, one-bottom-track,
 one-arc, one-fill, one-region, one-pour, one-text, one-rotated-text,
-one-bottom-text, one-step-resistor, one-rotated-resistor, one-bottom-resistor and
-one-net.)
+one-bottom-text, one-step-resistor, one-rotated-resistor, one-bottom-resistor, one-net,
+one-offset-step-resistor, one-rotated-step-resistor, one-bottom-step-resistor and
+one-rotated-fill.)
 
 Made in Altium Designer 26.12.2 (build 26.12.2.9), saved as "PCB Binary Files (*.PcbDoc)".
 The first four boards (empty-outline, outline-with-hole, one-track, one-resistor) were drawn by
@@ -189,6 +190,34 @@ one-bottom-resistor.PcbDoc  (from one-resistor)
 one-net.PcbDoc  (from one-track)
     the track (Top Layer, (10, 15) to (20, 15), width 0.500) now belongs to a net named "GND";
     nothing else has a net.
+
+Scripted boards, fifth batch: an off-centre STEP model, rotated and flipped; a rotated fill
+-------------------------------------------------------------------------------------------
+Made on 2026-11-24 by my own script; every number was read back and logged.
+
+The STEP model box-offset.step is my own, written by this repository's board-step crate (CC0
+like the boards): a box 1.600 x 0.800 x 0.450 that lies on the +X side of its origin, x 0 to
+1.6, y -0.4 to 0.4, z 0 to 0.45. Being off-centre, it shows how Altium turns and flips models.
+
+one-offset-step-resistor.PcbDoc  (from one-resistor)
+    R1's extruded box replaced by a 3D body holding box-offset.step, its origin on R1's centre
+    (25, 15), embedded in the board. Top side, rotation 0. The body spans x 25 to 26.6,
+    y 14.6 to 15.4, height 0.450.
+one-rotated-step-resistor.PcbDoc  (the same, then R1 rotated to 90 degrees)
+    R1 at (25, 15), rotation 90; pads at (25, 14.2) and (25, 15.8). The body spans x 24.6 to
+    25.4, y 15 to 16.6: the +X box turned onto +Y.
+one-bottom-step-resistor.PcbDoc  (the same as one-offset-step-resistor, then R1 flipped)
+    Altium turns a part about the middle of everything it holds, model included, so flipping
+    R1 to the bottom moved its centre to (25.400, 15.000) and gave it rotation 180 (I set only
+    the side). Pads on Bottom Layer at (26.2, 15) and (24.6, 15), rotation 180. The body spans
+    x 23.8 to 25.4, y 14.6 to 15.4, height 0.450, projecting from the bottom.
+one-rotated-fill.PcbDoc  (from empty-outline)
+    the fill of one-fill (corners (20, 10) and (30, 20) before rotation) with rotation 30
+    degrees, counter-clockwise about its centre (25, 15); its bounding box is x 18.170 to
+    31.830, y 8.170 to 21.830.
+
+A TrueType-text board was made too, but Altium embeds the font file (Arial) in the board, and
+that font may not be shared under CC0, so it is not in this folder.
 
 Paths inside the files
 ----------------------
