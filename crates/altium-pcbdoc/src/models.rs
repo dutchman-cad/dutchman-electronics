@@ -17,6 +17,12 @@
 //! - `/Models/Data` is a run of records, each a `u32` length and text, with `ID`, `NAME`
 //!   (`box-1608.step`) and `EMBED=TRUE`. The n-th record (from 0) is stored in the stream
 //!   `/Models/n`: `/Models/0` is the STEP file compressed with zlib.
+//! - With the off-centre STEP box `box-offset.step` (x 0 to 1.6 in the model), `MODEL.3D.ROTZ`
+//!   follows the part: 0 on `one-offset-step-resistor`, 90 on `one-rotated-step-resistor` (R1 at
+//!   90), 180 on `one-bottom-step-resistor` (R1 flipped: `LAYER=BOTTOM`, rotation 180, centre
+//!   moved to (25.4, 15), `BODYPROJECTION=1`). `MODEL.2D.X/Y` is R1's centre on all three. So on
+//!   the part itself the model is the same each time; the turn on the part is ROTZ minus the
+//!   part's rotation, and the flip is the part's side.
 //! - On `one-rotated-resistor` (R1 at 90 degrees) the extruded box's outline is stored turned:
 //!   x 24.6 to 25.4, y 14.2 to 15.8; turned back by the part's rotation it is the same
 //!   (-0.8, -0.4) to (0.8, 0.4) box as on `one-resistor`. On `one-bottom-resistor` the body has
@@ -75,10 +81,11 @@ pub(crate) fn attach(
             extra += 1;
             continue;
         }
-        // An extruded body on a rotated part is confirmed by `one-rotated-resistor`. Not yet
-        // confirmed: a STEP model on a rotated part, and any model on a bottom-side part (our only
-        // bottom-side body is a symmetric box, so a mirror would not show).
-        if placement.side == Side::Bottom || (is_step(body) && placement.rotation_deg != 0.0) {
+        // Confirmed: extruded bodies on rotated parts (`one-rotated-resistor`) and STEP models on
+        // rotated and bottom-side parts (`one-rotated-step-resistor`, `one-bottom-step-resistor`).
+        // Not yet: an extruded body on a bottom-side part, whose outline is stored already flipped
+        // (our only one is symmetric in Y, so the mirror axis does not show).
+        if placement.side == Side::Bottom && !is_step(body) {
             unconfirmed += 1;
         }
         match model(body, placement, &models) {
@@ -90,8 +97,8 @@ pub(crate) fn attach(
         notes.push(Note {
             severity: Severity::Warning,
             message: format!(
-                "{unconfirmed} component model(s) belong to a bottom-side part, or are STEP models \
-                 of a rotated part; their placement on the component is not confirmed by a test board yet"
+                "{unconfirmed} extruded 3D bod(ies) belong to a bottom-side part; how their outline \
+                 is mirrored is not confirmed by a test board yet"
             ),
         });
     }
@@ -199,6 +206,9 @@ fn model(
             };
             let local = to_component(at);
             let dz = props.length_mm("MODEL.3D.DZ")?.unwrap_or(0.0);
+            // MODEL.3D.ROTZ includes the part's own rotation (90 on `one-rotated-step-resistor`,
+            // 180 on `one-bottom-step-resistor`), so the model's turn on the part is the difference.
+            let on_part = normalize(angle(&props, "MODEL.3D.ROTZ")? - placement.rotation_deg);
             Ok(ModelRef {
                 name,
                 source,
@@ -206,12 +216,23 @@ fn model(
                 rotation_deg: [
                     angle(&props, "MODEL.3D.ROTX")?,
                     angle(&props, "MODEL.3D.ROTY")?,
-                    angle(&props, "MODEL.3D.ROTZ")?,
+                    on_part,
                 ],
             })
         }
         other => Err(format!("model type {} not read yet", other.unwrap_or("?"))),
     }
+}
+
+/// An angle in degrees brought into -180..=180 (a whole turn is the same turn; -0.0 becomes 0).
+fn normalize(deg: f64) -> f64 {
+    let mut a = deg % 360.0;
+    if a > 180.0 {
+        a -= 360.0;
+    } else if a <= -180.0 {
+        a += 360.0;
+    }
+    a + 0.0
 }
 
 /// A board point in the component's own coordinates: its origin at (0, 0), not rotated.
