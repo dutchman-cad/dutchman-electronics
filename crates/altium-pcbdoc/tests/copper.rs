@@ -374,3 +374,21 @@ fn one_pour_reads_its_poured_copper() -> Result<(), Box<dyn std::error::Error>> 
     );
     Ok(())
 }
+
+/// /ShapeBasedRegions6/Data only repeats /Regions6/Data on these boards: no note about it.
+#[test]
+fn the_shape_based_copy_of_the_regions_raises_no_note() -> Result<(), Box<dyn std::error::Error>> {
+    for name in [
+        "one-region.PcbDoc",
+        "one-pour.PcbDoc",
+        "outline-with-hole.PcbDoc",
+    ] {
+        let out = read(name)?;
+        assert!(
+            !out.notes.iter().any(|n| n.message.contains("ShapeBased")),
+            "{name}: {:?}",
+            out.notes
+        );
+    }
+    Ok(())
+}
