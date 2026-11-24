@@ -377,7 +377,10 @@ mod tests {
         let clashed = write(&dir, &clash);
         std::fs::remove_dir_all(&dir).ok();
         assert!(result.is_err());
-        assert!(clashed.is_err(), "a model file may not take the manifest's name");
+        assert!(
+            clashed.is_err(),
+            "a model file may not take the manifest's name"
+        );
     }
 
     #[test]
