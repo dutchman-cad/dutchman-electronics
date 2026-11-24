@@ -245,6 +245,25 @@ one-bottom-extruded-resistor.PcbDoc  (the same, then R1 flipped to the bottom)
     (23.8, 14.6), (23.8, 15), (25.4, 15.4), (25.4, 14.6), projecting from the bottom: the +X
     lobe went to -X, the slanted edge kept its Y.
 
+Scripted boards, seventh batch: two parts with one shared or two different STEP models
+--------------------------------------------------------------------------------------
+Made on 2026-11-24 by my own script, each from a file copy of one-step-resistor.PcbDoc (R1 at
+(25, 15) with the embedded box-1608.step); every number was read back and logged. The script
+copied R1 with its two pads as R2, 10 mm to the right: R2 at (35, 15), rotation 0, top side,
+footprint R0603-TEST, pads at (34.2, 15) and (35.8, 15). Both STEP models are my own, written
+by this repository's board-step crate (see the fifth batch).
+
+shared-step-model.PcbDoc
+    R2 got a copy of R1's 3D body: the same embedded box-1608.step, centred on R2 (body x 34.2
+    to 35.8, y 14.6 to 15.4, height 0.450). The board holds the model once: one record in
+    Models/Data and one stream Models/0, and both bodies name the same MODELID.
+two-step-models.PcbDoc
+    R2 got a new 3D body holding the embedded box-offset.step instead, its origin on R2's
+    centre (body x 35 to 36.6, y 14.6 to 15.4, height 0.450). R1 keeps box-1608.step. The
+    board holds two models: record 0 of Models/Data is box-offset.step, stored in Models/0 (x 0
+    to 1.6 once unpacked), and record 1 is box-1608.step, stored in Models/1 (x -0.8 to 0.8).
+    So the n-th record (from 0) is stored in Models/n; Altium put the newer model first.
+
 Paths inside the files
 ----------------------
 Altium writes a few paths from the PC that saved a board into the file. After the last save, I
