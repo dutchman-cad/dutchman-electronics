@@ -43,6 +43,8 @@ use crate::copper::{read_u16, read_u32, CopperLayers};
 const MM_PER_UNIT: f64 = 0.0254 / 10_000.0;
 /// The most records read from `/Texts6/Data` before the file is treated as hostile.
 const MAX_RECORDS: usize = 1_000_000;
+/// The most TrueType font names listed one by one in notes; the rest are counted in one note.
+const MAX_FONT_NOTES: usize = 20;
 const MIRROR_AT: usize = 35;
 const STROKE_WIDTH_AT: usize = 36;
 const FONT_TYPE_AT: usize = 43;
@@ -116,7 +118,8 @@ pub(crate) fn read(
             (Some(content), Some((at_point, height, rotation_deg, mirrored, stroke_width))) => {
                 let font = if body.get(FONT_TYPE_AT) == Some(&TRUETYPE) {
                     let name = font_name(body);
-                    *truetype.entry(name.clone()).or_default() += 1;
+                    let n = truetype.entry(name.clone()).or_default();
+                    *n = n.saturating_add(1);
                     TextFont::TrueType { name }
                 } else {
                     TextFont::Stroke {
@@ -136,13 +139,20 @@ pub(crate) fn read(
             _ => unreadable += 1,
         }
     }
-    for (font, n) in truetype {
+    for (font, n) in truetype.iter().take(MAX_FONT_NOTES) {
         notes.push(Note {
             severity: Severity::Info,
             message: format!(
                 "{n} text(s) use the TrueType font \"{font}\"; their position, height and \
-                 rotation are read, but their letter shapes need that font"
+                 rotation are read, and the font file itself is not read yet"
             ),
+        });
+    }
+    let more = truetype.len().saturating_sub(MAX_FONT_NOTES);
+    if more > 0 {
+        notes.push(Note {
+            severity: Severity::Info,
+            message: format!("and {more} more TrueType font(s) used by texts"),
         });
     }
     for (layer, n) in other_layers {

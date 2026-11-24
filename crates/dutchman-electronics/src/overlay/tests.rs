@@ -574,3 +574,124 @@ fn a_clockwise_arc_in_a_region_is_a_concave_corner() {
     assert!(!covers(&list[0], 39.0, 19.0));
     assert!(covers(&list[0], 34.0, 19.0));
 }
+
+fn text_on(layer: usize, content: &str, height: f64, at: Point) -> board_model::Text {
+    board_model::Text {
+        layer,
+        at,
+        content: content.into(),
+        height,
+        rotation_deg: 0.0,
+        mirrored: false,
+        font: board_model::TextFont::Stroke { width: 0.2 },
+    }
+}
+
+fn messages(notes: &[Value]) -> Vec<String> {
+    notes
+        .iter()
+        .map(|n| n["message"].as_str().unwrap().to_string())
+        .collect()
+}
+
+#[test]
+fn a_text_on_a_top_copper_layer_lands_in_copper_top() {
+    let mut b = board(vec![], vec![]);
+    b.texts.push(text_on(0, "H", 2.0, p(10.0, 10.0)));
+    let (list, notes) = overlays(&b, 1.6, "Board");
+    let o = named(&list, "Copper top");
+    assert_eq!(o["finish"], "masked");
+    assert!(area(o) > 0.0);
+    assert!(list.iter().all(|o| o["name"] != "Silkscreen top"));
+    assert!(
+        messages(&notes)
+            .iter()
+            .all(|m| !m.contains("unusable") && !m.contains("limit")),
+        "{notes:?}"
+    );
+}
+
+#[test]
+fn a_huge_text_or_one_far_away_adds_nothing_and_is_one_unusable_item_each() {
+    let mut b = board(vec![], vec![]);
+    b.texts.push(text_on(3, "HHHH", 1.0e6, p(10.0, 10.0)));
+    b.texts.push(text_on(3, "HHHH", 2.0, p(1.0e9, 10.0)));
+    let (list, notes) = overlays(&b, 1.6, "Board");
+    assert!(list.is_empty(), "{list:?}");
+    let unusable: Vec<String> = messages(&notes)
+        .into_iter()
+        .filter(|m| m.contains("unusable"))
+        .collect();
+    assert_eq!(
+        unusable,
+        ["2 copper or silkscreen item(s) have unusable sizes or layers and were left out"]
+    );
+    assert!(
+        messages(&notes).iter().all(|m| !m.contains("Hershey")),
+        "{notes:?}"
+    );
+}
+
+#[test]
+fn texts_past_the_segment_budget_are_counted_not_drawn() {
+    // "HHHH" is four capitals of three one-segment strokes: 12 segments a text. A budget of 20
+    // lets two texts in (12, then 24 spent); the other eight are past the limit.
+    let mut b = board(vec![], vec![]);
+    for i in 0..10 {
+        let at = p(10.0, 10.0 + f64::from(i) * 5.0);
+        b.texts.push(text_on(3, "HHHH", 2.0, at));
+    }
+    let (list, notes) = overlays_within(&b, 1.6, "Board", 20);
+    assert!(area(named(&list, "Silkscreen top")) > 0.0);
+    let m = messages(&notes);
+    assert!(
+        m.contains(&"8 text(s) past the drawing limit were not drawn".to_string()),
+        "{m:?}"
+    );
+    assert!(
+        m.iter()
+            .any(|m| m.starts_with("2 text(s) are drawn in the Hershey")),
+        "{m:?}"
+    );
+}
+
+#[test]
+fn a_text_whose_strokes_all_fail_is_one_unusable_item_not_drawn() {
+    // Near the coordinate limit, so the text passes the checks but its strokes fall outside.
+    let mut b = board(vec![], vec![]);
+    b.texts.push(text_on(3, "HHHH", 2.0, p(24_999.9, 10.0)));
+    let (_, notes) = overlays(&b, 1.6, "Board");
+    let m = messages(&notes);
+    assert!(
+        m.iter().all(|m| !m.contains("Hershey")),
+        "a text without a stroke is not counted as drawn: {m:?}"
+    );
+    assert!(
+        m.iter().any(|m| m.starts_with("1 copper or silkscreen")),
+        "{m:?}"
+    );
+}
+
+#[test]
+fn truetype_font_notes_are_capped_at_twenty_names() {
+    let mut b = board(vec![], vec![]);
+    for i in 0..23 {
+        let mut t = text_on(3, "H", 2.0, p(10.0, 10.0 + f64::from(i) * 5.0));
+        t.font = board_model::TextFont::TrueType {
+            name: format!("Font {i:02}"),
+        };
+        b.texts.push(t);
+    }
+    let (_, notes) = overlays(&b, 1.6, "Board");
+    let m = messages(&notes);
+    assert_eq!(
+        m.iter()
+            .filter(|m| m.contains("TrueType font \""))
+            .count(),
+        20
+    );
+    assert!(
+        m.contains(&"and 3 more TrueType font(s) used by drawn texts".to_string()),
+        "{m:?}"
+    );
+}

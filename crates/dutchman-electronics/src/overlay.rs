@@ -30,6 +30,12 @@ const MAX_ARC_POINTS: usize = 4096;
 const MAX_COORDINATE: f64 = 25_000.0;
 /// The most copper and silkscreen items drawn; the rest are a Dropped note.
 const MAX_ITEMS: usize = 200_000;
+/// The most pen segments drawn for all texts of a board together. Each segment becomes a polygon
+/// that is united with the rest, so without a cap a hostile board of many long texts could ask
+/// for billions of them. Texts past the budget are counted in a Dropped note.
+const MAX_TEXT_SEGMENTS: usize = 2_000_000;
+/// The most TrueType font names listed one by one in notes; the rest are counted in one note.
+const MAX_FONT_NOTES: usize = 20;
 /// The fewest sides a whole circle is drawn with, so small vias and pads stay round.
 const MIN_CIRCLE_SIDES: f64 = 32.0;
 
@@ -280,6 +286,8 @@ struct TextCounts {
     other_layers: usize,
     missing: usize,
     cut: usize,
+    /// Texts left out because the board's texts had used up [`MAX_TEXT_SEGMENTS`].
+    over_budget: usize,
     truetype: std::collections::BTreeMap<String, usize>,
 }
 
@@ -327,6 +335,17 @@ fn areas(shape: &MultiPolygon) -> Vec<Value> {
 /// its bottom at z = 0, in the frame of the part named `board_part`), and notes on what was left
 /// out.
 pub fn overlays(board: &Board, thickness: f64, board_part: &str) -> (Vec<Value>, Vec<Value>) {
+    overlays_within(board, thickness, board_part, MAX_TEXT_SEGMENTS)
+}
+
+/// [`overlays`] with `text_budget` as the most text segments drawn (a parameter so a test can
+/// use a small one).
+fn overlays_within(
+    board: &Board,
+    thickness: f64,
+    board_part: &str,
+    text_budget: usize,
+) -> (Vec<Value>, Vec<Value>) {
     let top = SideFaces::default();
     let bottom = SideFaces::default();
     let mut holes = Pile::default();
@@ -451,6 +470,7 @@ pub fn overlays(board: &Board, thickness: f64, board_part: &str) -> (Vec<Value>,
     let (mut top, mut bottom) = faces;
     // Texts on a face's copper or silkscreen, drawn as pen strokes.
     let mut texts = TextCounts::default();
+    let mut budget = text_budget;
     for t in board.texts.iter().take(MAX_ITEMS) {
         let pile = match board.layers.get(t.layer).map(|x| (x.kind, x.side)) {
             Some((LayerKind::Silkscreen, Some(Side::Top))) => &mut top.silk,
@@ -466,27 +486,46 @@ pub fn overlays(board: &Board, thickness: f64, board_part: &str) -> (Vec<Value>,
                 continue;
             }
         };
+        if budget == 0 {
+            texts.over_budget = texts.over_budget.saturating_add(1);
+            continue;
+        }
         let Some(drawn) = text::draw(t) else {
             unusable = unusable.saturating_add(1);
             continue;
         };
-        texts.drawn = texts.drawn.saturating_add(1);
-        if let board_model::TextFont::TrueType { name } = &t.font {
-            *texts.truetype.entry(name.clone()).or_default() += 1;
-        }
         texts.missing = texts.missing.saturating_add(drawn.missing);
         texts.cut = texts.cut.saturating_add(drawn.cut);
+        let (mut added, mut failed) = (0usize, 0usize);
+        let mut segment = |a: Point, b: Point| match stroke(a, b, drawn.pen) {
+            Some(p) => {
+                pile.polygons.push(p);
+                added = added.saturating_add(1);
+            }
+            None => failed = failed.saturating_add(1),
+        };
         for s in &drawn.strokes {
             match s.as_slice() {
-                [only] => pile.add(stroke(*only, *only, drawn.pen), &mut unusable),
+                [only] => segment(*only, *only),
                 _ => {
                     for pair in s.windows(2) {
                         if let [a, b] = pair {
-                            pile.add(stroke(*a, *b, drawn.pen), &mut unusable);
+                            segment(*a, *b);
                         }
                     }
                 }
             }
+        }
+        budget = budget.saturating_sub(added.saturating_add(failed));
+        if added > 0 {
+            texts.drawn = texts.drawn.saturating_add(1);
+            if let board_model::TextFont::TrueType { name } = &t.font {
+                let n = texts.truetype.entry(name.clone()).or_default();
+                *n = n.saturating_add(1);
+            }
+        }
+        if added == 0 || failed > 0 {
+            unusable = unusable.saturating_add(1);
         }
     }
     for g in board.graphics.iter().take(MAX_ITEMS.saturating_sub(shown)) {
@@ -616,6 +655,10 @@ pub fn overlays(board: &Board, thickness: f64, board_part: &str) -> (Vec<Value>,
             texts.cut,
             "character(s) past the first 1000 of a text were not drawn",
         ),
+        (
+            texts.over_budget,
+            "text(s) past the drawing limit were not drawn",
+        ),
     ] {
         if count > 0 {
             notes.push(json!({ "severity": "Dropped", "message": format!("{count} {what}") }));
@@ -632,13 +675,20 @@ pub fn overlays(board: &Board, thickness: f64, board_part: &str) -> (Vec<Value>,
             ),
         }));
     }
-    for (font, n) in &texts.truetype {
+    for (font, n) in texts.truetype.iter().take(MAX_FONT_NOTES) {
         notes.push(json!({
             "severity": "Degraded",
             "message": format!(
                 "{n} text(s) in the TrueType font \"{font}\" are drawn as single strokes, a \
                  tenth of their height wide"
             ),
+        }));
+    }
+    let more_fonts = texts.truetype.len().saturating_sub(MAX_FONT_NOTES);
+    if more_fonts > 0 {
+        notes.push(json!({
+            "severity": "Degraded",
+            "message": format!("and {more_fonts} more TrueType font(s) used by drawn texts"),
         }));
     }
     if texts.missing > 0 {

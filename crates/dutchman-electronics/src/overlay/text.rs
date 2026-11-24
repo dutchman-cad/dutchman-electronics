@@ -22,6 +22,10 @@ const BASELINE: f64 = 9.0;
 const LINE_UNITS: f64 = 32.0;
 /// The first character the font holds; the rest follow in order.
 const FIRST: u32 = 32;
+/// Where `?` sits in the font (it stands in for characters the font lacks).
+const QUESTION: usize = b'?' as usize - FIRST as usize;
+/// The tallest text drawn, in mm; a taller one is unusable.
+const MAX_HEIGHT: f64 = 1_000.0;
 /// The most characters drawn of one text; the rest are counted as left out.
 pub(super) const MAX_CHARS: usize = 1_000;
 /// The pen width for a TrueType text, as a share of its height (the width the test boards'
@@ -95,24 +99,28 @@ pub(super) struct Drawn {
     pub cut: usize,
 }
 
-/// The pen strokes of `text`, or `None` when its height, pen width, position or rotation is not
-/// usable.
+/// The pen strokes of `text`, or `None` when its height (zero, or over [`MAX_HEIGHT`]), pen
+/// width, position (beyond the overlay limit) or rotation is not usable. Nothing is drawn before
+/// those checks.
 pub(super) fn draw(text: &Text) -> Option<Drawn> {
     let pen = match &text.font {
         TextFont::Stroke { width } => *width,
         TextFont::TrueType { .. } => text.height * TRUETYPE_PEN,
     };
     let usable = |v: f64| v.is_finite() && v > 0.0;
+    // Written so that NaN fails too.
+    let in_range = |v: f64| v.abs() <= super::MAX_COORDINATE;
     if !usable(text.height)
+        || text.height > MAX_HEIGHT
         || !usable(pen)
-        || !text.at.x.is_finite()
-        || !text.at.y.is_finite()
+        || !in_range(text.at.x)
+        || !in_range(text.at.y)
         || !text.rotation_deg.is_finite()
     {
         return None;
     }
     let glyphs = font();
-    let question = glyphs.get(usize::from(b'?') - FIRST as usize)?;
+    let question = glyphs.get(QUESTION)?;
     let scale = text.height / CAP_UNITS;
     let (sin, cos) = text.rotation_deg.to_radians().sin_cos();
     let mirror = if text.mirrored { -1.0 } else { 1.0 };
@@ -235,6 +243,25 @@ mod tests {
     }
 
     #[test]
+    fn a_mirrored_text_turned_90_degrees_runs_down_with_its_capitals_to_the_left() {
+        // Local coordinates (x along the text, y up from the baseline) of "HH" are, from the
+        // unrotated bounds, x in [x0 - 10, x1 - 10] and y in [0, 2.1]. Mirroring negates x. A
+        // turn of 90 degrees counter-clockwise maps (x, y) to (-y, x), so a point lands at
+        // X = 10 - y and Y = 10 + (-x) = 10 - x. Hence X runs over [10 - 2.1, 10] and Y over
+        // [10 - (x1 - 10), 10 - (x0 - 10)] = [20 - x1, 20 - x0].
+        let (x0, _, x1, _) = bounds(&draw(&text("HH", 0.0, false)).unwrap());
+        let got = bounds(&draw(&text("HH", 90.0, true)).unwrap());
+        let want = (10.0 - 2.1, 20.0 - x1, 10.0, 20.0 - x0);
+        assert!(
+            close(got.0, want.0)
+                && close(got.1, want.1)
+                && close(got.2, want.2)
+                && close(got.3, want.3),
+            "{got:?} {want:?}"
+        );
+    }
+
+    #[test]
     fn a_second_line_sits_below_the_first() {
         let (_, y0, _, _) = bounds(&draw(&text("H\nH", 0.0, false)).unwrap());
         assert!(close(y0, 10.0 - 32.0 * 0.1), "{y0}");
@@ -248,6 +275,22 @@ mod tests {
         let mut t = text("H", f64::NAN, false);
         t.rotation_deg = f64::NAN;
         assert!(draw(&t).is_none());
+    }
+
+    #[test]
+    fn a_huge_height_or_huge_coordinates_are_none() {
+        let mut t = text("H", 0.0, false);
+        t.height = 1.0e6;
+        assert!(draw(&t).is_none());
+        let mut t = text("H", 0.0, false);
+        t.at.x = 1.0e9;
+        assert!(draw(&t).is_none());
+        let mut t = text("H", 0.0, false);
+        t.at.y = -1.0e9;
+        assert!(draw(&t).is_none());
+        let mut t = text("H", 0.0, false);
+        t.height = MAX_HEIGHT;
+        assert!(draw(&t).is_some());
     }
 
     #[test]
