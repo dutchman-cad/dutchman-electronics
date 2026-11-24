@@ -43,6 +43,10 @@ const MAX_ARC_POINTS: usize = 4096;
 const MAX_COORDINATE: f64 = 25_000.0;
 /// The most copper and silkscreen items drawn; the rest are a Dropped note.
 const MAX_ITEMS: usize = 200_000;
+/// The most holes cut from one copper region; the rest are a Dropped note. Each hole is a polygon
+/// that is united with the others before it is cut, so a hostile region of millions of holes
+/// must not get that far.
+const MAX_REGION_HOLES: usize = 10_000;
 /// The most pen segments drawn for all texts of a board together. Each segment becomes a polygon
 /// that is united with the rest, so without a cap a hostile board of many long texts could ask
 /// for billions of them. Texts past the budget are counted in a Dropped note.
@@ -273,6 +277,38 @@ fn contour(c: &Contour) -> Option<Polygon> {
     polygon(ring)
 }
 
+/// A copper region: its outline less its holes. A hole that cannot be drawn is counted in
+/// `unusable` and left out; holes past [`MAX_REGION_HOLES`] are counted in `over`. Holes may wind
+/// either way, and the union of them is cut from the outline, so a hole that strays outside it or
+/// overlaps another cannot break the shape. Empty when the outline cannot be drawn, or the holes
+/// leave nothing.
+fn region(
+    outline: &Contour,
+    holes: &[Contour],
+    unusable: &mut usize,
+    over: &mut usize,
+) -> Vec<Polygon> {
+    let Some(outer) = contour(outline) else {
+        return Vec::new();
+    };
+    *over = over.saturating_add(holes.len().saturating_sub(MAX_REGION_HOLES));
+    let mut cuts = Vec::new();
+    for h in holes.iter().take(MAX_REGION_HOLES) {
+        match contour(h) {
+            Some(h) => cuts.push(h),
+            None => *unusable = unusable.saturating_add(1),
+        }
+    }
+    if cuts.is_empty() {
+        return vec![outer];
+    }
+    outer
+        .difference(&geo::unary_union(&cuts))
+        .0
+        .into_iter()
+        .collect()
+}
+
 /// Polygons gathered for one overlay before they are united.
 #[derive(Default)]
 struct Pile {
@@ -390,6 +426,7 @@ fn overlays_within(
     let bottom = SideFaces::default();
     let mut holes = Pile::default();
     let (mut inner, mut unusable, mut other_graphics) = (0usize, 0usize, 0usize);
+    let mut holes_over = 0usize;
     // Where a copper item's layer puts it.
     enum On {
         Face(Side),
@@ -445,9 +482,16 @@ fn overlays_within(
                     false,
                     None,
                 ),
-                CopperItem::Region { layer, contour: c } => {
-                    (*layer, contour(c).into_iter().collect(), false, None)
-                }
+                CopperItem::Region {
+                    layer,
+                    contour: c,
+                    holes: cuts,
+                } => (
+                    *layer,
+                    region(c, cuts, &mut unusable, &mut holes_over),
+                    false,
+                    None,
+                ),
                 CopperItem::Via {
                     at,
                     diameter,
@@ -738,6 +782,10 @@ fn overlays_within(
         (
             skipped,
             "copper, silkscreen or text item(s) past the first 200000 were not drawn",
+        ),
+        (
+            holes_over,
+            "hole(s) past the first 10000 of a copper region were not cut from it",
         ),
         (
             inner,
