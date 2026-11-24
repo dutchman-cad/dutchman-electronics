@@ -50,8 +50,14 @@
 //!   above and below the board, and `one-turned-tilted-step-resistor` (ROTX 90, ROTZ 30) spans
 //!   exactly what the tilt and then the turn give (x 24.975 to 26.586, y 14.654 to 15.843), not
 //!   the other order. On the flipped `one-bottom-tilted-step-resistor` ROTX stays 90, and in the
-//!   part's own frame that is the same tilt. `MODEL.3D.ROTY` is 0 on all our boards, so a tilt
-//!   about Y on a bottom-side part gets a warning.
+//!   part's own frame that is the same tilt.
+//! - `MODEL.3D.ROTY` is a right-handed tilt about the model's own Y axis, also before the turn:
+//!   `one-y-tilted-step-resistor` (ROTY 90, origin (25, 15.4)) spans x 25 to 25.45 and reaches
+//!   1.6 into the board (STANDOFFHEIGHT -1.6), and `one-turned-y-tilted-step-resistor` (ROTY 90,
+//!   ROTZ 30) spans exactly what the tilt and then the turn give (x 24.6 to 25.390, y 15 to
+//!   15.918). On the flipped `one-bottom-y-tilted-step-resistor` ROTY stays 90 and, in the part's
+//!   own frame, offset (0, 0.4) and no turn give Altium's x 24.55 to 25; a tilt of -90 would put
+//!   it at x 25 to 25.45. So a flip keeps both tilts, and the reader hands them over unchanged.
 //! - `/ShapeBasedComponentBodies6/Data` repeats the bodies; see `shape_based.rs`.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -96,7 +102,6 @@ pub(crate) fn attach(
     let mut extra = 0usize;
     let mut free = 0usize;
     let mut unread: BTreeMap<String, usize> = BTreeMap::new();
-    let mut tilted = 0usize;
     for body in records(bodies6, notes)? {
         let Some(component) = read_u16(body, COMPONENT_AT).filter(|&c| c != NO_COMPONENT) else {
             free += 1;
@@ -116,23 +121,9 @@ pub(crate) fn attach(
             continue;
         }
         match model(body, placement, &models) {
-            Ok(m) => {
-                if placement.side == Side::Bottom && m.rotation_deg[1] != 0.0 {
-                    tilted += 1;
-                }
-                placement.model = Some(m);
-            }
+            Ok(m) => placement.model = Some(m),
             Err(why) => *unread.entry(why).or_default() += 1,
         }
-    }
-    if tilted > 0 {
-        notes.push(Note {
-            severity: Severity::Warning,
-            message: format!(
-                "{tilted} 3D model(s) on bottom-side parts are tilted about Y (MODEL.3D.ROTY); how \
-                 a flip changes that tilt is not confirmed by a test board yet"
-            ),
-        });
     }
     if extra > 0 {
         notes.push(Note {
