@@ -474,10 +474,14 @@ pub(crate) fn regions(
             }
             let mut holes = Vec::new();
             if let Ok(points) = &corners {
-                let after = text_end + 4 + 16 * points.len();
-                match region_holes(body, after) {
-                    Ok(found_holes) => holes = found_holes,
-                    Err(_) => bad_holes += 1,
+                let after = points
+                    .len()
+                    .checked_mul(16)
+                    .and_then(|b| b.checked_add(text_end))
+                    .and_then(|b| b.checked_add(4));
+                match after.map(|after| region_holes(body, after)) {
+                    Some(Ok(found_holes)) => holes = found_holes,
+                    _ => bad_holes += 1,
                 }
             }
             match corners {
@@ -538,7 +542,8 @@ fn region_holes(body: &[u8], after: usize) -> Result<Vec<Contour>, String> {
         at = corners
             .len()
             .checked_mul(16)
-            .and_then(|b| b.checked_add(at + 4))
+            .and_then(|b| b.checked_add(at))
+            .and_then(|b| b.checked_add(4))
             .ok_or("has a hole out of range")?;
         holes.push(closed_polygon(&corners));
     }
@@ -901,7 +906,10 @@ mod tests {
         // No holes, no note, no holes in the region.
         let mut notes = Vec::new();
         let found = regions(&holed_region(&[], 0), &[], &mut notes).unwrap();
-        assert!(notes.is_empty() && found.others[0].holes.is_empty(), "{notes:?}");
+        assert!(
+            notes.is_empty() && found.others[0].holes.is_empty(),
+            "{notes:?}"
+        );
         // A count past the record's end is a note, and the region stays, without holes.
         let found = regions(&holed_region(&[10_000.0], 3), &[], &mut notes).unwrap();
         assert_eq!(found.others.len(), 1);

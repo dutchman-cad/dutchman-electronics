@@ -482,12 +482,13 @@ fn small_board_pours_hand_over_their_holes() -> Result<(), Box<dyn std::error::E
             _ => None,
         })
         .collect();
+    let mut hole_counts = hole_counts;
+    hole_counts.sort_unstable();
     assert_eq!(hole_counts, [7, 7]);
     let all_lines = out.board.copper.iter().all(|c| match c {
         CopperItem::Region { holes, .. } => holes.iter().all(|h| {
             h.segments.len() >= 3
-                && h
-                    .segments
+                && h.segments
                     .iter()
                     .all(|s| matches!(s, board_model::Segment::Line { .. }))
         }),

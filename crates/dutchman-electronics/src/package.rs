@@ -1476,9 +1476,11 @@ mod tests {
             }
             odd
         };
-        overlay["areas"].as_array().unwrap().iter().any(|a| {
-            inside(&a["outer"]) && !a["holes"].as_array().unwrap().iter().any(inside)
-        })
+        overlay["areas"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|a| inside(&a["outer"]) && !a["holes"].as_array().unwrap().iter().any(inside))
     }
 
     #[cfg(feature = "altium")]
@@ -1534,7 +1536,6 @@ mod tests {
                         .sum::<f64>()
             })
             .sum();
-        eprintln!("small-board top copper: {holes} holes, net area {net}");
         assert!(net < 46.0 * 26.0 - 10.0, "{net}");
     }
 
