@@ -132,6 +132,31 @@ pub enum CopperItem {
     Region { layer: usize, contour: Contour },
 }
 
+/// A line or arc drawn on a layer that is not copper (today the silkscreen), in board
+/// coordinates like pads and texts. `layer` is an index into [`Board::layers`], whose `kind` and
+/// `side` say which layer it is. `owner` is the designator of the component it belongs to, if any.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Graphic {
+    Line {
+        layer: usize,
+        from: Point,
+        to: Point,
+        width: f64,
+        owner: Option<String>,
+    },
+    /// A circular arc from `start_deg` to `end_deg`, counter-clockwise, like [`Segment::Arc`] and
+    /// [`CopperItem::TrackArc`].
+    Arc {
+        layer: usize,
+        center: Point,
+        radius: f64,
+        start_deg: f64,
+        end_deg: f64,
+        width: f64,
+        owner: Option<String>,
+    },
+}
+
 /// Text on a layer (silkscreen labels, copper text).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Text {
@@ -208,6 +233,8 @@ pub struct Board {
     pub layers: Vec<Layer>,
     pub outline: Outline,
     pub copper: Vec<CopperItem>,
+    /// Lines and arcs on non-copper layers (silkscreen).
+    pub graphics: Vec<Graphic>,
     pub texts: Vec<Text>,
     pub components: Vec<Placement>,
 }

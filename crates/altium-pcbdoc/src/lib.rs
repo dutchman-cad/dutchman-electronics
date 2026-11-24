@@ -179,11 +179,18 @@ impl InputFormat for Altium {
                 .collect();
         }
         let mut copper = Vec::new();
+        let mut graphics = Vec::new();
         if let Some(data) = &tracks6 {
-            copper.extend(copper::tracks(data, &layers, &mut notes).map_err(ReadError::Invalid)?);
+            copper.extend(
+                copper::tracks(data, &mut layers, &components, &mut graphics, &mut notes)
+                    .map_err(ReadError::Invalid)?,
+            );
         }
         if let Some(data) = &arcs6 {
-            copper.extend(copper::arcs(data, &layers, &mut notes).map_err(ReadError::Invalid)?);
+            copper.extend(
+                copper::arcs(data, &mut layers, &components, &mut graphics, &mut notes)
+                    .map_err(ReadError::Invalid)?,
+            );
         }
         if let Some(data) = &pads6 {
             copper.extend(
@@ -231,6 +238,7 @@ impl InputFormat for Altium {
                 thickness: shape.thickness,
                 layers: layers.layers,
                 copper,
+                graphics,
                 texts,
                 components: components.placements,
                 ..Board::default()
