@@ -84,6 +84,10 @@ pub fn build(path: &Path, bytes: &[u8]) -> Result<Package, String> {
             board.texts.len(),
             "text item(s) (silkscreen, copper text) are not in the package yet",
         ),
+        (
+            board.graphics.len(),
+            "silkscreen line(s) and arc(s) are not in the package yet",
+        ),
     ];
     for (count, what) in later {
         if count > 0 {

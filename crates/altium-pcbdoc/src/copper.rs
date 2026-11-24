@@ -22,8 +22,12 @@
 //!   is the layer, bytes 3..5 the net index, from byte 13 the centre x and y, at byte 21 the
 //!   radius, at bytes 25..33 and 33..41 two `f64` in degrees, and at byte 41 the width. Our arc
 //!   runs from 0 to 90 degrees: bytes 33..41 hold 90.0 (the end angle) and bytes 25..33 hold 0.0.
-//!   The start angle is taken to be the `f64` at byte 25; since it is 0 on our only arc, a
-//!   non-zero start gets a warning until a board confirms it.
+//!   `one-overlay-arc` (30 to 300 degrees) confirms that bytes 25..33 are the start angle.
+//! - Lines and arcs on the overlay layers (`one-overlay-line`, `one-overlay-arc`,
+//!   `one-bottom-overlay-line`) are the same track and arc records on layer 33 (Top Overlay) or
+//!   34 (Bottom Overlay). They become [`Graphic`]s on a silkscreen layer. Bytes 7..9 are the index
+//!   of the component a line belongs to (0 for R1's line on `one-resistor-silkscreen`, `ff ff` for
+//!   none), as for pads; its designator becomes the owner.
 //! - `/Vias6/Data` (`one-via`): records of type `0x03`, a `u32` length, then a body whose byte 0
 //!   is the layer (74, Multi-Layer), bytes 3..5 the net index, from byte 13 the centre x and y, at
 //!   byte 21 the diameter and at byte 25 the hole diameter. Bytes 29 and 30 hold 1 and 32: the
@@ -53,7 +57,7 @@
 //!   definition in `/Polygons6/Data` is not needed for its copper.
 
 use board_model::{
-    Contour, CopperItem, Layer, LayerKind, Note, PadShape, Point, Segment, Severity, Side,
+    Contour, CopperItem, Graphic, Layer, LayerKind, Note, PadShape, Point, Segment, Severity, Side,
 };
 
 use crate::board::{OtherRegion, Properties};
@@ -153,13 +157,16 @@ impl CopperLayers {
         )
     }
 
-    /// The index in `layers` for a text on layer byte `number`: a copper layer, or an overlay
-    /// layer (named "… Overlay" in `/Board6/Data`), which is added as silkscreen the first time a
-    /// text uses it. `None` for any other layer.
+    /// The index in `layers` for a text on layer byte `number`: a copper layer or an overlay layer
+    /// (see [`Self::overlay_layer`]). `None` for any other layer.
     pub(crate) fn text_layer(&mut self, number: u8) -> Option<usize> {
-        if let Some(index) = self.copper_index(number) {
-            return Some(index);
-        }
+        self.copper_index(number)
+            .or_else(|| self.overlay_layer(number))
+    }
+
+    /// The index in `layers` for an overlay layer (named "… Overlay" in `/Board6/Data`), which is
+    /// added as silkscreen the first time something on it is read. `None` for any other layer.
+    pub(crate) fn overlay_layer(&mut self, number: u8) -> Option<usize> {
         let name = self.names.get(usize::from(number)).cloned().flatten()?;
         if !name.ends_with("Overlay") {
             return None;
@@ -211,6 +218,7 @@ impl CopperLayers {
 /// Counts of what was skipped, for the notes.
 #[derive(Default)]
 struct Skipped {
+    /// Items on layers that are neither copper nor overlay, by layer name.
     off_copper: std::collections::BTreeMap<String, usize>,
     /// Items that belong to a net the board model has no place for (pads, vias, fills).
     with_net: usize,
@@ -225,7 +233,9 @@ impl Skipped {
         for (layer, count) in self.off_copper {
             notes.push(Note {
                 severity: Severity::Dropped,
-                message: format!("{count} {what} on {layer} (not a copper layer) not read yet"),
+                message: format!(
+                    "{count} {what} on {layer} (not a copper or overlay layer) not read yet"
+                ),
             });
         }
         if self.bad_angle > 0 {
@@ -258,10 +268,13 @@ impl Skipped {
     }
 }
 
-/// Reads the tracks on copper layers from `/Tracks6/Data`.
+/// Reads the tracks from `/Tracks6/Data`: those on copper layers as copper, those on the overlay
+/// layers into `graphics`.
 pub(crate) fn tracks(
     data: &[u8],
-    layers: &CopperLayers,
+    layers: &mut CopperLayers,
+    components: &Components,
+    graphics: &mut Vec<Graphic>,
     notes: &mut Vec<Note>,
 ) -> Result<Vec<CopperItem>, String> {
     let mut items = Vec::new();
@@ -275,20 +288,27 @@ pub(crate) fn tracks(
             skipped.unnamed_net += 1;
             None
         });
-        match layers.copper_index(layer_number) {
-            Some(layer) => items.push(CopperItem::Track {
+        if let Some(layer) = layers.copper_index(layer_number) {
+            items.push(CopperItem::Track {
                 layer,
                 from,
                 to,
                 width,
                 net,
-            }),
-            None => {
-                *skipped
-                    .off_copper
-                    .entry(layers.name(layer_number))
-                    .or_default() += 1
-            }
+            });
+        } else if let Some(layer) = layers.overlay_layer(layer_number) {
+            graphics.push(Graphic::Line {
+                layer,
+                from,
+                to,
+                width,
+                owner: components.owner(body),
+            });
+        } else {
+            *skipped
+                .off_copper
+                .entry(layers.name(layer_number))
+                .or_default() += 1;
         }
     }
     skipped.into_notes("track(s)", notes);
@@ -410,15 +430,17 @@ pub(crate) fn pads(
     Ok(items)
 }
 
-/// Reads the track arcs on copper layers from `/Arcs6/Data`.
+/// Reads the arcs from `/Arcs6/Data`: those on copper layers as track arcs, those on the overlay
+/// layers into `graphics`.
 pub(crate) fn arcs(
     data: &[u8],
-    layers: &CopperLayers,
+    layers: &mut CopperLayers,
+    components: &Components,
+    graphics: &mut Vec<Graphic>,
     notes: &mut Vec<Note>,
 ) -> Result<Vec<CopperItem>, String> {
     let mut items = Vec::new();
     let mut skipped = Skipped::default();
-    let mut unconfirmed_start = 0usize;
     for body in records(data, ARC_RECORD, "/Arcs6/Data", notes)? {
         let layer_number = *body.first().ok_or("arc record is empty")?;
         let center = point(body, 13)?;
@@ -433,15 +455,25 @@ pub(crate) fn arcs(
             None
         });
         let Some(layer) = layers.copper_index(layer_number) else {
-            *skipped
-                .off_copper
-                .entry(layers.name(layer_number))
-                .or_default() += 1;
+            match layers.overlay_layer(layer_number) {
+                Some(layer) => graphics.push(Graphic::Arc {
+                    layer,
+                    center,
+                    radius,
+                    start_deg,
+                    end_deg,
+                    width,
+                    owner: components.owner(body),
+                }),
+                None => {
+                    *skipped
+                        .off_copper
+                        .entry(layers.name(layer_number))
+                        .or_default() += 1;
+                }
+            }
             continue;
         };
-        if start_deg != 0.0 {
-            unconfirmed_start += 1;
-        }
         items.push(CopperItem::TrackArc {
             layer,
             center,
@@ -450,15 +482,6 @@ pub(crate) fn arcs(
             end_deg,
             width,
             net,
-        });
-    }
-    if unconfirmed_start > 0 {
-        notes.push(Note {
-            severity: Severity::Warning,
-            message: format!(
-                "{unconfirmed_start} arc(s) do not start at 0 degrees; where the start angle is \
-                 stored is not confirmed by a test board yet"
-            ),
         });
     }
     skipped.into_notes("arc(s)", notes);
@@ -701,7 +724,8 @@ mod tests {
         CopperLayers::new(&board(
             "|V9_STACK_LAYER0_NAME=Top Layer|V9_STACK_LAYER0_COPTHICK=1.4mil\
              |V9_STACK_LAYER1_NAME=Bottom Layer|V9_STACK_LAYER1_COPTHICK=1.4mil\
-             |LAYER1NAME=Top Layer|LAYER74NAME=Multi-Layer|LAYER33NAME=Top Overlay",
+             |LAYER1NAME=Top Layer|LAYER74NAME=Multi-Layer|LAYER33NAME=Top Overlay\
+             |LAYER57NAME=Mechanical 1",
         ))
     }
 
@@ -718,15 +742,29 @@ mod tests {
     }
 
     #[test]
-    fn a_track_off_copper_is_a_note() {
-        let mut body = vec![33u8, 0, 0, 0xff, 0xff];
-        body.resize(33, 0);
-        let mut data = vec![TRACK_RECORD];
-        data.extend_from_slice(&(body.len() as u32).to_le_bytes());
-        data.extend_from_slice(&body);
-        let mut notes = Vec::new();
-        assert!(tracks(&data, &top_only(), &mut notes).unwrap().is_empty());
-        assert!(notes[0].message.contains("Top Overlay"));
+    fn a_track_on_the_overlay_is_a_graphic_and_elsewhere_a_note() {
+        let mut data = Vec::new();
+        for layer in [33u8, 57] {
+            let mut body = vec![layer, 0, 0, 0xff, 0xff];
+            body.resize(33, 0);
+            data.push(TRACK_RECORD);
+            data.extend_from_slice(&(body.len() as u32).to_le_bytes());
+            data.extend_from_slice(&body);
+        }
+        let mut l = top_only();
+        let (mut graphics, mut notes) = (Vec::new(), Vec::new());
+        let none = Components::default();
+        assert!(tracks(&data, &mut l, &none, &mut graphics, &mut notes)
+            .unwrap()
+            .is_empty());
+        let [Graphic::Line { layer, owner, .. }] = graphics.as_slice() else {
+            panic!("{graphics:?}");
+        };
+        assert_eq!(l.layers[*layer].name, "Top Overlay");
+        assert_eq!(l.layers[*layer].kind, LayerKind::Silkscreen);
+        assert_eq!(*owner, None);
+        assert_eq!(notes.len(), 1, "{notes:?}");
+        assert!(notes[0].message.contains("Mechanical 1"));
     }
 
     /// A record of `kind` whose body is `len` zero bytes, with `set` applied to the body.
@@ -766,7 +804,7 @@ mod tests {
 
     #[test]
     fn an_arc_with_a_bad_angle_costs_that_arc_only() {
-        let l = with_bottom();
+        let mut l = with_bottom();
         let mut data = record(ARC_RECORD, 45, |b| {
             b[0] = 1;
             b[25..33].copy_from_slice(&f64::NAN.to_le_bytes());
@@ -776,32 +814,69 @@ mod tests {
             b[25..33].copy_from_slice(&45.0f64.to_le_bytes());
             b[33..41].copy_from_slice(&90.0f64.to_le_bytes());
         }));
-        let mut notes = Vec::new();
-        let items = arcs(&data, &l, &mut notes).unwrap();
+        let (mut graphics, mut notes) = (Vec::new(), Vec::new());
+        let none = Components::default();
+        let items = arcs(&data, &mut l, &none, &mut graphics, &mut notes).unwrap();
         assert_eq!(items.len(), 1);
         let severities: Vec<Severity> = notes.iter().map(|n| n.severity).collect();
-        assert!(severities.contains(&Severity::Warning), "{notes:?}");
         assert!(severities.contains(&Severity::Dropped), "{notes:?}");
+        // The arc that starts at 45 degrees gets no note about its start (`one-overlay-arc`).
+        assert!(
+            !notes.iter().any(|n| n.message.contains("start")),
+            "{notes:?}"
+        );
     }
 
     #[test]
     fn hostile_streams_are_errors_not_panics() {
         let l = top_only();
+        let mut m = top_only();
+        let mut g = Vec::new();
         let none = Components::default();
         let mut notes = Vec::new();
-        assert!(tracks(&[TRACK_RECORD, 0xff, 0xff, 0xff, 0x7f], &l, &mut notes).is_err());
-        assert!(tracks(&[TRACK_RECORD, 2, 0, 0, 0, 1, 0], &l, &mut notes).is_err());
+        assert!(tracks(
+            &[TRACK_RECORD, 0xff, 0xff, 0xff, 0x7f],
+            &mut m,
+            &none,
+            &mut g,
+            &mut notes
+        )
+        .is_err());
+        assert!(tracks(
+            &[TRACK_RECORD, 2, 0, 0, 0, 1, 0],
+            &mut m,
+            &none,
+            &mut g,
+            &mut notes
+        )
+        .is_err());
         assert!(pads(&[PAD_RECORD, 0xff, 0xff, 0xff, 0x7f], &l, &none, &mut notes).is_err());
         let mut few_blocks = vec![PAD_RECORD];
         few_blocks.extend_from_slice(&0u32.to_le_bytes());
         assert!(pads(&few_blocks, &l, &none, &mut notes).is_err());
-        assert!(arcs(&record(ARC_RECORD, 40, |_| ()), &l, &mut notes).is_err());
+        assert!(arcs(
+            &record(ARC_RECORD, 40, |_| ()),
+            &mut m,
+            &none,
+            &mut g,
+            &mut notes
+        )
+        .is_err());
         assert!(vias(&record(VIA_RECORD, 30, |_| ()), &l, &mut notes).is_err());
-        assert!(arcs(&[ARC_RECORD, 0xff, 0xff, 0xff, 0x7f], &l, &mut notes).is_err());
+        assert!(arcs(
+            &[ARC_RECORD, 0xff, 0xff, 0xff, 0x7f],
+            &mut m,
+            &none,
+            &mut g,
+            &mut notes
+        )
+        .is_err());
         assert!(vias(&[VIA_RECORD, 1, 0, 0, 0], &l, &mut notes).is_err());
         assert!(fills(&[FILL_RECORD, 0xff, 0xff, 0xff, 0x7f], &l, &mut notes).is_err());
         assert!(fills(&[FILL_RECORD, 2, 0, 0, 0, 1, 0], &l, &mut notes).is_err());
-        assert!(tracks(&[0x42], &l, &mut notes).unwrap().is_empty());
+        assert!(tracks(&[0x42], &mut m, &none, &mut g, &mut notes)
+            .unwrap()
+            .is_empty());
         assert_eq!(notes.last().map(|n| n.severity), Some(Severity::Dropped));
     }
 }
