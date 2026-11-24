@@ -108,8 +108,7 @@ pub fn build(path: &Path, bytes: &[u8]) -> Result<Package, String> {
     );
     parts.extend(placed.parts);
     notes.extend(placed.notes);
-    let (overlays, overlay_notes) =
-        crate::overlay::overlays(&board, step.thickness, BOARD_PART);
+    let (overlays, overlay_notes) = crate::overlay::overlays(&board, step.thickness, BOARD_PART);
     notes.extend(overlay_notes);
     let manifest = json!({
         "schema": PARTS_SCHEMA,
@@ -782,8 +781,7 @@ mod tests {
             .unwrap()
             .iter()
             .map(|a| {
-                ring(&a["outer"])
-                    + a["holes"].as_array().unwrap().iter().map(ring).sum::<f64>()
+                ring(&a["outer"]) + a["holes"].as_array().unwrap().iter().map(ring).sum::<f64>()
             })
             .sum()
     }
@@ -791,7 +789,10 @@ mod tests {
     #[cfg(feature = "altium")]
     #[test]
     fn every_test_board_gives_a_package_with_sound_overlays() {
-        let dir = format!("{}/../altium-pcbdoc/tests/boards", env!("CARGO_MANIFEST_DIR"));
+        let dir = format!(
+            "{}/../altium-pcbdoc/tests/boards",
+            env!("CARGO_MANIFEST_DIR")
+        );
         let mut seen = 0;
         for entry in std::fs::read_dir(&dir).unwrap() {
             let path = entry.unwrap().path();
@@ -804,7 +805,11 @@ mod tests {
                 assert_eq!(o["part"], "Board");
                 assert!(overlay_area(o) > 0.0, "{}: {o}", path.display());
                 let z = o["z"].as_f64().unwrap();
-                assert!(z > 1.6 || z < 0.0, "{}: drawn off the faces", path.display());
+                assert!(
+                    z > 1.6 || z < 0.0,
+                    "{}: drawn off the faces",
+                    path.display()
+                );
             }
             seen += 1;
         }
@@ -817,9 +822,12 @@ mod tests {
         let area_of = |board: &str, overlay: &str| {
             let package = package_of(board);
             let list = package.manifest["overlays"].as_array().unwrap().clone();
-            let o = list.iter().find(|o| o["name"] == overlay).unwrap_or_else(|| {
-                panic!("{board}: no {overlay} in {list:?}");
-            });
+            let o = list
+                .iter()
+                .find(|o| o["name"] == overlay)
+                .unwrap_or_else(|| {
+                    panic!("{board}: no {overlay} in {list:?}");
+                });
             overlay_area(o)
         };
         // one-track: 10 long, 0.5 wide, round ends.

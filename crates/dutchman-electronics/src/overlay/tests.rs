@@ -293,12 +293,15 @@ fn inner_layer_copper_and_bad_sizes_are_noted() {
         "Board",
     );
     assert!(list.is_empty());
-    let messages: Vec<&str> = notes.iter().map(|n| n["message"].as_str().unwrap()).collect();
+    let messages: Vec<&str> = notes
+        .iter()
+        .map(|n| n["message"].as_str().unwrap())
+        .collect();
     assert_eq!(
         messages,
         [
             "1 copper item(s) on inner layers are not drawn yet",
-            "2 copper or silkscreen item(s) have unusable sizes and were left out",
+            "2 copper or silkscreen item(s) have unusable sizes or layers and were left out",
         ]
     );
 }
@@ -322,11 +325,205 @@ fn a_region_with_an_arc_is_drawn_within_the_chord() {
         ],
     };
     let (list, _) = overlays(
-        &board(vec![CopperItem::Region { layer: 0, contour: c }], vec![]),
+        &board(
+            vec![CopperItem::Region {
+                layer: 0,
+                contour: c,
+            }],
+            vec![],
+        ),
         1.6,
         "Board",
     );
     let a = area(&list[0]);
     let exact = PI * 25.0 / 2.0;
     assert!(a < exact && a > exact - 0.02 * 5.0 * PI, "{a}");
+}
+
+fn square_cw(x0: f64, y0: f64, side: f64) -> board_model::Contour {
+    use board_model::{Contour, Segment};
+    let c = [
+        (x0, y0),
+        (x0, y0 + side),
+        (x0 + side, y0 + side),
+        (x0 + side, y0),
+    ];
+    Contour {
+        segments: (0..4)
+            .map(|i| Segment::Line {
+                from: p(c[i].0, c[i].1),
+                to: p(c[(i + 1) % 4].0, c[(i + 1) % 4].1),
+            })
+            .collect(),
+    }
+}
+
+#[test]
+fn a_clockwise_pour_first_does_not_wipe_out_the_rest() {
+    // The union picks its fill rule from the first ring; every ring must run the same way.
+    let (list, _) = overlays(
+        &board(
+            vec![
+                CopperItem::Region {
+                    layer: 0,
+                    contour: square_cw(0.0, 0.0, 2.0),
+                },
+                track(0, p(10.0, 0.0), p(20.0, 0.0), 0.5),
+            ],
+            vec![],
+        ),
+        1.6,
+        "Board",
+    );
+    let a = area(named(&list, "Copper top"));
+    let exact = 4.0 + 5.0 + PI * 0.0625;
+    assert!((a - exact).abs() < 0.01, "{a}");
+}
+
+#[test]
+fn a_clockwise_pour_after_a_track_is_kept() {
+    let (list, _) = overlays(
+        &board(
+            vec![
+                track(0, p(10.0, 0.0), p(20.0, 0.0), 0.5),
+                CopperItem::Region {
+                    layer: 0,
+                    contour: square_cw(0.0, 0.0, 2.0),
+                },
+            ],
+            vec![],
+        ),
+        1.6,
+        "Board",
+    );
+    let a = area(named(&list, "Copper top"));
+    assert!((a - (4.0 + 5.0 + PI * 0.0625)).abs() < 0.01, "{a}");
+}
+
+/// True when the point lies inside one of the overlay's areas (outer minus holes).
+fn covers(o: &Value, x: f64, y: f64) -> bool {
+    let inside = |ring: &Value| {
+        let pts: Vec<(f64, f64)> = ring
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|q| (q[0].as_f64().unwrap(), q[1].as_f64().unwrap()))
+            .collect();
+        let mut odd = false;
+        for i in 0..pts.len() {
+            let (a, b) = (pts[i], pts[(i + 1) % pts.len()]);
+            if (a.1 > y) != (b.1 > y) && x < a.0 + (y - a.1) * (b.0 - a.0) / (b.1 - a.1) {
+                odd = !odd;
+            }
+        }
+        odd
+    };
+    o["areas"].as_array().unwrap().iter().any(|a| {
+        inside(&a["outer"]) && !a["holes"].as_array().unwrap().iter().any(inside)
+    })
+}
+
+#[test]
+fn an_arc_runs_counter_clockwise_from_its_start() {
+    // A quarter arc of radius 5 from 0 to 90 degrees covers (3.54, 3.54), not (-3.54, -3.54).
+    let arc = CopperItem::TrackArc {
+        layer: 0,
+        center: p(0.0, 0.0),
+        radius: 5.0,
+        start_deg: 0.0,
+        end_deg: 90.0,
+        width: 0.5,
+        net: None,
+    };
+    let (list, _) = overlays(&board(vec![arc], vec![]), 1.6, "Board");
+    let o = named(&list, "Copper top");
+    let r = 5.0 / 2f64.sqrt();
+    assert!(covers(o, r, r));
+    assert!(!covers(o, -r, -r));
+    assert!(!covers(o, 0.0, 0.0));
+    // Round ends: the band plus two half circles.
+    let exact = PI / 2.0 * 5.0 * 0.5 + PI * 0.0625;
+    assert!((area(o) - exact).abs() < 0.05, "{}", area(o));
+}
+
+#[test]
+fn a_whole_circle_arc_is_a_ring_with_its_hole_open() {
+    let arc = CopperItem::TrackArc {
+        layer: 0,
+        center: p(0.0, 0.0),
+        radius: 5.0,
+        start_deg: 30.0,
+        end_deg: 30.0,
+        width: 0.5,
+        net: None,
+    };
+    let (list, _) = overlays(&board(vec![arc], vec![]), 1.6, "Board");
+    let o = named(&list, "Copper top");
+    assert!(covers(o, 5.0, 0.0));
+    assert!(!covers(o, 0.0, 0.0));
+    // Both edges lie within the 0.02 mm chord of their circles, so the band can lose about
+    // 0.02 x its 33 mm length.
+    assert!((area(o) - 2.0 * PI * 5.0 * 0.5).abs() < 0.1, "{}", area(o));
+}
+
+#[test]
+fn a_tall_slot_turned_a_quarter_lies_along_x() {
+    // An oval 1 wide and 3 tall, turned 90 degrees, reaches x = +-1.5 and y = +-0.5.
+    let pad = CopperItem::Pad {
+        layer: 0,
+        at: p(0.0, 0.0),
+        shape: PadShape::Oval,
+        size_x: 1.0,
+        size_y: 3.0,
+        rotation_deg: 90.0,
+        drill: None,
+        plated: false,
+        owner: None,
+    };
+    let (list, _) = overlays(&board(vec![pad], vec![]), 1.6, "Board");
+    let o = named(&list, "Copper top pads");
+    assert!(covers(o, 1.4, 0.0) && covers(o, -1.4, 0.0));
+    assert!(!covers(o, 0.0, 1.0));
+    assert!((area(o) - (2.0 + PI * 0.25)).abs() < 0.01);
+}
+
+#[test]
+fn silkscreen_is_not_printed_over_holes_or_pads() {
+    let line = Graphic::Line {
+        layer: 3,
+        from: p(0.0, 0.0),
+        to: p(10.0, 0.0),
+        width: 0.2,
+        owner: None,
+    };
+    let via = CopperItem::Via {
+        at: p(5.0, 0.0),
+        diameter: 1.0,
+        drill: 0.5,
+    };
+    let (list, _) = overlays(&board(vec![via], vec![line]), 1.6, "Board");
+    let o = named(&list, "Silkscreen top");
+    assert!(!covers(o, 5.0, 0.0), "the drill is open");
+    assert!(covers(o, 1.0, 0.0));
+}
+
+#[test]
+fn items_far_off_the_board_or_on_other_layers_are_left_out() {
+    let (list, notes) = overlays(
+        &board(
+            vec![
+                track(0, p(1e9, 0.0), p(1e9 + 1.0, 0.0), 0.5),
+                track(5, p(0.0, 0.0), p(1.0, 0.0), 0.5),
+                track(99, p(0.0, 0.0), p(1.0, 0.0), 0.5),
+            ],
+            vec![],
+        ),
+        1.6,
+        "Board",
+    );
+    assert!(list.is_empty());
+    assert_eq!(
+        notes[0]["message"],
+        "3 copper or silkscreen item(s) have unusable sizes or layers and were left out"
+    );
 }

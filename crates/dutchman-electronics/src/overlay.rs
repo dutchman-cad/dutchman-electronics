@@ -23,8 +23,13 @@ pub const CHORD: f64 = 0.02;
 pub const COPPER_LIFT: f64 = 0.001;
 /// How far silkscreen is drawn off the board face, in mm.
 pub const SILK_LIFT: f64 = 0.01;
-/// The most points one arc is drawn with.
-const MAX_ARC_POINTS: usize = 720;
+/// The most points one arc is drawn with: enough to hold [`CHORD`] on a whole circle as big as
+/// [`MAX_COORDINATE`] allows.
+const MAX_ARC_POINTS: usize = 4096;
+/// The farthest from the board origin, in mm, an overlay point may be (25 m, the reader's limit).
+const MAX_COORDINATE: f64 = 25_000.0;
+/// The most copper and silkscreen items drawn; the rest are a Dropped note.
+const MAX_ITEMS: usize = 200_000;
 /// The fewest sides a whole circle is drawn with, so small vias and pads stay round.
 const MIN_CIRCLE_SIDES: f64 = 32.0;
 
@@ -56,13 +61,38 @@ fn arc_points(center: Point, radius: f64, start_deg: f64, sweep_deg: f64, out: &
     }
 }
 
+fn same(a: &Coord, b: &Coord) -> bool {
+    (a.x - b.x).abs() < 1e-9 && (a.y - b.y).abs() < 1e-9
+}
+
+/// A polygon from a ring of points, always counter-clockwise: the union picks its fill rule from
+/// the first ring's winding, so one clockwise ring would wipe out the others. `None` for a ring
+/// that is too far out, not a number, or encloses no area.
 fn polygon(mut ring: Vec<Coord>) -> Option<Polygon> {
-    ring.dedup_by(|a, b| (a.x - b.x).abs() < 1e-9 && (a.y - b.y).abs() < 1e-9);
-    if ring.first() == ring.last() {
+    if ring
+        .iter()
+        .any(|c| !(c.x.abs() <= MAX_COORDINATE && c.y.abs() <= MAX_COORDINATE))
+    {
+        return None;
+    }
+    ring.dedup_by(|a, b| same(a, b));
+    while ring.len() > 1 && ring.first().zip(ring.last()).is_some_and(|(a, b)| same(a, b)) {
         ring.pop();
     }
-    if ring.len() < 3 || ring.iter().any(|c| !(c.x.is_finite() && c.y.is_finite())) {
+    let n = ring.len();
+    if n < 3 {
         return None;
+    }
+    let twice_area: f64 = ring
+        .iter()
+        .zip(ring.iter().cycle().skip(1))
+        .map(|(a, b)| a.x * b.y - b.x * a.y)
+        .sum();
+    if twice_area.abs() < 1e-12 {
+        return None;
+    }
+    if twice_area < 0.0 {
+        ring.reverse();
     }
     Some(Polygon::new(LineString::from(ring), vec![]))
 }
@@ -102,20 +132,51 @@ fn sweep(start_deg: f64, end_deg: f64) -> f64 {
     }
 }
 
-/// An arc stroke: a round-ended stroke along each piece of the arc's polyline.
-fn arc_stroke(center: Point, radius: f64, start_deg: f64, end_deg: f64, width: f64) -> Vec<Polygon> {
-    if !(radius.is_finite() && radius > 0.0 && finite(center)) {
+/// An arc stroke with round ends: the band between `radius - width / 2` and `radius + width /
+/// 2`, with a half circle at each end. A whole circle is a ring (an outline with one hole). An
+/// arc narrower than its stroke (the band would reach the centre) is drawn as round-ended
+/// pieces along its polyline instead.
+fn arc_stroke(
+    center: Point,
+    radius: f64,
+    start_deg: f64,
+    end_deg: f64,
+    width: f64,
+) -> Vec<Polygon> {
+    if !(radius.is_finite() && radius > 0.0 && width.is_finite() && width > 0.0 && finite(center))
+    {
         return Vec::new();
     }
-    let mut points = Vec::new();
-    arc_points(center, radius, start_deg, sweep(start_deg, end_deg), &mut points);
-    points
-        .windows(2)
-        .filter_map(|w| match w {
-            [a, b] => stroke(Point { x: a.x, y: a.y }, Point { x: b.x, y: b.y }, width),
-            _ => None,
-        })
-        .collect()
+    let sweep = sweep(start_deg, end_deg);
+    let (outer, inner) = (radius + width / 2.0, radius - width / 2.0);
+    if inner <= CHORD {
+        let mut points = Vec::new();
+        arc_points(center, radius, start_deg, sweep, &mut points);
+        return points
+            .windows(2)
+            .filter_map(|w| match w {
+                [a, b] => stroke(Point { x: a.x, y: a.y }, Point { x: b.x, y: b.y }, width),
+                _ => None,
+            })
+            .collect();
+    }
+    if sweep >= 360.0 {
+        let (Some(o), Some(i)) = (circle(center, outer), circle(center, inner)) else {
+            return Vec::new();
+        };
+        // The hole runs clockwise, against the outline, so the union leaves it open.
+        let mut hole = i.exterior().clone();
+        hole.0.reverse();
+        return vec![Polygon::new(o.exterior().clone(), vec![hole])];
+    }
+    let end = start_deg + sweep;
+    let at = |deg: f64| turned(center, radius, 0.0, deg);
+    let mut ring = Vec::new();
+    arc_points(center, outer, start_deg, sweep, &mut ring);
+    arc_points(at(end), width / 2.0, end, 180.0, &mut ring);
+    arc_points(center, inner, end, -sweep, &mut ring);
+    arc_points(at(start_deg), width / 2.0, start_deg + 180.0, 180.0, &mut ring);
+    polygon(ring).into_iter().collect()
 }
 
 /// A board point turned by `deg` about `center`.
@@ -170,7 +231,13 @@ fn contour(c: &Contour) -> Option<Polygon> {
                 if !(radius.is_finite() && radius > 0.0) {
                     return None;
                 }
-                arc_points(center, radius, start_deg, sweep(start_deg, end_deg), &mut ring);
+                arc_points(
+                    center,
+                    radius,
+                    start_deg,
+                    sweep(start_deg, end_deg),
+                    &mut ring,
+                );
             }
         }
     }
@@ -211,7 +278,8 @@ fn areas(shape: &MultiPolygon) -> Vec<Value> {
             .coords()
             .map(|c| [(c.x * 1e6).round() / 1e6, (c.y * 1e6).round() / 1e6])
             .collect();
-        if pts.len() > 1 && pts.first() == pts.last() {
+        pts.dedup();
+        while pts.len() > 1 && pts.first() == pts.last() {
             pts.pop();
         }
         pts
@@ -219,11 +287,18 @@ fn areas(shape: &MultiPolygon) -> Vec<Value> {
     shape
         .orient(Direction::Default)
         .iter()
-        .map(|p| {
-            json!({
-                "outer": ring(p.exterior()),
-                "holes": p.interiors().iter().map(ring).collect::<Vec<_>>(),
-            })
+        .filter_map(|p| {
+            let outer = ring(p.exterior());
+            if outer.len() < 3 {
+                return None;
+            }
+            let holes: Vec<Vec<[f64; 2]>> = p
+                .interiors()
+                .iter()
+                .map(ring)
+                .filter(|h| h.len() >= 3)
+                .collect();
+            Some(json!({ "outer": outer, "holes": holes }))
         })
         .collect()
 }
@@ -232,51 +307,75 @@ fn areas(shape: &MultiPolygon) -> Vec<Value> {
 /// its bottom at z = 0, in the frame of the part named `board_part`), and notes on what was left
 /// out.
 pub fn overlays(board: &Board, thickness: f64, board_part: &str) -> (Vec<Value>, Vec<Value>) {
-    let mut top = SideFaces::default();
-    let mut bottom = SideFaces::default();
+    let top = SideFaces::default();
+    let bottom = SideFaces::default();
     let mut holes = Pile::default();
     let (mut inner, mut unusable, mut other_graphics) = (0usize, 0usize, 0usize);
-    let layer = |i: usize| board.layers.get(i).map(|l| (l.kind, l.side));
-    // Items are sorted by side first, then piled per overlay.
-    let mut masked: Vec<(Option<Side>, Option<Polygon>)> = Vec::new();
-    let mut masked_arcs: Vec<(Option<Side>, Vec<Polygon>)> = Vec::new();
-    let mut bare: Vec<(Option<Side>, Option<Polygon>)> = Vec::new();
-    for item in &board.copper {
-        match item {
+    // Where a copper item's layer puts it.
+    enum On {
+        Face(Side),
+        /// A copper layer that belongs to neither face: inner copper, or (for a drilled pad)
+        /// both faces.
+        Through,
+        /// No such layer, or not a copper layer.
+        Unusable,
+    }
+    let on = |i: usize| match board.layers.get(i) {
+        Some(l) if l.kind == LayerKind::Copper => l.side.map_or(On::Through, On::Face),
+        _ => On::Unusable,
+    };
+    let mut faces = (top, bottom);
+    let shown = board.copper.len().min(MAX_ITEMS);
+    let skipped = board.copper.len().saturating_sub(MAX_ITEMS).saturating_add(
+        board
+            .graphics
+            .len()
+            .saturating_sub(MAX_ITEMS.saturating_sub(shown)),
+    );
+    for item in board.copper.iter().take(MAX_ITEMS) {
+        let (layer, shapes, bare, drill): (usize, Vec<Polygon>, bool, Option<(Point, f64)>) =
+            match item {
             CopperItem::Track {
-                layer: l,
+                layer,
                 from,
                 to,
                 width,
                 ..
-            } => masked.push((layer(*l).and_then(|k| k.1), stroke(*from, *to, *width))),
+            } => (*layer, stroke(*from, *to, *width).into_iter().collect(), false, None),
             CopperItem::TrackArc {
-                layer: l,
+                layer,
                 center,
                 radius,
                 start_deg,
                 end_deg,
                 width,
                 ..
-            } => masked_arcs.push((
-                layer(*l).and_then(|k| k.1),
+            } => (
+                *layer,
                 arc_stroke(*center, *radius, *start_deg, *end_deg, *width),
-            )),
-            CopperItem::Region { layer: l, contour: c } => {
-                masked.push((layer(*l).and_then(|k| k.1), contour(c)));
+                false,
+                None,
+            ),
+            CopperItem::Region { layer, contour: c } => {
+                (*layer, contour(c).into_iter().collect(), false, None)
             }
             CopperItem::Via {
                 at,
                 diameter,
                 drill,
             } => {
-                let ring = circle(*at, diameter / 2.0);
-                masked.push((Some(Side::Top), ring.clone()));
-                masked.push((Some(Side::Bottom), ring));
-                holes.add(circle(*at, drill / 2.0), &mut unusable);
+                match circle(*at, diameter / 2.0) {
+                    Some(ring) => {
+                        faces.0.masked.polygons.push(ring.clone());
+                        faces.1.masked.polygons.push(ring);
+                        holes.add(circle(*at, drill / 2.0), &mut unusable);
+                    }
+                    None => unusable = unusable.saturating_add(1),
+                }
+                continue;
             }
             CopperItem::Pad {
-                layer: l,
+                layer,
                 at,
                 shape,
                 size_x,
@@ -284,52 +383,47 @@ pub fn overlays(board: &Board, thickness: f64, board_part: &str) -> (Vec<Value>,
                 rotation_deg,
                 drill,
                 ..
-            } => {
-                let p = pad(*at, *shape, *size_x, *size_y, *rotation_deg);
-                match (layer(*l).and_then(|k| k.1), drill) {
-                    (Some(side), _) => bare.push((Some(side), p)),
-                    // A pad through the board with no side of its own is on both faces.
-                    (None, Some(_)) => {
-                        bare.push((Some(Side::Top), p.clone()));
-                        bare.push((Some(Side::Bottom), p));
-                    }
-                    (None, None) => inner = inner.saturating_add(1),
-                }
-                if let Some(d) = drill {
-                    holes.add(circle(*at, d / 2.0), &mut unusable);
-                }
-            }
+            } => (
+                *layer,
+                pad(*at, *shape, *size_x, *size_y, *rotation_deg)
+                    .into_iter()
+                    .collect(),
+                true,
+                drill.map(|d| (*at, d)),
+            ),
+        };
+        if shapes.is_empty() {
+            unusable = unusable.saturating_add(1);
+            continue;
         }
-    }
-    for (side, p) in masked {
-        match side {
-            Some(Side::Top) => top.masked.add(p, &mut unusable),
-            Some(Side::Bottom) => bottom.masked.add(p, &mut unusable),
-            None => inner = inner.saturating_add(1),
-        }
-    }
-    for (side, ps) in masked_arcs {
-        let pile = match side {
-            Some(Side::Top) => &mut top.masked,
-            Some(Side::Bottom) => &mut bottom.masked,
-            None => {
+        let sides: &[Side] = match (on(layer), bare && drill.is_some()) {
+            (On::Face(Side::Top), _) => &[Side::Top],
+            (On::Face(Side::Bottom), _) => &[Side::Bottom],
+            // A drilled pad on a copper layer of neither face goes through: it is on both.
+            (On::Through, true) => &[Side::Top, Side::Bottom],
+            (On::Through, false) => {
                 inner = inner.saturating_add(1);
                 continue;
             }
+            (On::Unusable, _) => {
+                unusable = unusable.saturating_add(1);
+                continue;
+            }
         };
-        if ps.is_empty() {
-            unusable = unusable.saturating_add(1);
+        for side in sides {
+            let f = match side {
+                Side::Top => &mut faces.0,
+                Side::Bottom => &mut faces.1,
+            };
+            let target = if bare { &mut f.bare } else { &mut f.masked };
+            target.polygons.extend(shapes.iter().cloned());
         }
-        pile.polygons.extend(ps);
-    }
-    for (side, p) in bare {
-        match side {
-            Some(Side::Top) => top.bare.add(p, &mut unusable),
-            Some(Side::Bottom) => bottom.bare.add(p, &mut unusable),
-            None => inner = inner.saturating_add(1),
+        if let Some((at, d)) = drill {
+            holes.add(circle(at, d / 2.0), &mut unusable);
         }
     }
-    for g in &board.graphics {
+    let (mut top, mut bottom) = faces;
+    for g in board.graphics.iter().take(MAX_ITEMS.saturating_sub(shown)) {
         let (l, shapes) = match g {
             Graphic::Line {
                 layer,
@@ -351,7 +445,7 @@ pub fn overlays(board: &Board, thickness: f64, board_part: &str) -> (Vec<Value>,
                 arc_stroke(*center, *radius, *start_deg, *end_deg, *width),
             ),
         };
-        let pile = match layer(l) {
+        let pile = match board.layers.get(l).map(|x| (x.kind, x.side)) {
             Some((LayerKind::Silkscreen, Some(Side::Top))) => &mut top.silk,
             Some((LayerKind::Silkscreen, Some(Side::Bottom))) => &mut bottom.silk,
             _ => {
@@ -377,10 +471,32 @@ pub fn overlays(board: &Board, thickness: f64, board_part: &str) -> (Vec<Value>,
         ] {
             let bare = f.bare.union().difference(&drilled);
             let masked = f.masked.union().difference(&drilled).difference(&bare);
-            let silk = f.silk.union();
-            built.push((format!("Copper {side}"), "copper", Some("masked"), side, z_copper, masked));
-            built.push((format!("Copper {side} pads"), "copper", Some("bare"), side, z_copper, bare));
-            built.push((format!("Silkscreen {side}"), "silkscreen", None, side, z_silk, silk));
+            // Silkscreen is not printed over holes or on bare pads.
+            let silk = f.silk.union().difference(&drilled).difference(&bare);
+            built.push((
+                format!("Copper {side}"),
+                "copper",
+                Some("masked"),
+                side,
+                z_copper,
+                masked,
+            ));
+            built.push((
+                format!("Copper {side} pads"),
+                "copper",
+                Some("bare"),
+                side,
+                z_copper,
+                bare,
+            ));
+            built.push((
+                format!("Silkscreen {side}"),
+                "silkscreen",
+                None,
+                side,
+                z_silk,
+                silk,
+            ));
         }
         built
     }));
@@ -410,8 +526,15 @@ pub fn overlays(board: &Board, thickness: f64, board_part: &str) -> (Vec<Value>,
         })),
     }
     for (count, what) in [
+        (
+            skipped,
+            "copper or silkscreen item(s) past the first 200000 were not drawn",
+        ),
         (inner, "copper item(s) on inner layers are not drawn yet"),
-        (unusable, "copper or silkscreen item(s) have unusable sizes and were left out"),
+        (
+            unusable,
+            "copper or silkscreen item(s) have unusable sizes or layers and were left out",
+        ),
         (
             other_graphics,
             "line(s) and arc(s) on layers other than the silkscreen are not drawn yet",
