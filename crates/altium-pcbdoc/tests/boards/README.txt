@@ -378,6 +378,26 @@ four-layer.PcbDoc
     a track on Layer 2 from (10, 20) to (20, 20), width 0.250
     a via at (30, 15), diameter 0.600, hole 0.300, from Top Layer to Bottom Layer
 
+Scripted boards, thirteenth batch: a STEP model tilted 90 degrees about Y
+--------------------------------------------------------------------------
+Made on 2026-11-24 the same way as the tenth batch, each from a file copy of one-resistor.PcbDoc,
+but with box-offset.step (x 0 to 1.6, y -0.4 to 0.4, z 0 to 0.45 in the model) tilted 90 degrees
+about its Y axis, so it stands on end and reaches down into the board. Every number was read
+back and logged.
+
+one-y-tilted-step-resistor.PcbDoc
+    R1 at (25, 15), rotation 0, top side. Model origin (MODEL.2D) at (25, 15.4),
+    MODEL.3D.ROTX 0, ROTY 90, ROTZ 0, DZ 0. The body spans x 25 to 25.45, y 15 to 15.8, and
+    reaches 1.6 into the board from the top surface (STANDOFFHEIGHT -1.6, OVERALLHEIGHT 0).
+one-bottom-y-tilted-step-resistor.PcbDoc  (the same, then R1 flipped to the bottom)
+    R1 at (25, 15), rotation 180, bottom side. Model origin (25, 15.4), ROTY 90, ROTZ 180,
+    DZ 0. The body spans x 24.55 to 25, y 15 to 15.8, and reaches 1.6 into the board from the
+    bottom surface.
+one-turned-y-tilted-step-resistor.PcbDoc  (like the first, then the model turned 30 degrees on R1)
+    The model was turned the same way as in the eighth batch. R1 at (25, 15), rotation 0, top
+    side. Model origin (24.8, 15.346), ROTY 90, ROTZ 30. The body spans x 24.6 to 25.390,
+    y 15 to 15.918, 1.6 into the board from the top surface.
+
 Paths inside the files
 ----------------------
 Altium writes a few paths from the PC that saved a board into the file. After the last save, I
