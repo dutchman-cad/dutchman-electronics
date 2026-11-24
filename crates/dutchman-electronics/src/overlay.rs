@@ -545,7 +545,10 @@ pub fn overlays(board: &Board, thickness: f64, board_part: &str) -> (Vec<Value>,
             skipped,
             "copper or silkscreen item(s) past the first 200000 were not drawn",
         ),
-        (inner, "copper item(s) on inner layers are not drawn yet"),
+        (
+            inner,
+            "copper item(s) on inner layers are left out, as they lie inside the board",
+        ),
         (
             unusable,
             "copper or silkscreen item(s) have unusable sizes or layers and were left out",

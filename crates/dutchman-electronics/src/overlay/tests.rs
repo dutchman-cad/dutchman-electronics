@@ -300,7 +300,7 @@ fn inner_layer_copper_and_bad_sizes_are_noted() {
     assert_eq!(
         messages,
         [
-            "1 copper item(s) on inner layers are not drawn yet",
+            "1 copper item(s) on inner layers are left out, as they lie inside the board",
             "2 copper or silkscreen item(s) have unusable sizes or layers and were left out",
         ]
     );
