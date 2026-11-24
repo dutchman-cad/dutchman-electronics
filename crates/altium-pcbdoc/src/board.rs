@@ -288,6 +288,7 @@ pub(crate) fn contour(what: &str, vertices: &[Vertex], notes: &mut Vec<Note>) ->
                 radius: arc.radius,
                 start_deg: arc.start_deg,
                 end_deg: arc.end_deg,
+                clockwise: false,
             },
             Edge::Arc(_, false) | Edge::Line => Segment::Line { from, to },
         })
@@ -699,6 +700,7 @@ mod tests {
                 radius,
                 start_deg,
                 end_deg,
+                ..
             } => {
                 let a = Arc {
                     center,

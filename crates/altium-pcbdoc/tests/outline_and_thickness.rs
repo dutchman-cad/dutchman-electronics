@@ -161,6 +161,7 @@ fn arcs_and_lines(contour: &Contour) -> (Vec<ArcXy>, usize) {
                 radius,
                 start_deg,
                 end_deg,
+                ..
             } => arcs.push((center.x, center.y, radius, start_deg, end_deg)),
         }
     }
@@ -176,6 +177,7 @@ fn ends(s: &Segment) -> (Xy, Xy) {
             radius,
             start_deg,
             end_deg,
+            ..
         } => {
             let at = |deg: f64| {
                 let (sin, cos) = deg.to_radians().sin_cos();

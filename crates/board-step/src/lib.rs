@@ -286,6 +286,7 @@ fn contour_edges(contour: &Contour) -> Result<Vec<Edge2>, String> {
                 radius,
                 start_deg,
                 end_deg,
+                clockwise,
             } => {
                 if !finite(center) || !radius.is_finite() || radius <= TOLERANCE {
                     return Err("an arc has an unusable centre or radius".into());
@@ -294,12 +295,10 @@ fn contour_edges(contour: &Contour) -> Result<Vec<Edge2>, String> {
                     return Err("an arc has an unusable angle".into());
                 }
                 let a0 = start_deg.to_radians();
-                let mut total = (end_deg - start_deg).to_radians().rem_euclid(2.0 * PI);
-                if total < 1e-12 {
-                    total = 2.0 * PI;
-                }
+                // Signed: negative when the arc runs clockwise.
+                let total = segment.sweep_deg().unwrap_or(360.0).to_radians();
                 // Pieces of at most half a circle, so every side face has four edges.
-                let pieces = (total / PI).ceil().max(1.0) as usize;
+                let pieces = (total.abs() / PI).ceil().max(1.0) as usize;
                 for k in 0..pieces {
                     let from = a0 + total * (k as f64) / (pieces as f64);
                     let to = a0 + total * ((k + 1) as f64) / (pieces as f64);
@@ -309,7 +308,7 @@ fn contour_edges(contour: &Contour) -> Result<Vec<Edge2>, String> {
                         kind: Kind2::Arc {
                             center,
                             radius,
-                            ccw: true,
+                            ccw: !clockwise,
                         },
                     });
                 }
