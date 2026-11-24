@@ -398,6 +398,25 @@ one-turned-y-tilted-step-resistor.PcbDoc  (like the first, then the model turned
     side. Model origin (24.8, 15.346), ROTY 90, ROTZ 30. The body spans x 24.6 to 25.390,
     y 15 to 15.918, 1.6 into the board from the top surface.
 
+Fourteenth board: an outline with a notch, concave and convex arcs
+------------------------------------------------------------------
+Made on 2026-11-24 from a file copy of empty-outline.PcbDoc, the same way as outline-with-arcs:
+my own script drew the new outline as helper lines and arcs (width 0.1) on Mechanical 1 and
+selected them; by hand, Design > Board Shape > Define Board Shape from Selected Objects; the
+script then removed the helpers and saved.
+
+outline-with-notch.PcbDoc
+    The 50 x 30 rectangle of empty-outline with a 10 x 10 notch in its top edge, x 20 to 30,
+    down to y 20. The notch's corners are rounded:
+        at its mouth (convex)   centre (19, 29), radius 1.000, from 0 to 90 degrees
+                                centre (31, 29), radius 1.000, from 90 to 180 degrees
+        at its bottom (concave) centre (22, 22), radius 2.000, from 180 to 270 degrees
+                                centre (28, 22), radius 2.000, from 270 to 360 degrees
+                                (all counter-clockwise)
+    Straight edges: (0, 0) to (50, 0), (50, 0) to (50, 30), (50, 30) to (31, 30),
+    (30, 29) to (30, 22), (28, 20) to (22, 20), (20, 22) to (20, 29), (19, 30) to (0, 30) and
+    (0, 30) to (0, 0). Nothing else is on the board.
+
 Paths inside the files
 ----------------------
 Altium writes a few paths from the PC that saved a board into the file. After the last save, I
