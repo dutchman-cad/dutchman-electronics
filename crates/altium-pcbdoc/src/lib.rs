@@ -1,7 +1,7 @@
 //! Altium `.PcbDoc` reader: reads a board file into the neutral model in the `board-model` crate.
 //! Roadmap steps 1 and 2 are done: open the container and list its streams; read the board
 //! outline, its cutouts and the board thickness (`board.rs`). Step 3 has started: tracks, track
-//! arcs, pads and vias on copper layers (`copper.rs`). Step 5 has started: component placements
+//! arcs, pads, vias, fills and copper regions (`copper.rs`). Step 5 has started: component placements
 //! (`components.rs`). Everything else in the file is reported as a "not read yet"
 //! note.
 //!
@@ -26,8 +26,6 @@ use board_model::{
 const NOT_READ_YET: &[(&str, &str)] = &[
     ("/ComponentBodies6/Data", "component 3D bodies"),
     ("/Dimensions6/Data", "dimensions"),
-    ("/Fills6/Data", "fills"),
-    ("/Polygons6/Data", "polygon pours"),
     (
         "/ShapeBasedComponentBodies6/Data",
         "shape-based component bodies",
@@ -133,6 +131,7 @@ impl InputFormat for Altium {
         let wide_strings6 = read_stream(&mut container, "/WideStrings6/Data")?;
         let arcs6 = read_stream(&mut container, "/Arcs6/Data")?;
         let vias6 = read_stream(&mut container, "/Vias6/Data")?;
+        let fills6 = read_stream(&mut container, "/Fills6/Data")?;
 
         let mut notes = Vec::new();
         let record = board::board_record(&board6).map_err(ReadError::Invalid)?;
@@ -163,6 +162,21 @@ impl InputFormat for Altium {
         }
         if let Some(data) = &vias6 {
             copper.extend(copper::vias(data, &layers, &mut notes).map_err(ReadError::Invalid)?);
+        }
+        if let Some(data) = &fills6 {
+            copper.extend(copper::fills(data, &layers, &mut notes).map_err(ReadError::Invalid)?);
+        }
+        copper.extend(copper::regions(&shape.other_regions, &layers, &mut notes));
+        if streams
+            .iter()
+            .any(|s| s.path == "/Polygons6/Data" && s.len > 0)
+        {
+            notes.push(Note {
+                severity: Severity::Info,
+                message: "polygon pour settings (/Polygons6/Data) are not read; the copper each \
+                          pour holds is read as regions"
+                    .into(),
+            });
         }
         for (path, what) in NOT_READ_YET {
             if let Some(s) = streams.iter().find(|s| s.path == *path && s.len > 0) {

@@ -197,10 +197,30 @@ pub(crate) fn thickness(board: &Properties, notes: &mut Vec<Note>) -> Result<Opt
     Ok(Some(total))
 }
 
-/// The board cutouts from `/Regions6/Data`. Other regions are counted in a note, not read.
-pub(crate) fn cutouts(data: &[u8], notes: &mut Vec<Note>) -> Result<Vec<Contour>, String> {
-    let mut contours = Vec::new();
-    let mut other = 0usize;
+/// A region from `/Regions6/Data` that is not a board cutout (copper regions, poured copper, …).
+#[derive(Debug)]
+pub(crate) struct OtherRegion {
+    /// The layer byte (byte 0 of the record body; 1 is Top Layer on our boards).
+    pub layer: u8,
+    /// The `KIND` value (`0` for a copper region and for poured copper on our boards).
+    pub kind: Option<String>,
+    /// True when the region belongs to a polygon pour (`SUBPOLYINDEX` is 0 or more).
+    pub poured: bool,
+    pub contour: Contour,
+}
+
+/// The regions of `/Regions6/Data`: board cutouts, and every other region for `copper.rs`.
+#[derive(Debug, Default)]
+pub(crate) struct Regions {
+    pub cutouts: Vec<Contour>,
+    pub others: Vec<OtherRegion>,
+}
+
+/// Reads `/Regions6/Data`. A board cutout that cannot be read is an error (the board shape would
+/// be wrong); any other region that cannot be read is left out with a Dropped note.
+pub(crate) fn regions(data: &[u8], notes: &mut Vec<Note>) -> Result<Regions, String> {
+    let mut found = Regions::default();
+    let mut unreadable = 0usize;
     let mut at = 0usize;
     let mut count = 0usize;
     while at < data.len() {
@@ -230,59 +250,65 @@ pub(crate) fn cutouts(data: &[u8], notes: &mut Vec<Note>) -> Result<Vec<Contour>
         let body = data
             .get(body_start..body_end)
             .ok_or("region record out of range")?;
-        match region(body)? {
-            Some(contour) => contours.push(contour),
-            None => other += 1,
+        let text_len = read_u32(body, REGION_SKIPPED).ok_or("region text length cut short")?;
+        let text_start = REGION_SKIPPED + 4;
+        let text_end = text_start
+            .checked_add(text_len)
+            .ok_or("region text length out of range")?;
+        let text = body
+            .get(text_start..text_end)
+            .ok_or("region text is longer than its record")?;
+        let props = Properties::parse(text);
+        let corners = region_points(body, text_end);
+        if props.get("ISBOARDCUTOUT") == Some("TRUE") {
+            found.cutouts.push(closed_polygon(
+                &corners.map_err(|e| format!("a board cutout {e}"))?,
+            ));
+        } else {
+            match corners {
+                Ok(points) => found.others.push(OtherRegion {
+                    layer: body.first().copied().unwrap_or(0),
+                    kind: props.get("KIND").map(str::to_string),
+                    poured: props
+                        .get("SUBPOLYINDEX")
+                        .and_then(|v| v.trim().parse::<i64>().ok())
+                        .is_some_and(|i| i >= 0),
+                    contour: closed_polygon(&points),
+                }),
+                Err(_) => unreadable += 1,
+            }
         }
         at = body_end;
     }
-    if other > 0 {
+    if unreadable > 0 {
         notes.push(Note {
             severity: Severity::Dropped,
-            message: format!(
-                "/Regions6/Data: {other} region(s) that are not board cutouts were not read yet"
-            ),
+            message: format!("/Regions6/Data: {unreadable} region(s) could not be read"),
         });
     }
-    Ok(contours)
+    Ok(found)
 }
 
-/// One region record body: `Some(contour)` for a board cutout, `None` for any other region.
-fn region(body: &[u8]) -> Result<Option<Contour>, String> {
-    let text_len = read_u32(body, REGION_SKIPPED).ok_or("region text length cut short")?;
-    let text_start = REGION_SKIPPED + 4;
-    let text_end = text_start
-        .checked_add(text_len)
-        .ok_or("region text length out of range")?;
-    let text = body
-        .get(text_start..text_end)
-        .ok_or("region text is longer than its record")?;
-    let props = Properties::parse(text);
-    if props.get("ISBOARDCUTOUT") != Some("TRUE") {
-        return Ok(None);
-    }
-    let n = read_u32(body, text_end).ok_or("region vertex count cut short")?;
+/// The corners of a region: a `u32` count at `at`, then that many `f64` (x, y) pairs.
+fn region_points(body: &[u8], at: usize) -> Result<Vec<Point>, String> {
+    let n = read_u32(body, at).ok_or("has its vertex count cut short")?;
     if n > MAX_VERTICES {
-        return Err(format!(
-            "a board cutout has {n} vertices, more than {MAX_VERTICES}"
-        ));
+        return Err(format!("has {n} vertices, more than {MAX_VERTICES}"));
     }
     if n < 3 {
-        return Err(format!(
-            "a board cutout has {n} vertices; it needs at least 3"
-        ));
+        return Err(format!("has {n} vertices; it needs at least 3"));
     }
     let mut points = Vec::with_capacity(n);
     for k in 0..n {
-        let at = text_end + 4 + 16 * k;
-        let x = read_f64(body, at).ok_or("board cutout vertices cut short")?;
-        let y = read_f64(body, at + 8).ok_or("board cutout vertices cut short")?;
+        let p = at + 4 + 16 * k;
+        let x = read_f64(body, p).ok_or("has its vertices cut short")?;
+        let y = read_f64(body, p + 8).ok_or("has its vertices cut short")?;
         points.push(Point {
             x: unit_to_mm(x)?,
             y: unit_to_mm(y)?,
         });
     }
-    Ok(Some(closed_polygon(&points)))
+    Ok(points)
 }
 
 fn read_u32(data: &[u8], at: usize) -> Option<usize> {
@@ -309,6 +335,8 @@ fn unit_to_mm(v: f64) -> Result<f64, String> {
 pub(crate) struct ShapeAndThickness {
     pub outline: Outline,
     pub thickness: Option<f64>,
+    /// The regions that are not board cutouts, for `copper.rs`.
+    pub other_regions: Vec<OtherRegion>,
 }
 
 /// Reads the board shape, cutouts and thickness from the `/Board6/Data` record and the regions.
@@ -319,9 +347,9 @@ pub(crate) fn read(
 ) -> Result<ShapeAndThickness, String> {
     let outer = outline(board, notes)?;
     let thickness = thickness(board, notes)?;
-    let cutouts = match regions6 {
-        Some(data) => cutouts(data, notes)?,
-        None => Vec::new(),
+    let Regions { cutouts, others } = match regions6 {
+        Some(data) => regions(data, notes)?,
+        None => Regions::default(),
     };
     let origin = (board.length_mm("ORIGINX")?, board.length_mm("ORIGINY")?);
     if let (Some(x), Some(y)) = origin {
@@ -338,6 +366,7 @@ pub(crate) fn read(
     Ok(ShapeAndThickness {
         outline: Outline { outer, cutouts },
         thickness,
+        other_regions: others,
     })
 }
 
@@ -386,17 +415,17 @@ mod tests {
     #[test]
     fn hostile_region_streams_are_errors_not_panics() {
         let mut notes = Vec::new();
-        assert!(cutouts(&[REGION_RECORD], &mut notes).is_err());
-        assert!(cutouts(&[REGION_RECORD, 0xff, 0xff, 0xff, 0x7f], &mut notes).is_err());
+        assert!(regions(&[REGION_RECORD], &mut notes).is_err());
+        assert!(regions(&[REGION_RECORD, 0xff, 0xff, 0xff, 0x7f], &mut notes).is_err());
         // A text length that runs past the end of its record.
         let mut long_text = vec![REGION_RECORD, 30, 0, 0, 0];
         long_text.extend_from_slice(&[0u8; 30]);
         long_text[5 + REGION_SKIPPED..5 + REGION_SKIPPED + 4].copy_from_slice(&[0xff; 4]);
-        assert!(cutouts(&long_text, &mut notes).is_err());
-        // An empty text is a region that is not a cutout: reported, not an error.
+        assert!(regions(&long_text, &mut notes).is_err());
+        // An empty text is a region that is not a cutout; without corners it is a note, not an error.
         let mut plain = vec![REGION_RECORD, 30, 0, 0, 0];
         plain.extend_from_slice(&[0u8; 30]);
-        assert!(cutouts(&plain, &mut notes).unwrap().is_empty());
+        assert!(regions(&plain, &mut notes).unwrap().cutouts.is_empty());
         // A cutout whose vertex count runs past the record.
         let text = b"|ISBOARDCUTOUT=TRUE\0";
         let mut body = vec![0u8; REGION_SKIPPED];
@@ -406,8 +435,11 @@ mod tests {
         let mut cut = vec![REGION_RECORD];
         cut.extend_from_slice(&(body.len() as u32).to_le_bytes());
         cut.extend_from_slice(&body);
-        assert!(cutouts(&cut, &mut notes).is_err());
-        assert!(cutouts(&[0x42, 1, 2, 3], &mut notes).unwrap().is_empty());
+        assert!(regions(&cut, &mut notes).is_err());
+        assert!(regions(&[0x42, 1, 2, 3], &mut notes)
+            .unwrap()
+            .cutouts
+            .is_empty());
         assert_eq!(notes.last().map(|n| n.severity), Some(Severity::Dropped));
     }
 

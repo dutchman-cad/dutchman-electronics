@@ -295,3 +295,82 @@ fn one_arc_is_a_quarter_circle_of_radius_5() -> Result<(), Box<dyn std::error::E
     assert!(out.notes.is_empty(), "{:?}", out.notes);
     Ok(())
 }
+
+/// The only copper region of a board: its layer name and its corners, sorted.
+fn only_region(out: &ReadOutcome) -> Option<(String, Vec<(f64, f64)>)> {
+    let [CopperItem::Region { layer, contour }] = out.board.copper.as_slice() else {
+        return None;
+    };
+    let mut corners: Vec<(f64, f64)> = contour
+        .segments
+        .iter()
+        .map(|s| match s {
+            board_model::Segment::Line { from, .. } => Some((from.x, from.y)),
+            board_model::Segment::Arc { .. } => None,
+        })
+        .collect::<Option<_>>()?;
+    corners.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)));
+    Some((layer_name(out, *layer).to_string(), corners))
+}
+
+fn same_corners(got: &[(f64, f64)], want: &[(f64, f64)]) -> bool {
+    let mut want = want.to_vec();
+    want.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)));
+    got.len() == want.len()
+        && got
+            .iter()
+            .zip(&want)
+            .all(|(g, w)| near(g.0, w.0) && near(g.1, w.1))
+}
+
+const SQUARE_20_30: [(f64, f64); 4] = [(20.0, 10.0), (30.0, 10.0), (30.0, 20.0), (20.0, 20.0)];
+
+#[test]
+fn one_fill_is_a_10_by_10_top_layer_region() -> Result<(), Box<dyn std::error::Error>> {
+    let out = read("one-fill.PcbDoc")?;
+    let (layer, corners) = only_region(&out).ok_or("expected exactly one region")?;
+    assert_eq!(layer, "Top Layer");
+    assert!(same_corners(&corners, &SQUARE_20_30), "{corners:?}");
+    assert!(out.notes.is_empty(), "{:?}", out.notes);
+    Ok(())
+}
+
+#[test]
+fn one_region_is_a_10_by_10_top_layer_region() -> Result<(), Box<dyn std::error::Error>> {
+    let out = read("one-region.PcbDoc")?;
+    let (layer, corners) = only_region(&out).ok_or("expected exactly one region")?;
+    assert_eq!(layer, "Top Layer");
+    assert!(same_corners(&corners, &SQUARE_20_30), "{corners:?}");
+    // Only the shape-based copy of the region is not read, and that is reported.
+    assert!(
+        out.notes
+            .iter()
+            .all(|n| n.message.contains("/ShapeBasedRegions6/Data")),
+        "{:?}",
+        out.notes
+    );
+    Ok(())
+}
+
+#[test]
+fn one_pour_reads_its_poured_copper() -> Result<(), Box<dyn std::error::Error>> {
+    let out = read("one-pour.PcbDoc")?;
+    let (layer, corners) = only_region(&out).ok_or("expected exactly one region")?;
+    assert_eq!(layer, "Top Layer");
+    // Nothing else is on the board, so Altium poured the whole outline it was given.
+    assert!(
+        same_corners(
+            &corners,
+            &[(5.0, 5.0), (45.0, 5.0), (45.0, 25.0), (5.0, 25.0)]
+        ),
+        "{corners:?}"
+    );
+    assert!(
+        out.notes
+            .iter()
+            .any(|n| n.message.contains("copper of a polygon pour")),
+        "{:?}",
+        out.notes
+    );
+    Ok(())
+}

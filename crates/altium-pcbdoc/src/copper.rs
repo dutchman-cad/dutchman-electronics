@@ -1,7 +1,8 @@
-//! Roadmap step 3: tracks, track arcs, pads and vias on copper layers.
+//! Roadmap step 3: tracks, track arcs, pads, vias, fills and copper regions on copper layers.
 //!
 //! Worked out from our own CC0 test boards (`one-track`, `outline-with-hole`, `one-resistor`,
-//! `one-via`, `one-plated-pad`, `one-rotated-pad`, `one-oval-pad`, `one-bottom-track`, `one-arc`)
+//! `one-via`, `one-plated-pad`, `one-rotated-pad`, `one-oval-pad`, `one-bottom-track`, `one-arc`,
+//! `one-fill`, `one-region`, `one-pour`)
 //! by comparing each with `empty-outline`, and from the numbers in their README.txt (see
 //! LEGAL.md). Coordinates and sizes are little-endian `i32` in 1/10000 mil, absolute (the boards'
 //! origin is at 0, 0).
@@ -39,14 +40,19 @@
 //!   `outline-with-hole` and on every SMD pad.
 //!   Bytes 7..9 are the index of the component the pad belongs to (see `components.rs`);
 //!   its designator becomes the pad's owner.
-//!
-//! The file stores whole units, so a typed length can come out a fraction of a micrometre off
-//! (50 mm is 19685039.37 units, stored as 19685039, read as 49.99999906 mm). That is the file, not
-//! a rounding bug; tests allow 0.001 mm.
+//! - `/Fills6/Data` (`one-fill`): records of type `0x06` and a `u32` length; in the body, byte 0
+//!   is the layer, bytes 3..5 the net index, from byte 13 two corners (x1, y1, x2, y2), then at
+//!   byte 29 an `f64` that is 0 on our only fill and taken to be the rotation.
+//! - Copper regions (`one-region`) and the copper Altium poured for a polygon (`one-pour`) are
+//!   region records in `/Regions6/Data` (see `board.rs`) with `KIND=0` and the layer in body
+//!   byte 0; poured copper also has `SUBPOLYINDEX=0` (a free region has -1). The pour's own
+//!   definition in `/Polygons6/Data` is not needed for its copper.
 
-use board_model::{CopperItem, Layer, LayerKind, Note, PadShape, Point, Severity, Side};
+use board_model::{
+    Contour, CopperItem, Layer, LayerKind, Note, PadShape, Point, Segment, Severity, Side,
+};
 
-use crate::board::Properties;
+use crate::board::{OtherRegion, Properties};
 use crate::components::Components;
 
 /// Millimetres per internal unit (1/10000 mil).
@@ -55,6 +61,7 @@ const TRACK_RECORD: u8 = 0x04;
 const PAD_RECORD: u8 = 0x02;
 const ARC_RECORD: u8 = 0x01;
 const VIA_RECORD: u8 = 0x03;
+const FILL_RECORD: u8 = 0x06;
 /// Angles beyond this many degrees (either way) are refused as not real.
 const MAX_ANGLE_DEG: f64 = 360.0;
 const PAD_BLOCKS: usize = 6;
@@ -436,6 +443,114 @@ pub(crate) fn vias(
     Ok(items)
 }
 
+/// Reads the fills from `/Fills6/Data` as rectangular copper regions. A rotated fill is left out
+/// with a note: no test board has one, so how its corners turn is not confirmed yet.
+pub(crate) fn fills(
+    data: &[u8],
+    layers: &CopperLayers,
+    notes: &mut Vec<Note>,
+) -> Result<Vec<CopperItem>, String> {
+    let mut items = Vec::new();
+    let mut skipped = Skipped::default();
+    let mut rotated = 0usize;
+    for body in records(data, FILL_RECORD, "/Fills6/Data", notes)? {
+        let layer_number = *body.first().ok_or("fill record is empty")?;
+        let a = point(body, 13)?;
+        let b = point(body, 21)?;
+        let rotation = read_f64(body, 29).ok_or("fill rotation cut short")?;
+        if read_u16(body, 3) != Some(NO_NET) {
+            skipped.with_net += 1;
+        }
+        let Some(layer) = layers.copper_index(layer_number) else {
+            *skipped
+                .off_copper
+                .entry(layers.name(layer_number))
+                .or_default() += 1;
+            continue;
+        };
+        if rotation != 0.0 {
+            rotated += 1;
+            continue;
+        }
+        let corners = [a, Point { x: b.x, y: a.y }, b, Point { x: a.x, y: b.y }];
+        items.push(CopperItem::Region {
+            layer,
+            contour: closed(&corners),
+        });
+    }
+    if rotated > 0 {
+        notes.push(Note {
+            severity: Severity::Dropped,
+            message: format!("{rotated} rotated fill(s) not read yet"),
+        });
+    }
+    skipped.into_notes("fill(s)", notes);
+    Ok(items)
+}
+
+/// Turns the non-cutout regions of `/Regions6/Data` into copper regions: `KIND=0` on a copper
+/// layer is a solid copper region, or the poured copper of a polygon pour. Any other region is
+/// left out with a note.
+pub(crate) fn regions(
+    others: &[OtherRegion],
+    layers: &CopperLayers,
+    notes: &mut Vec<Note>,
+) -> Vec<CopperItem> {
+    let mut items = Vec::new();
+    let mut poured = 0usize;
+    let mut not_copper: std::collections::BTreeMap<String, usize> = Default::default();
+    for region in others {
+        let layer = layers.copper_index(region.layer);
+        match (layer, region.kind.as_deref().map(str::trim)) {
+            (Some(layer), Some("0")) => {
+                if region.poured {
+                    poured += 1;
+                }
+                items.push(CopperItem::Region {
+                    layer,
+                    contour: region.contour.clone(),
+                });
+            }
+            (_, kind) => {
+                let what = format!(
+                    "region(s) of KIND {} on {}",
+                    kind.unwrap_or("?"),
+                    layers.name(region.layer)
+                );
+                *not_copper.entry(what).or_default() += 1;
+            }
+        }
+    }
+    if poured > 0 {
+        notes.push(Note {
+            severity: Severity::Info,
+            message: format!("{poured} copper region(s) are the copper of a polygon pour"),
+        });
+    }
+    for (what, count) in not_copper {
+        notes.push(Note {
+            severity: Severity::Dropped,
+            message: format!("{count} {what} not read yet"),
+        });
+    }
+    items
+}
+
+/// Joins the points with straight lines into a closed contour.
+fn closed(points: &[Point]) -> Contour {
+    let next = points.iter().skip(1).chain(points.first());
+    Contour {
+        segments: points
+            .iter()
+            .zip(next)
+            .map(|(from, to)| Segment::Line {
+                from: *from,
+                to: *to,
+            })
+            .collect(),
+    }
+}
+
 /// An `f64` angle in degrees at `at`: `None` when it is not a real angle (not finite, or more
 /// than a full turn either way), an error when the record is too short.
 fn angle(data: &[u8], at: usize) -> Result<Option<f64>, String> {
@@ -620,6 +735,8 @@ mod tests {
         assert!(vias(&record(VIA_RECORD, 30, |_| ()), &l, &mut notes).is_err());
         assert!(arcs(&[ARC_RECORD, 0xff, 0xff, 0xff, 0x7f], &l, &mut notes).is_err());
         assert!(vias(&[VIA_RECORD, 1, 0, 0, 0], &l, &mut notes).is_err());
+        assert!(fills(&[FILL_RECORD, 0xff, 0xff, 0xff, 0x7f], &l, &mut notes).is_err());
+        assert!(fills(&[FILL_RECORD, 2, 0, 0, 0, 1, 0], &l, &mut notes).is_err());
         assert!(tracks(&[0x42], &l, &mut notes).unwrap().is_empty());
         assert_eq!(notes.last().map(|n| n.severity), Some(Severity::Dropped));
     }
