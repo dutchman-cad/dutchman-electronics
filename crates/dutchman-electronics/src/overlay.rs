@@ -803,8 +803,9 @@ fn overlays_within(
             // The top side stacks up from the face at z = thickness, the bottom down from z = 0.
             let base = if sign > 0.0 { thickness } else { 0.0 };
             let at = |lift: f64| base + sign * lift;
-            let bare = f.bare.union().difference(&drilled);
-            let masked = f.masked.union().difference(&drilled).difference(&bare);
+            let (bare_all, masked_all) = (f.bare.union(), f.masked.union());
+            let bare = bare_all.difference(&drilled);
+            let masked = masked_all.difference(&drilled).difference(&bare);
             // Silkscreen is not printed over holes or on bare pads.
             let silk = f.silk.union().difference(&drilled).difference(&bare);
             let plain = |name: String, kind, finish, lift, height, shape, color| Built {
@@ -819,10 +820,11 @@ fn overlays_within(
                 opacity: None,
             };
             // The mask fills only between the copper: not over the bare pads, the masked copper
-            // or the drills, so copper stands proud of it.
+            // or the drills, so copper stands proud of it. One cut from the united shapes (the
+            // copper before its drills are taken out), so no sliver is left where edges meet.
             let mask = face
                 .as_ref()
-                .map(|face| face.difference(&drilled).difference(&bare).difference(&masked));
+                .map(|face| face.difference(&drilled.union(&bare_all).union(&masked_all)));
             built.push(plain(
                 format!("Copper {side}"),
                 "copper",
