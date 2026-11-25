@@ -17,8 +17,8 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::OnceLock;
 
 use board_model::{Point, Text, TextFont};
-use geo::orient::{Direction, Orient};
 use geo::algorithm::bool_ops::FillRule;
+use geo::orient::{Direction, Orient};
 use geo::{BooleanOps, Coord, LineString, MultiPolygon, Polygon};
 use ttf_parser::{Face, GlyphId, OutlineBuilder};
 
@@ -364,9 +364,8 @@ fn glyph_areas(rings: &[Vec<Coord>], place: &dyn Fn(Coord) -> Coord) -> Option<V
     let mut polygons = Vec::new();
     for ring in rings.iter().filter(|r| twice_area(r).abs() > 1e-12) {
         let ring: Vec<Coord> = ring.iter().map(|&c| place(c)).collect();
-        let in_range = |c: &Coord| {
-            c.x.abs() <= super::MAX_COORDINATE && c.y.abs() <= super::MAX_COORDINATE
-        };
+        let in_range =
+            |c: &Coord| c.x.abs() <= super::MAX_COORDINATE && c.y.abs() <= super::MAX_COORDINATE;
         if !ring.iter().all(in_range) {
             return None;
         }
@@ -925,14 +924,22 @@ mod tests {
             .unwrap();
         // 100 units of 1000 per em, with a text height of 2.1 over the 1000 unit span.
         assert_eq!((o.areas.len(), o.failed, o.missing), (1, 0, 1));
-        let w = o.areas[0].exterior().0.iter().map(|c| c.x).fold(0.0, f64::max);
+        let w = o.areas[0]
+            .exterior()
+            .0
+            .iter()
+            .map(|c| c.x)
+            .fold(0.0, f64::max);
         assert!(close(w - 10.0, 0.21), "{w}");
     }
 
     #[test]
     fn a_shallow_composite_is_drawn() {
         // Four levels of two parts: 16 squares, 4 deep.
-        let o = outline(&text_in_font(), &chain_font(4), 1_000).ok().unwrap().unwrap();
+        let o = outline(&text_in_font(), &chain_font(4), 1_000)
+            .ok()
+            .unwrap()
+            .unwrap();
         assert_eq!((o.areas.len(), o.failed), (1, 0));
     }
 
@@ -953,7 +960,10 @@ mod tests {
     #[test]
     fn a_composite_that_uses_itself_is_refused() {
         let glyphs = [composite_glyph(0, 1), square_glyph()];
-        let o = outline(&text_in_font(), &font_of(&glyphs), 1_000).ok().unwrap().unwrap();
+        let o = outline(&text_in_font(), &font_of(&glyphs), 1_000)
+            .ok()
+            .unwrap()
+            .unwrap();
         assert_eq!((o.areas.len(), o.failed), (0, 1));
     }
 

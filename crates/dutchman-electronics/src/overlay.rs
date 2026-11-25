@@ -787,7 +787,10 @@ fn overlays_within(
         if added > 0 {
             texts.drawn = texts.drawn.saturating_add(1);
             if let TextFont::TrueType { name, .. } = &t.font {
-                let n = texts.truetype.entry((name.clone(), unreadable)).or_default();
+                let n = texts
+                    .truetype
+                    .entry((name.clone(), unreadable))
+                    .or_default();
                 *n = n.saturating_add(1);
             }
         }

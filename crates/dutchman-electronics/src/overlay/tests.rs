@@ -1194,7 +1194,12 @@ fn dejavu_texts_fill_the_boxes_altium_reports() {
         let (list, notes) = super::overlays(&b, &fonts, 1.6, "Board");
         let got = bounds(named(&list, "Silkscreen top"));
         eprintln!("{name}: {got:?} against {want:?}");
-        let pairs = [(got.0, want.0), (got.1, want.1), (got.2, want.2), (got.3, want.3)];
+        let pairs = [
+            (got.0, want.0),
+            (got.1, want.1),
+            (got.2, want.2),
+            (got.3, want.3),
+        ];
         for (g, w) in pairs {
             assert!((g - w).abs() < 0.01, "{name}: {got:?} against {want:?}");
         }
@@ -1248,13 +1253,19 @@ fn a_mirrored_text_runs_left_and_a_turned_one_runs_up() {
     let m = bounds(named(&list, "Silkscreen bottom"));
     assert!((m.2 - (10.0 - (flat.0 - 10.0))).abs() < 1e-5, "{m:?}");
     assert!((m.0 - (10.0 - (flat.2 - 10.0))).abs() < 1e-5, "{m:?}");
-    assert!((m.1 - flat.1).abs() < 1e-5 && (m.3 - flat.3).abs() < 1e-5, "{m:?}");
+    assert!(
+        (m.1 - flat.1).abs() < 1e-5 && (m.3 - flat.3).abs() < 1e-5,
+        "{m:?}"
+    );
     // Turned 90 degrees counter-clockwise: the text runs up from the position and its letters
     // stand to the left of it (local (x, y) lands at (10 - y, 10 + x)).
     let (b, fonts) = dejavu_board("DejaVu", 90.0, false);
     let (list, _) = super::overlays(&b, &fonts, 1.6, "Board");
     let t = bounds(named(&list, "Silkscreen top"));
-    assert!((t.1 - flat.0).abs() < 1e-5 && (t.3 - flat.2).abs() < 1e-5, "{t:?}");
+    assert!(
+        (t.1 - flat.0).abs() < 1e-5 && (t.3 - flat.2).abs() < 1e-5,
+        "{t:?}"
+    );
     assert!((t.0 - (10.0 - (flat.3 - 10.0))).abs() < 1e-5, "{t:?}");
     assert!((t.2 - (10.0 - (flat.1 - 10.0))).abs() < 1e-5, "{t:?}");
     assert!((t.2 - t.0 - height).abs() < 1e-5, "{t:?}");
