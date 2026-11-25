@@ -986,7 +986,11 @@ mod tests {
                 } else {
                     -offset
                 };
-                assert!((z - want).abs() < 1e-5, "{}: z {z}, want {want}", path.display());
+                assert!(
+                    (z - want).abs() < 1e-5,
+                    "{}: z {z}, want {want}",
+                    path.display()
+                );
                 assert_eq!(o["thickness"], thickness, "{}: {o}", path.display());
                 let color = o["color"].as_str().unwrap_or_default();
                 assert!(
