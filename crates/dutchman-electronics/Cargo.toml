@@ -1,6 +1,6 @@
 [package]
 name = "dutchman-electronics"
-description = "Dutchman Electronics: the command Dutchman runs to read circuit boards (Altium .PcbDoc first) into a neutral board model"
+description = "Dutchman Electronics: the command Dutchman runs to read circuit boards (Altium .PcbDoc and KiCad .kicad_pcb) into a neutral board model"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,6 +12,7 @@ publish = false
 board-model = { path = "../board-model" }
 board-step = { path = "../board-step" }
 altium-pcbdoc = { path = "../altium-pcbdoc", optional = true }
+kicad-pcb = { path = "../kicad-pcb", optional = true }
 # Writes the JSON replies Dutchman reads (info, detect, and later the parts manifest).
 # MIT or Apache-2.0.
 serde_json = "1"
@@ -23,9 +24,10 @@ geo = { version = "0.33", default-features = false }
 ttf-parser = { version = "0.25", default-features = false, features = ["std"] }
 
 [features]
-default = ["altium"]
+default = ["altium", "kicad"]
 # One feature per input format, so a build can leave a format out.
 altium = ["dep:altium-pcbdoc"]
+kicad = ["dep:kicad-pcb"]
 
 [lints]
 workspace = true

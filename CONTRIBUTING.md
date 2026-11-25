@@ -83,6 +83,16 @@ Making boards with a script inside Altium is better than by hand: the script hol
 - Write the script yourself. Do not copy Altium's example scripts or code from their documentation into this repository; using Altium's scripting to drive Altium is fine. The script is released under CC0 with its board (same line at the top of the README.txt).
 
 
+### KiCad test boards
+
+KiCad boards go in `crates/kicad-pcb/tests/boards/`, each `<name>.kicad_pcb` with a
+`<name>.README.txt` that starts with the same CC0 line and lists every number. A KiCad file is
+text, so a test (`boards_are_ours.rs`) also refuses a board that names a path, an e-mail address
+or a computer. The board scripts are in `fixtures/kicad`; `fixtures/kicad/run.sh` rebuilds all
+boards with KiCad 9 in a container (needs podman). Boards made by others under an open licence
+are not in this folder yet; when the first one is added, this section and its test gain a rule
+that names its licence and source.
+
 ## Make a change, step by step
 
 1. Pick one roadmap step in the README, or an open issue. Comment "I'll take this" so nobody doubles up.

@@ -49,7 +49,7 @@ A CI check refuses such a pull request without it. If you cannot truthfully say 
 
 ## Test-board builder scripts
 
-Scripts that make test boards inside Altium may use Altium's built-in scripting: they only place objects at given coordinates and save the result. They never feed knowledge of the file format into the reader. The reader learns only from the saved files and the numbers each board was made with. Builder scripts live apart from reader code (in a `fixtures/` folder, or outside this repository) and must be our own code, not copies of vendor examples.
+Scripts that make test boards inside Altium may use Altium's built-in scripting: they only place objects at given coordinates and save the result. They never feed knowledge of the file format into the reader. The reader learns only from the saved files and the numbers each board was made with. The same holds for KiCad: scripts that make test boards may use KiCad's own board scripting (pcbnew's Python module) and its command-line exports (for example the VRML export, to measure where KiCad puts a 3D model). We run KiCad only as a program; we never read its source code, and the reader learns only from the saved files and from what those exports show. Builder scripts live apart from reader code (in a `fixtures/` folder, or outside this repository) and must be our own code, not copies of vendor examples.
 
 ## Trademarks
 

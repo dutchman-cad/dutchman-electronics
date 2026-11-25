@@ -81,6 +81,18 @@ pub fn build(path: &Path, bytes: &[u8]) -> Result<Package, String> {
         .ok_or_else(|| "not a board file this module reads".to_string())?;
     let outcome = format.read(bytes).map_err(|e| e.to_string())?;
     let board = outcome.board;
+    // When there is no outline to make a board from, the reader's own words say why (an older
+    // KiCad file, an outline that does not close), so the first Dropped note comes with the
+    // error. Any other failure keeps its own message.
+    let why = if board.outline.outer.segments.is_empty() {
+        outcome
+            .notes
+            .iter()
+            .find(|n| n.severity == Severity::Dropped)
+            .map(|n| n.message.clone())
+    } else {
+        None
+    };
     let name = if board.name.trim().is_empty() {
         path.file_stem()
             .and_then(|s| s.to_str())
@@ -89,7 +101,10 @@ pub fn build(path: &Path, bytes: &[u8]) -> Result<Package, String> {
     } else {
         board.name.clone()
     };
-    let step = board_step::write(&board, &name).map_err(|e| e.to_string())?;
+    let step = board_step::write(&board, &name).map_err(|e| match &why {
+        Some(why) => format!("{e}: {why}"),
+        None => e.to_string(),
+    })?;
 
     let mut notes: Vec<Value> = outcome.notes.iter().map(note).collect();
     let board_notes: Vec<Value> = step.notes.iter().map(note).collect();

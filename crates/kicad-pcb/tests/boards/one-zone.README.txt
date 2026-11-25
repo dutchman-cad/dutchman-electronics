@@ -1,0 +1,10 @@
+Original test board made for Dutchman Electronics. Released under CC0 1.0 (public domain): https://creativecommons.org/publicdomain/zero/1.0/
+
+one-zone: a filled copper zone with a via it keeps clear of.
+
+Made with KiCad 9.0.9 (file version 20241229) by fixtures/kicad/build_boards.py. KiCad shows coordinates in millimetres with Y pointing down; the board's top-left corner is at page position (100, 100), and every number below is relative to that corner (so add 100 to x and y for the page position). The reader gives Y up: model x = 100 + X, model y = -(100 + Y).
+
+- Nets: GND (1), SIG (2).
+- Zone on F.Cu, net GND, outline (5,5), (45,5), (45,25), (5,25); minimum width 0.25, clearance 0.5. KiCad filled it (fill saved in the file).
+- Via at (25,15): diameter 0.8, drill 0.4, net SIG. The fill leaves a round gap around it of radius 0.4 + 0.5 = 0.9, with the gap joined to the outer edge by KiCad's zero-width bridge in the single fill polygon.
+- Area of the zone's outline: 40 x 20 = 800 mm2.

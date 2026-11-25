@@ -129,3 +129,211 @@ fn read_reports_a_file_it_cannot_read() -> Result<(), Box<dyn std::error::Error>
     assert!(!out.exists());
     Ok(())
 }
+
+/// A test board from the KiCad reader's own folder (CC0, numbers in its README.txt).
+#[cfg(feature = "kicad")]
+fn kicad_board(name: &str) -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../kicad-pcb/tests/boards")
+        .join(name)
+}
+
+#[cfg(feature = "kicad")]
+#[test]
+fn info_lists_kicad_beside_altium() -> Result<(), Box<dyn std::error::Error>> {
+    let (ok, v) = run(&["info", "--json"])?;
+    assert!(ok);
+    let ids: Vec<&str> = v["formats"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|f| f["id"].as_str()).collect())
+        .unwrap_or_default();
+    assert!(ids.contains(&"kicad_pcb"), "{ids:?}");
+    assert!(v["extensions"]
+        .as_array()
+        .is_some_and(|a| a.iter().any(|e| e == "kicad_pcb")));
+    Ok(())
+}
+
+#[cfg(feature = "kicad")]
+#[test]
+fn detect_json_picks_the_kicad_reader() -> Result<(), Box<dyn std::error::Error>> {
+    let board = kicad_board("one-resistor.kicad_pcb");
+    let (ok, v) = run(&["detect", &board.to_string_lossy(), "--json"])?;
+    assert!(ok);
+    assert_eq!(v["detection"], "yes");
+    assert_eq!(v["format"], "kicad_pcb");
+    Ok(())
+}
+
+#[cfg(feature = "kicad")]
+#[test]
+fn read_writes_a_parts_package_for_a_kicad_board() -> Result<(), Box<dyn std::error::Error>> {
+    let out = std::env::temp_dir().join(format!("de-read-kicad-{}", std::process::id()));
+    let board = kicad_board("outline-shapes.kicad_pcb");
+    let result = run(&[
+        "read",
+        &board.to_string_lossy(),
+        "--out",
+        &out.to_string_lossy(),
+        "--json",
+    ]);
+    let step = std::fs::read_to_string(out.join("board.step"));
+    let _ = std::fs::remove_dir_all(&out);
+    let (ok, v) = result?;
+    assert!(ok, "{v}");
+    assert_eq!(v["schema"], "dutchman.parts/1");
+    assert_eq!(v["source"]["format"], "kicad_pcb");
+    assert_eq!(v["name"], "outline-shapes");
+    assert!(!step?.is_empty());
+    Ok(())
+}
+
+#[cfg(feature = "kicad")]
+#[test]
+fn read_places_a_kicad_part_with_its_model_note() -> Result<(), Box<dyn std::error::Error>> {
+    let out = std::env::temp_dir().join(format!("de-read-kicad-part-{}", std::process::id()));
+    let board = kicad_board("one-resistor.kicad_pcb");
+    let result = run(&[
+        "read",
+        &board.to_string_lossy(),
+        "--out",
+        &out.to_string_lossy(),
+        "--json",
+    ]);
+    let _ = std::fs::remove_dir_all(&out);
+    let (ok, v) = result?;
+    assert!(ok, "{v}");
+    let notes = v["notes"].to_string();
+    assert!(notes.contains("3D model file"), "{notes}");
+    Ok(())
+}
+
+#[cfg(feature = "kicad")]
+#[test]
+fn read_says_why_an_older_kicad_file_is_refused() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = std::env::temp_dir().join(format!("de-read-old-{}", std::process::id()));
+    std::fs::create_dir_all(&dir)?;
+    let board = dir.join("old.kicad_pcb");
+    std::fs::write(&board, "(kicad_pcb (version 20211014) (generator pcbnew))")?;
+    let result = run(&[
+        "read",
+        &board.to_string_lossy(),
+        "--out",
+        &dir.join("out").to_string_lossy(),
+        "--json",
+    ]);
+    let _ = std::fs::remove_dir_all(&dir);
+    let (ok, v) = result?;
+    assert!(!ok);
+    assert_eq!(v["ok"], false);
+    assert!(v.to_string().contains("older than 9"), "{v}");
+    Ok(())
+}
+
+#[cfg(feature = "kicad")]
+#[test]
+fn every_kicad_test_board_gives_a_package_with_a_board_solid(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let dir = kicad_board("");
+    let mut count = 0;
+    for entry in std::fs::read_dir(&dir)? {
+        let path = entry?.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("kicad_pcb") {
+            continue;
+        }
+        let out = std::env::temp_dir().join(format!(
+            "de-kicad-all-{}-{}",
+            std::process::id(),
+            path.file_stem().and_then(|s| s.to_str()).unwrap_or("x")
+        ));
+        let result = run(&[
+            "read",
+            &path.to_string_lossy(),
+            "--out",
+            &out.to_string_lossy(),
+            "--json",
+        ]);
+        let solid = out.join("board.step").is_file();
+        let _ = std::fs::remove_dir_all(&out);
+        let (ok, v) = result?;
+        assert!(ok && solid, "{}: {v}", path.display());
+        assert_eq!(v["source"]["format"], "kicad_pcb");
+        count += 1;
+    }
+    assert!(count >= 9);
+    Ok(())
+}
+
+#[cfg(feature = "kicad")]
+#[test]
+fn read_survives_absurd_numbers_in_a_kicad_board() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = std::env::temp_dir().join(format!("de-read-absurd-{}", std::process::id()));
+    std::fs::create_dir_all(&dir)?;
+    let board = dir.join("big.kicad_pcb");
+    std::fs::write(
+        &board,
+        "(kicad_pcb (version 20241229) (generator \"pcbnew\") (general (thickness 1.6))\n\
+         (layers (0 \"F.Cu\" signal) (2 \"B.Cu\" signal) (5 \"F.SilkS\" user) (25 \"Edge.Cuts\" user))\n\
+         (gr_rect (start 0 0) (end 50 30) (layer \"Edge.Cuts\") (stroke (width 0.1) (type default)))\n\
+         (gr_rect (start 5 5) (end 1e300 1e300) (layer \"Edge.Cuts\") (stroke (width 0.1) (type default)))\n\
+         (via (at 10 10) (size 1e300) (drill 1e300) (layers \"F.Cu\" \"B.Cu\"))\n\
+         (via (at 1e300 1e300) (size 0.8) (drill 0.4) (layers \"F.Cu\" \"B.Cu\"))\n\
+         (segment (start 1 1) (end 2 2) (width 1e300) (layer \"F.Cu\"))\n\
+         (gr_text \"HI\" (at 10 10) (layer \"F.SilkS\") (effects (font (size 1e300 1e300) (thickness 1e300))))\n\
+         (gr_circle (center 20 20) (end 1e300 20) (layer \"F.SilkS\") (stroke (width 0.1) (type default))))",
+    )?;
+    let out = dir.join("out");
+    let result = run(&[
+        "read",
+        &board.to_string_lossy(),
+        "--out",
+        &out.to_string_lossy(),
+        "--json",
+    ]);
+    let step = std::fs::read_to_string(out.join("board.step"));
+    let manifest = std::fs::read_to_string(out.join("manifest.json"));
+    let _ = std::fs::remove_dir_all(&dir);
+    let (ok, v) = result?;
+    assert!(ok, "{v}");
+    let step = step?.to_ascii_lowercase();
+    assert!(
+        !step.contains("inf")
+            && !step.contains("nan")
+            && !step.contains("e+3")
+            && !step.contains("e300")
+    );
+    let manifest = manifest?.to_ascii_lowercase();
+    assert!(!manifest.contains("inf\"") && !manifest.contains("nan"));
+    assert!(v["notes"].to_string().contains("beyond 100 m"), "{v}");
+    Ok(())
+}
+
+#[cfg(feature = "kicad")]
+#[test]
+fn an_unrelated_dropped_note_is_not_added_to_another_failure(
+) -> Result<(), Box<dyn std::error::Error>> {
+    // The outline is there but flat, so the board cannot be made for that reason; the reader's
+    // note about the dimension has nothing to do with it and must not be tacked on.
+    let dir = std::env::temp_dir().join(format!("de-read-flat-{}", std::process::id()));
+    std::fs::create_dir_all(&dir)?;
+    let board = dir.join("flat.kicad_pcb");
+    std::fs::write(
+        &board,
+        "(kicad_pcb (version 20241229) (generator \"pcbnew\") (general (thickness 1.6))\n\
+         (layers (0 \"F.Cu\" signal) (2 \"B.Cu\" signal) (25 \"Edge.Cuts\" user))\n\
+         (dimension (type aligned))\n\
+         (gr_rect (start 0 0) (end 0 5) (layer \"Edge.Cuts\") (stroke (width 0.1) (type default))))",
+    )?;
+    let result = run(&[
+        "read",
+        &board.to_string_lossy(),
+        "--out",
+        &dir.join("out").to_string_lossy(),
+        "--json",
+    ]);
+    let _ = std::fs::remove_dir_all(&dir);
+    let (ok, v) = result?;
+    assert!(!ok, "{v}");
+    assert!(!v.to_string().contains("dimension"), "{v}");
+    Ok(())
+}

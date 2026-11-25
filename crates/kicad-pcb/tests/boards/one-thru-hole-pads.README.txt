@@ -1,0 +1,11 @@
+Original test board made for Dutchman Electronics. Released under CC0 1.0 (public domain): https://creativecommons.org/publicdomain/zero/1.0/
+
+one-thru-hole-pads: three holes in one footprint.
+
+Made with KiCad 9.0.9 (file version 20241229) by fixtures/kicad/build_boards.py. KiCad shows coordinates in millimetres with Y pointing down; the board's top-left corner is at page position (100, 100), and every number below is relative to that corner (so add 100 to x and y for the page position). The reader gives Y up: model x = 100 + X, model y = -(100 + Y).
+
+- Footprint test:Header, designator J1, on F.Cu at (25,15).
+- Pad "1": plated round, 1.8 mm, drill 1.0, at (20,15).
+- Pad "2": plated oval, 2.0 x 1.4, drill 0.8, at (25,15).
+- A pad with no number: unplated round, 2.0 mm, drill 2.0, at (30,15).
+- All three have copper on every copper layer (KiCad's *.Cu).
