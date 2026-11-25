@@ -1,9 +1,13 @@
 //! The colours the parts package gives its overlays and parts, in one place.
 //!
-//! The board model carries no colours yet, so these are module defaults, written into the
-//! manifest as `"color": "#rrggbb"` (lowercase sRGB). When a board file can say what its mask or
-//! silkscreen looks like, the file's colour replaces the matching constant here and nowhere else.
-//! Component parts get no colour: their own STEP models carry theirs.
+//! The board file's own colours win: the solder mask and silkscreen colours of each side, the
+//! surface finish of each side (which sets the colour of the bare pads, and of the plating from
+//! the top finish) and the colour and opacity of an extruded component body. They are written
+//! into the manifest as `"color": "#rrggbb"` (lowercase sRGB). Where the file says nothing, the
+//! constants below are the fallback: a dark green mask, an off-white silkscreen, gold pads.
+//! Components with an embedded STEP model get no colour: the model carries its own.
+
+use board_model::{Color, SurfaceFinish};
 
 /// Solder mask: a dark green.
 pub const MASK_COLOR: &str = "#1f5f3a";
@@ -13,6 +17,10 @@ pub const MASK_OPACITY: f64 = 0.85;
 pub const COPPER_MASKED_COLOR: &str = "#2b6e43";
 /// Bare pad copper: gold, as on an ENIG finish.
 pub const COPPER_BARE_COLOR: &str = "#d4af37";
+/// Pads under a tin, solder or silver finish (HASL, immersion tin or silver): a light silver.
+pub const SILVER_COLOR: &str = "#c9ccd1";
+/// Pads under no finish (OSP, bare copper): copper.
+pub const COPPER_COLOR: &str = "#b87333";
 /// Silkscreen ink: off-white.
 pub const SILKSCREEN_COLOR: &str = "#f2f2f2";
 /// The Board part, the FR4 substrate seen at the board edge: a pale tan.
@@ -42,6 +50,21 @@ pub const GOLD_FINISH: Finish = Finish {
     metallic: 0.0,
     roughness: 0.45,
 };
+/// Silver pads (HASL, immersion tin or silver): a little smoother than gold.
+pub const SILVER_FINISH: Finish = Finish {
+    metallic: 0.0,
+    roughness: 0.4,
+};
+/// Bare copper pads (OSP, no finish).
+pub const COPPER_FINISH: Finish = Finish {
+    metallic: 0.0,
+    roughness: 0.5,
+};
+/// Extruded component bodies the file gives a colour to: a moulded plastic.
+pub const BODY_FINISH: Finish = Finish {
+    metallic: 0.0,
+    roughness: 0.6,
+};
 /// Silkscreen ink: matte.
 pub const SILKSCREEN_FINISH: Finish = Finish {
     metallic: 0.0,
@@ -53,9 +76,140 @@ pub const BOARD_FINISH: Finish = Finish {
     roughness: 0.9,
 };
 
+/// A colour as lowercase `#rrggbb`.
+pub fn hex(c: &Color) -> String {
+    format!("#{:02x}{:02x}{:02x}", c.r, c.g, c.b)
+}
+
+/// Per-channel gains that turn a mask colour into the copper seen through it. Red gains most and
+/// blue least, so the copper reads lighter and warmer than the mask. They are chosen so the
+/// default mask `#1f5f3a` gives exactly [`COPPER_MASKED_COLOR`], `#2b6e43`.
+const MASKED_COPPER_GAIN: [f64; 3] = [1.39, 1.158, 1.155];
+
+/// The colour of copper under a solder mask of colour `mask`: each channel is multiplied by
+/// [`MASKED_COPPER_GAIN`] (red 1.39, green 1.158, blue 1.155), rounded and capped at 255. For the
+/// default mask `#1f5f3a` that is `#2b6e43`.
+pub fn masked_copper(mask: &Color) -> String {
+    let lift = |c: u8, gain: f64| {
+        let v = (f64::from(c) * gain).round().clamp(0.0, 255.0);
+        // The value is within 0..=255, so the cast cannot truncate.
+        v as u8
+    };
+    let [gr, gg, gb] = MASKED_COPPER_GAIN;
+    hex(&Color {
+        r: lift(mask.r, gr),
+        g: lift(mask.g, gg),
+        b: lift(mask.b, gb),
+        opacity: 1.0,
+    })
+}
+
+/// What the bare pads of one side look like: colour and finish.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PadLook {
+    pub color: &'static str,
+    pub finish: Finish,
+}
+
+const GOLD_LOOK: PadLook = PadLook {
+    color: COPPER_BARE_COLOR,
+    finish: GOLD_FINISH,
+};
+
+/// The pad look for a surface finish process, and whether the process was one we know. ENIG,
+/// ENEPIG and immersion gold are gold; HASL (also lead-free), immersion tin and immersion silver
+/// are silver; OSP and bare copper are copper. Anything else, and no finish at all, is gold; only
+/// a named process we do not know is reported (`false`).
+pub fn pad_look(finish: Option<&SurfaceFinish>) -> (PadLook, bool) {
+    let Some(f) = finish else {
+        return (GOLD_LOOK, true);
+    };
+    let key: String = f
+        .process
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .map(|c| c.to_ascii_lowercase())
+        .collect();
+    let has = |words: &[&str]| words.iter().any(|w| key.contains(w));
+    if has(&["enig", "enepig", "immersiongold"]) {
+        (GOLD_LOOK, true)
+    } else if has(&["hasl", "immersiontin", "immersionsilver"]) {
+        let silver = PadLook {
+            color: SILVER_COLOR,
+            finish: SILVER_FINISH,
+        };
+        (silver, true)
+    } else if key == "osp" || key == "bare" || key == "barecopper" {
+        let copper = PadLook {
+            color: COPPER_COLOR,
+            finish: COPPER_FINISH,
+        };
+        (copper, true)
+    } else {
+        (GOLD_LOOK, false)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn rgb(r: u8, g: u8, b: u8) -> Color {
+        Color {
+            r,
+            g,
+            b,
+            opacity: 1.0,
+        }
+    }
+
+    fn finish(process: &str) -> SurfaceFinish {
+        SurfaceFinish {
+            process: process.into(),
+            material: String::new(),
+            color: None,
+            thickness: None,
+        }
+    }
+
+    #[test]
+    fn the_default_mask_gives_the_default_masked_copper() {
+        assert_eq!(hex(&rgb(0x1f, 0x5f, 0x3a)), MASK_COLOR);
+        assert_eq!(masked_copper(&rgb(0x1f, 0x5f, 0x3a)), COPPER_MASKED_COLOR);
+    }
+
+    #[test]
+    fn masked_copper_is_lighter_and_warmer_and_capped() {
+        // Blue mask 17, 85, 204 gives 23.63, 98.43, 235.62.
+        assert_eq!(masked_copper(&rgb(17, 85, 204)), "#1862ec");
+        assert_eq!(masked_copper(&rgb(255, 255, 255)), "#ffffff");
+        assert_eq!(masked_copper(&rgb(0, 0, 0)), "#000000");
+    }
+
+    #[test]
+    fn the_finish_process_picks_the_pad_look() {
+        let cases: [(&[&str], &str, f64); 3] = [
+            (&["ENIG", "ENEPIG", "Immersion Gold", "enig"], "#d4af37", 0.45),
+            (
+                &["HASL", "Lead-Free HASL", "LF HASL", "Immersion Tin", "Immersion Silver"],
+                "#c9ccd1",
+                0.4,
+            ),
+            (&["OSP", "Bare", "bare copper"], "#b87333", 0.5),
+        ];
+        for (processes, color, roughness) in cases {
+            for p in processes {
+                let (look, known) = pad_look(Some(&finish(p)));
+                assert_eq!(look.color, color, "{p}");
+                assert_eq!(look.finish.roughness, roughness, "{p}");
+                assert_eq!(look.finish.metallic, 0.0, "{p}");
+                assert!(known, "{p}");
+            }
+        }
+        let (look, known) = pad_look(Some(&finish("Hard Gold Flash")));
+        assert_eq!((look.color, known), ("#d4af37", false));
+        assert_eq!(pad_look(None), (GOLD_LOOK, true));
+    }
 
     #[test]
     fn every_colour_is_a_lowercase_hex_triplet() {
@@ -63,6 +217,8 @@ mod tests {
             MASK_COLOR,
             COPPER_MASKED_COLOR,
             COPPER_BARE_COLOR,
+            SILVER_COLOR,
+            COPPER_COLOR,
             SILKSCREEN_COLOR,
             BOARD_COLOR,
             PLATING_COLOR,
@@ -77,7 +233,15 @@ mod tests {
             );
         }
         const { assert!(MASK_OPACITY > 0.0 && MASK_OPACITY <= 1.0) };
-        for f in [MASK_FINISH, GOLD_FINISH, SILKSCREEN_FINISH, BOARD_FINISH] {
+        for f in [
+            MASK_FINISH,
+            GOLD_FINISH,
+            SILVER_FINISH,
+            COPPER_FINISH,
+            BODY_FINISH,
+            SILKSCREEN_FINISH,
+            BOARD_FINISH,
+        ] {
             assert!((0.0..=1.0).contains(&f.metallic), "{f:?}");
             assert!((0.0..=1.0).contains(&f.roughness), "{f:?}");
         }

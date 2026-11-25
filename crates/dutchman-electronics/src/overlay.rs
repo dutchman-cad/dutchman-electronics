@@ -24,7 +24,7 @@ use geo::{BooleanOps, Coord, LineString, MultiPolygon, Polygon};
 use serde_json::{json, Value};
 
 use crate::colors::{
-    Finish, COPPER_BARE_COLOR, COPPER_MASKED_COLOR, GOLD_FINISH, MASK_COLOR, MASK_FINISH,
+    hex, masked_copper, pad_look, Finish, COPPER_MASKED_COLOR, MASK_COLOR, MASK_FINISH,
     MASK_OPACITY, SILKSCREEN_COLOR, SILKSCREEN_FINISH,
 };
 
@@ -499,7 +499,7 @@ struct Built {
     /// How far the areas are extruded from `z`, away from the board; `None` for a flat sheet.
     thickness: Option<f64>,
     shape: MultiPolygon,
-    color: &'static str,
+    color: String,
     finish_look: Finish,
     opacity: Option<f64>,
 }
@@ -824,6 +824,28 @@ fn overlays_within(
             // The top side stacks up from the face at z = thickness, the bottom down from z = 0.
             let base = if sign > 0.0 { thickness } else { 0.0 };
             let at = |lift: f64| base + sign * lift;
+            // The file's colours for this side, or the defaults.
+            let (mask_file, silk_file, finish_file) = if sign > 0.0 {
+                (
+                    &board.appearance.top_solder_mask,
+                    &board.appearance.top_silkscreen,
+                    &board.appearance.top_finish,
+                )
+            } else {
+                (
+                    &board.appearance.bottom_solder_mask,
+                    &board.appearance.bottom_silkscreen,
+                    &board.appearance.bottom_finish,
+                )
+            };
+            let mask_color = mask_file.as_ref().map_or(MASK_COLOR.to_string(), hex);
+            let copper_color = mask_file
+                .as_ref()
+                .map_or(COPPER_MASKED_COLOR.to_string(), masked_copper);
+            let silk_color = silk_file
+                .as_ref()
+                .map_or(SILKSCREEN_COLOR.to_string(), hex);
+            let (pads, _) = pad_look(finish_file.as_ref());
             let (bare_all, masked_all) = (f.bare.union(), f.masked.union());
             let bare = bare_all.difference(&drilled);
             let masked = masked_all.difference(&drilled).difference(&bare);
@@ -842,7 +864,7 @@ fn overlays_within(
                  flat_lift,
                  height,
                  shape,
-                 (color, finish_look): (&'static str, Finish)| Built {
+                 (color, finish_look): (String, Finish)| Built {
                     name,
                     kind,
                     finish,
@@ -869,7 +891,7 @@ fn overlays_within(
                 FLAT_MASKED_COPPER_LIFT,
                 COPPER_THICKNESS,
                 masked,
-                (COPPER_MASKED_COLOR, MASK_FINISH),
+                (copper_color, MASK_FINISH),
             ));
             built.push(plain(
                 format!("Copper {side} pads"),
@@ -879,7 +901,7 @@ fn overlays_within(
                 FLAT_PADS_LIFT,
                 COPPER_THICKNESS,
                 bare,
-                (COPPER_BARE_COLOR, GOLD_FINISH),
+                (pads.color.to_string(), pads.finish),
             ));
             built.push(plain(
                 format!("Silkscreen {side}"),
@@ -889,7 +911,7 @@ fn overlays_within(
                 FLAT_SILK_LIFT,
                 SILK_THICKNESS,
                 silk,
-                (SILKSCREEN_COLOR, SILKSCREEN_FINISH),
+                (silk_color, SILKSCREEN_FINISH),
             ));
             if let Some(mask) = mask {
                 built.push(Built {
@@ -902,7 +924,7 @@ fn overlays_within(
                         FLAT_MASK_LIFT,
                         MASK_THICKNESS,
                         mask,
-                        (MASK_COLOR, MASK_FINISH),
+                        (mask_color, MASK_FINISH),
                     )
                 });
             }

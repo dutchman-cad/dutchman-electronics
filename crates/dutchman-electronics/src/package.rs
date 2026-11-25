@@ -19,7 +19,7 @@ use board_model::{
 };
 use serde_json::{json, Value};
 
-use crate::colors::{BOARD_COLOR, BOARD_FINISH, GOLD_FINISH, PLATING_COLOR};
+use crate::colors::{hex, pad_look, BODY_FINISH, BOARD_COLOR, BOARD_FINISH};
 
 /// Schema of the package manifest.
 pub const PARTS_SCHEMA: &str = "dutchman.parts/1";
@@ -121,15 +121,18 @@ pub fn build(path: &Path, bytes: &[u8]) -> Result<Package, String> {
     notes.extend(placed.notes);
     let plated = plating(&board, &step.holes, step.thickness);
     notes.extend(plated.notes);
+    // The plating takes the top finish; a process we do not know is named once, in a note.
+    let (plating_look, _) = pad_look(board.appearance.top_finish.as_ref());
+    notes.extend(finish_notes(&board));
     if let Some(text) = plated.text {
         models.push(json!({ "id": PLATING_MODEL, "file": PLATING_FILE }));
         parts.push(json!({
             "name": PLATING_PART,
             "model": PLATING_MODEL,
             "transform": IDENTITY,
-            "color": PLATING_COLOR,
-            "metallic": GOLD_FINISH.metallic,
-            "roughness": GOLD_FINISH.roughness,
+            "color": plating_look.color,
+            "metallic": plating_look.finish.metallic,
+            "roughness": plating_look.finish.roughness,
             "notes": [],
         }));
         files.push((PLATING_FILE.to_string(), text.into_bytes()));
@@ -148,6 +151,31 @@ pub fn build(path: &Path, bytes: &[u8]) -> Result<Package, String> {
         "notes": notes,
     });
     Ok(Package { manifest, files })
+}
+
+/// An Info note for each surface finish process we do not know, whose pads are drawn gold.
+fn finish_notes(board: &Board) -> Vec<Value> {
+    let mut unknown: Vec<&str> = Vec::new();
+    for f in [&board.appearance.top_finish, &board.appearance.bottom_finish]
+        .into_iter()
+        .flatten()
+    {
+        if !pad_look(Some(f)).1 && !unknown.contains(&f.process.as_str()) {
+            unknown.push(f.process.as_str());
+        }
+    }
+    unknown
+        .into_iter()
+        .map(|process| {
+            json!({
+                "severity": "Info",
+                "message": format!(
+                    "the surface finish process \"{process}\" is not one we know, so the bare \
+                     pads and the plating are drawn gold"
+                ),
+            })
+        })
+        .collect()
 }
 
 /// The plating's STEP file (when there is any) and the notes on it.
@@ -413,12 +441,20 @@ fn components(list: &[Placement], embedded: &[EmbeddedModel], thickness: f64) ->
                             that turn yet",
             }));
         }
-        placed.parts.push(json!({
+        let mut part = json!({
             "name": name,
             "model": id,
             "transform": compose(&part_frame(p, thickness), &on_part),
             "notes": part_notes,
-        }));
+        });
+        // An extruded body the file colours; an embedded STEP model keeps its own colours.
+        if let (Some(color), Some(map)) = (&model.color, part.as_object_mut()) {
+            map.insert("color".into(), json!(hex(color)));
+            map.insert("opacity".into(), json!(color.opacity));
+            map.insert("metallic".into(), json!(BODY_FINISH.metallic));
+            map.insert("roughness".into(), json!(BODY_FINISH.roughness));
+        }
+        placed.parts.push(part);
     }
     for (list, what) in [
         (
@@ -1140,6 +1176,90 @@ mod tests {
         // Components carry no colour.
         let resistor = package_of("one-resistor");
         assert!(part_named(&resistor.manifest, "R1").get("color").is_none());
+    }
+
+    #[cfg(feature = "altium")]
+    #[test]
+    fn the_files_mask_and_silkscreen_colours_win() {
+        // README.txt, sixteenth batch: mask 17, 85, 204 and silkscreen 255, 255, 0 on both sides.
+        let blue = package_of("one-blue-mask-resistor");
+        for side in ["top", "bottom"] {
+            let mask = overlay_named(&blue.manifest, "blue", &format!("Solder mask {side}"));
+            assert_eq!(mask["color"], "#1155cc");
+            assert_eq!(mask["opacity"], 0.85);
+        }
+        // Those two boards have no track and no silkscreen line, so the copper under the mask
+        // and the silkscreen are drawn from the same boards with one-track's copper and
+        // one-overlay-line's line put on them.
+        let read = |name: &str| {
+            let path = format!(
+                "{}/../altium-pcbdoc/tests/boards/{name}.PcbDoc",
+                env!("CARGO_MANIFEST_DIR")
+            );
+            let bytes = std::fs::read(path).unwrap();
+            let format = crate::detect(&bytes, Some("PcbDoc")).unwrap();
+            format.read(&bytes).unwrap().board
+        };
+        let track = read("one-track");
+        let line = read("one-overlay-line");
+        assert!(!track.copper.is_empty() && !line.graphics.is_empty());
+        let mut blue_board = read("one-blue-mask-resistor");
+        blue_board.copper = track.copper.clone();
+        let (overlays, _) = crate::overlay::overlays(&blue_board, 1.6, BOARD_PART);
+        let find = |list: &[Value], name: &str| {
+            list.iter()
+                .find(|o| o["name"] == name)
+                .unwrap_or_else(|| panic!("no {name}"))
+                .clone()
+        };
+        // The copper under the mask follows the mask, a little lighter and warmer.
+        assert_eq!(find(&overlays, "Copper top")["color"], "#1862ec");
+        let mut yellow_board = read("one-yellow-silkscreen-resistor");
+        yellow_board.graphics = line.graphics.clone();
+        let (overlays, _) = crate::overlay::overlays(&yellow_board, 1.6, BOARD_PART);
+        assert_eq!(find(&overlays, "Silkscreen top")["color"], "#ffff00");
+        // Silkscreen colours stay at the file's other values on the blue board's side.
+        blue_board.graphics = line.graphics;
+        let (overlays, _) = crate::overlay::overlays(&blue_board, 1.6, BOARD_PART);
+        assert_eq!(find(&overlays, "Silkscreen top")["color"], "#fafafa");
+    }
+
+    #[cfg(feature = "altium")]
+    #[test]
+    fn the_finish_process_colours_the_bare_pads() {
+        // README.txt, seventeenth batch: ENIG on the one board, HASL on the other. The top side
+        // of one-resistor holds its two SMD pads; the bottom has none to draw.
+        let enig = package_of("one-enig-resistor");
+        let hasl = package_of("one-hasl-resistor");
+        let gold = overlay_named(&enig.manifest, "enig", "Copper top pads");
+        assert_eq!(gold["color"], "#d4af37");
+        assert_eq!(gold["roughness"], 0.45);
+        assert_eq!(gold["metallic"], 0.0);
+        let silver = overlay_named(&hasl.manifest, "hasl", "Copper top pads");
+        assert_eq!(silver["color"], "#c9ccd1");
+        assert_eq!(silver["roughness"], 0.4);
+        assert_eq!(silver["metallic"], 0.0);
+        let notes = hasl.manifest["notes"].as_array().unwrap();
+        assert!(notes.iter().all(|n| !n["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("surface finish")));
+    }
+
+    #[cfg(feature = "altium")]
+    #[test]
+    fn a_coloured_extruded_body_gives_its_part_colour_and_opacity() {
+        // README.txt: R1's body is 32, 128, 224 at opacity 0.5.
+        let package = package_of("one-colored-body-resistor");
+        let r1 = part_named(&package.manifest, "R1");
+        assert_eq!(r1["color"], "#2080e0");
+        assert_eq!(r1["opacity"], 0.5);
+        assert_eq!(r1["metallic"], 0.0);
+        assert_eq!(r1["roughness"], 0.6);
+        // An embedded STEP model keeps its own colours.
+        let step = package_of("one-step-resistor");
+        assert!(part_named(&step.manifest, "R1").get("color").is_none());
+        assert!(part_named(&step.manifest, "R1").get("opacity").is_none());
     }
 
     /// The radius of each cylinder in a STEP text, in mm.
