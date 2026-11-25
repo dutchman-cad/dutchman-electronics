@@ -711,3 +711,51 @@ fn too_many_tubes_are_refused() {
         Err(StepError::TooLarge(_))
     ));
 }
+
+#[test]
+fn arc_ends_sit_on_their_circle_when_the_input_is_one_altium_step_off() {
+    // One Altium coordinate step: 1e-4 mil in mm.
+    let step = 2.54e-6;
+    // A 40 x 20 slot whose line ends are a step off the circles of the half-round ends.
+    let outer = Contour {
+        segments: vec![
+            Segment::Line {
+                from: p(10.0, 0.0),
+                to: p(30.0, -step),
+            },
+            Segment::Arc {
+                center: p(30.0, 10.0),
+                radius: 10.0,
+                start_deg: -90.0,
+                end_deg: 90.0,
+                clockwise: false,
+            },
+            Segment::Line {
+                from: p(30.0 + step, 20.0),
+                to: p(10.0, 20.0 + step),
+            },
+            Segment::Arc {
+                center: p(10.0, 10.0),
+                radius: 10.0,
+                start_deg: 90.0,
+                end_deg: 270.0,
+                clockwise: false,
+            },
+        ],
+    };
+    let edges = contour_edges(&outer).unwrap();
+    for e in &edges {
+        if let Kind2::Arc { center, radius, .. } = e.kind {
+            for v in [e.start, e.end] {
+                let off = (distance(center, v) - radius).abs();
+                assert!(off < 1e-9, "{off}");
+            }
+        }
+    }
+    for i in 0..edges.len() {
+        let prev = edges[(i + edges.len() - 1) % edges.len()];
+        assert_eq!(prev.end, edges[i].start);
+    }
+    let out = write(&board(outer, vec![], vec![]), "slot").unwrap();
+    check_topology(&out.text);
+}
