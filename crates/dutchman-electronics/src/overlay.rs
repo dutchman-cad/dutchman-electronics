@@ -305,6 +305,103 @@ fn contour(c: &Contour) -> Option<Polygon> {
     polygon(ring)
 }
 
+/// Like [`contour`], but the polygon always covers the true region the contour encloses: every
+/// arc bulging out of the region is drawn as its circumscribed polygon, every arc cutting into it
+/// as its inscribed one (the existing chords).
+///
+/// The solder mask face needs this. The board body is exact (true arcs), so a face drawn with
+/// inscribed chords falls short of a convex corner by up to [`CHORD`] and a hairline of the body
+/// shows outside the mask; for a cutout, the cut polygon must hold the whole true hole, or the
+/// mask would cover its rim.
+///
+/// The circumscribed polygon of an arc of step angle `d` (the angle one chord spans) touches the
+/// arc at the chord points `k * d` (both ends included, so it joins its neighbours exactly) and
+/// has its corners where two neighbouring tangents meet: at the middle angles `(k + 1/2) * d`, at
+/// radius `r / cos(d / 2)`. Each edge lies on a tangent of the circle, so the polygon holds the
+/// arc and strays at most `r * (1 / cos(d / 2) - 1)` from it. [`arc_points`] draws with
+/// `d <= 360 / MIN_CIRCLE_SIDES` = 11.25 degrees (and, once a chord sags less than [`CHORD`],
+/// `r * (1 - cos(d / 2)) <= CHORD`), so the stray is `<= CHORD / cos(5.625 deg)` < 1.005 * [`CHORD`]:
+/// 0.0201 mm.
+fn contour_covering(c: &Contour) -> Option<Polygon> {
+    // A contour with a bad radius is not drawn at all.
+    contour(c)?;
+    // `contour` returns its ring counter-clockwise whatever the contour's own winding, so measure
+    // the contour's own turn, on its chord points, to know which side of each arc the region is.
+    let mut own = Vec::new();
+    for segment in &c.segments {
+        match *segment {
+            Segment::Line { from, .. } => own.push(coord(from)),
+            Segment::Arc {
+                center,
+                radius,
+                start_deg,
+                ..
+            } => arc_points(
+                center,
+                radius,
+                start_deg,
+                segment.sweep_deg().unwrap_or(360.0),
+                &mut own,
+            ),
+        }
+    }
+    let own_ccw = own
+        .iter()
+        .zip(own.iter().cycle().skip(1))
+        .map(|(a, b)| a.x * b.y - b.x * a.y)
+        .sum::<f64>()
+        >= 0.0;
+    let mut ring = Vec::new();
+    for segment in &c.segments {
+        match *segment {
+            Segment::Line { from, .. } => ring.push(coord(from)),
+            Segment::Arc {
+                center,
+                radius,
+                start_deg,
+                ..
+            } => {
+                let sweep_deg = segment.sweep_deg().unwrap_or(360.0);
+                // The centre is on the left of travel for a counter-clockwise arc, which is the
+                // region's side when the contour winds counter-clockwise.
+                if (sweep_deg > 0.0) == own_ccw {
+                    arc_points_covering(center, radius, start_deg, sweep_deg, &mut ring);
+                } else {
+                    arc_points(center, radius, start_deg, sweep_deg, &mut ring);
+                }
+            }
+        }
+    }
+    polygon(ring)
+}
+
+/// The circumscribed counterpart of [`arc_points`]: same number of steps, see [`contour_covering`].
+fn arc_points_covering(
+    center: Point,
+    radius: f64,
+    start_deg: f64,
+    sweep_deg: f64,
+    out: &mut Vec<Coord>,
+) {
+    let mut exact = Vec::new();
+    arc_points(center, radius, start_deg, sweep_deg, &mut exact);
+    let (Some(&first), Some(&last)) = (exact.first(), exact.last()) else {
+        return;
+    };
+    let steps = exact.len() - 1;
+    let d = sweep_deg / steps as f64;
+    let reach = radius / (d.to_radians() / 2.0).cos();
+    out.push(first);
+    for k in 0..steps {
+        let a = (start_deg + d * (k as f64 + 0.5)).to_radians();
+        out.push(Coord {
+            x: center.x + reach * a.cos(),
+            y: center.y + reach * a.sin(),
+        });
+    }
+    out.push(last);
+}
+
 /// What went wrong drawing the holes of copper regions, for the notes.
 #[derive(Default)]
 struct HoleCounts {
@@ -527,11 +624,11 @@ struct Built {
 /// gathered (united when the mask is cut; at most [`MAX_ITEMS`]), how many cutouts could not be
 /// drawn, and how many were past the cap.
 fn mask_outline(board: &Board) -> (Option<MultiPolygon>, Pile, usize, usize) {
-    let outer = contour(&board.outline.outer);
+    let outer = contour_covering(&board.outline.outer);
     let mut bad = 0usize;
     let mut cuts = Pile::default();
     for c in board.outline.cutouts.iter().take(MAX_ITEMS) {
-        cuts.add(contour(c), &mut bad);
+        cuts.add(contour_covering(c), &mut bad);
     }
     let outline = outer.map(|p| MultiPolygon::new(vec![p]));
     let over = board.outline.cutouts.len().saturating_sub(MAX_ITEMS);
