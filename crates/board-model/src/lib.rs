@@ -282,8 +282,15 @@ pub enum ModelSource {
     /// Stored inside the board file itself: the `id` of one of [`ReadOutcome::models`], which
     /// holds the unpacked file. Parts that use the same model share one id.
     Embedded { id: String },
-    /// A file name the board refers to; the user's library may or may not have it.
-    External { file: String },
+    /// A model file the board links to but does not hold; the user's library may or may not have
+    /// it. `file` is the bare file name: Altium keeps no folder for a linked model.
+    External {
+        file: String,
+        /// The board's checksum of the file it was linked to, when it gives one. It tells the
+        /// right file from another of the same name; [`InputFormat::model_checksum`] computes it
+        /// for a file.
+        checksum: Option<u32>,
+    },
     /// No file: a prism made by extruding a flat outline, in component coordinates (mm, the
     /// component's origin at (0, 0), not rotated), from `standoff` above the board face the
     /// component sits on up to `height`. Altium calls this an extruded 3D body.
@@ -494,6 +501,11 @@ pub trait InputFormat {
     fn detect(&self, head: &[u8], extension: Option<&str>) -> Detection;
     /// Reads the whole file into the neutral model.
     fn read(&self, bytes: &[u8]) -> Result<ReadOutcome, ReadError>;
+    /// This format's checksum of a model file, to compare with a linked model's
+    /// [`ModelSource::External`] `checksum`. `None` for a format that keeps none.
+    fn model_checksum(&self, _file: &[u8]) -> Option<u32> {
+        None
+    }
 }
 
 #[cfg(test)]

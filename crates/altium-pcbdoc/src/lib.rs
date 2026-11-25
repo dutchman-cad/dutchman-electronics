@@ -24,6 +24,9 @@ mod shape_based;
 pub mod special_strings;
 mod texts;
 
+/// Altium's checksum of a model file (also [`InputFormat::model_checksum`]).
+pub use models::checksum as model_checksum;
+
 use board_model::{
     Board, Detection, InputFormat, Note, ReadError, ReadOutcome, Severity, MAX_INPUT_BYTES,
 };
@@ -115,6 +118,10 @@ impl InputFormat for Altium {
         }
     }
 
+    fn model_checksum(&self, file: &[u8]) -> Option<u32> {
+        Some(models::checksum(file))
+    }
+
     fn read(&self, bytes: &[u8]) -> Result<ReadOutcome, ReadError> {
         let streams = list_streams(bytes)?;
         let mut container = cfb::CompoundFile::open(Cursor::new(bytes))
@@ -132,6 +139,7 @@ impl InputFormat for Altium {
         let fills6 = read_stream(&mut container, "/Fills6/Data")?;
         let bodies6 = read_stream(&mut container, "/ComponentBodies6/Data")?;
         let models6 = read_stream(&mut container, "/Models/Data")?;
+        let linked6 = read_stream(&mut container, "/ModelsNoEmbed/Data")?;
 
         let mut notes = Vec::new();
         // The shape-based streams repeat these two, with arcs where an outline has them (see
@@ -190,8 +198,14 @@ impl InputFormat for Altium {
         };
         let mut embedded = Vec::new();
         if let Some(data) = &bodies6 {
-            let stored = models::attach(data, models6.as_deref(), &mut components, &mut notes)
-                .map_err(ReadError::Invalid)?;
+            let stored = models::attach(
+                data,
+                models6.as_deref(),
+                linked6.as_deref(),
+                &mut components,
+                &mut notes,
+            )
+            .map_err(ReadError::Invalid)?;
             embedded = models::unpack(
                 &mut components.placements,
                 &stored,

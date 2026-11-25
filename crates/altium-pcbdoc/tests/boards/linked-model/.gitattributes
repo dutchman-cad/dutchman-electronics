@@ -1,0 +1,2 @@
+# box-1608.step must keep its exact bytes: the board stores a checksum of them.
+*.step -text

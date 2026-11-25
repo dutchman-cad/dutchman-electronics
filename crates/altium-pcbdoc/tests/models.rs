@@ -2,7 +2,7 @@
 //! tests/boards/README.txt (to 0.001 mm, as AGENTS.md asks).
 
 use altium_pcbdoc::Altium;
-use board_model::{Color, InputFormat, ModelRef, ModelSource, ReadOutcome, Segment};
+use board_model::{Color, InputFormat, ModelRef, ModelSource, ReadOutcome, Segment, Severity};
 
 const TOLERANCE: f64 = 0.001;
 
@@ -115,6 +115,49 @@ fn one_step_resistor_has_its_embedded_step_box() -> Result<(), Box<dyn std::erro
         "{:?}",
         model.rotation_deg
     );
+    Ok(())
+}
+
+/// `linked-model/`: R1's body links to `box-1608.step` next to the board instead of holding it
+/// (tests/boards/linked-model/README.txt).
+#[test]
+fn one_linked_step_resistor_names_its_file_and_checksum() -> Result<(), Box<dyn std::error::Error>>
+{
+    let out = read("linked-model/one-linked-step-resistor.PcbDoc")?;
+    let model = r1_model(&out).ok_or("R1 has no model")?;
+    assert_eq!(model.name, "box-1608.step");
+    assert_eq!(
+        model.source,
+        ModelSource::External {
+            file: "box-1608.step".into(),
+            checksum: Some(1_259_363_632),
+        }
+    );
+    // Nothing is embedded, and nothing is left unexplained.
+    assert!(out.models.is_empty());
+    assert!(
+        out.notes.iter().all(|n| n.severity == Severity::Info),
+        "{:?}",
+        out.notes
+    );
+    // Placed as on one-step-resistor: R1's centre, not rotated, not raised.
+    assert!(
+        model.offset.iter().all(|v| near(*v, 0.0)),
+        "{:?}",
+        model.offset
+    );
+    assert!(
+        model.rotation_deg.iter().all(|v| near(*v, 0.0)),
+        "{:?}",
+        model.rotation_deg
+    );
+    // The file next to the board is the one the board was linked to.
+    let step = std::fs::read(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/boards/linked-model/box-1608.step"),
+    )?;
+    assert_eq!(Altium.model_checksum(&step), Some(1_259_363_632));
+    assert_eq!(x_range(&step).ok_or("no points")?, (-0.8, 0.8));
     Ok(())
 }
 

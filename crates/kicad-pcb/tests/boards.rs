@@ -279,7 +279,7 @@ fn a_top_resistor_with_a_model_reference() {
     assert_eq!(p.side, Side::Top);
     let m = p.model.as_ref().unwrap();
     assert_eq!(m.name, "box-1608.step");
-    assert!(matches!(&m.source, ModelSource::External { file } if file == "box-1608.step"));
+    assert!(matches!(&m.source, ModelSource::External { file, .. } if file == "box-1608.step"));
     assert!(notes_contain(&o, "3D model file"));
     // The offset as written; the rotation turned the other way (KiCad's z of 30 is -30 here).
     assert!(m
