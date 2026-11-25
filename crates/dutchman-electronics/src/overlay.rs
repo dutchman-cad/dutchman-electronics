@@ -20,7 +20,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use board_model::{
     Board, Contour, CopperItem, EmbeddedFont, Graphic, LayerKind, PadShape, Point, Segment, Side,
-    TextFont,
+    TextFont, DEFAULT_SOLDER_MASK_EXPANSION,
 };
 use geo::orient::{Direction, Orient};
 use geo::{BooleanOps, Coord, LineString, MultiPolygon, Polygon};
@@ -78,6 +78,9 @@ const MAX_HOLE_VERTICES: usize = 200_000;
 const MAX_TEXT_SEGMENTS: usize = 2_000_000;
 /// The most TrueType font names listed one by one in notes; the rest are counted in one note.
 const MAX_FONT_NOTES: usize = 20;
+/// The most a board's solder mask expansion may be, in mm; a larger value is taken as a mistake and
+/// the default is used.
+const MAX_MASK_EXPANSION: f64 = 2.0;
 /// The fewest sides a whole circle is drawn with, so small vias and pads stay round.
 const MIN_CIRCLE_SIDES: f64 = 32.0;
 
@@ -423,6 +426,8 @@ struct TextCounts {
 struct SideFaces {
     masked: Pile,
     bare: Pile,
+    /// The mask openings of the bare pads: each pad grown by the mask expansion.
+    opening: Pile,
     silk: Pile,
 }
 
@@ -592,6 +597,11 @@ fn overlays_within(
         _ => On::Unusable,
     };
     let mut faces = (top, bottom);
+    // Real fabs open the mask a little wider than each pad. Vias are tented: no opening.
+    let expansion = board
+        .solder_mask_expansion
+        .filter(|e| e.is_finite() && (0.0..=MAX_MASK_EXPANSION).contains(e))
+        .unwrap_or(DEFAULT_SOLDER_MASK_EXPANSION);
     let shown = board.copper.len().min(MAX_ITEMS);
     let skipped = board
         .copper
@@ -606,6 +616,7 @@ fn overlays_within(
         .saturating_add(board.texts.len().saturating_sub(MAX_ITEMS));
     for item in board.copper.iter().take(MAX_ITEMS) {
         let emptied_before = hole_counts.emptied;
+        let mut opened: Vec<Polygon> = Vec::new();
         let (layer, shapes, bare, drill): (usize, Vec<Polygon>, bool, Option<(Point, f64)>) =
             match item {
                 CopperItem::Track {
@@ -668,14 +679,25 @@ fn overlays_within(
                     rotation_deg,
                     drill,
                     ..
-                } => (
-                    *layer,
-                    pad(*at, *shape, *size_x, *size_y, *rotation_deg)
-                        .into_iter()
-                        .collect(),
-                    true,
-                    drill.map(|d| (*at, d)),
-                ),
+                } => {
+                    opened = pad(
+                        *at,
+                        *shape,
+                        *size_x + 2.0 * expansion,
+                        *size_y + 2.0 * expansion,
+                        *rotation_deg,
+                    )
+                    .into_iter()
+                    .collect();
+                    (
+                        *layer,
+                        pad(*at, *shape, *size_x, *size_y, *rotation_deg)
+                            .into_iter()
+                            .collect(),
+                        true,
+                        drill.map(|d| (*at, d)),
+                    )
+                }
             };
         if shapes.is_empty() {
             if hole_counts.emptied == emptied_before {
@@ -704,6 +726,11 @@ fn overlays_within(
             };
             let target = if bare { &mut f.bare } else { &mut f.masked };
             target.polygons.extend(shapes.iter().cloned());
+            if bare {
+                // A pad whose opening cannot be drawn is opened as the pad itself.
+                let opening = if opened.is_empty() { &shapes } else { &opened };
+                f.opening.polygons.extend(opening.iter().cloned());
+            }
         }
         if let Some((at, d)) = drill {
             holes.add(circle(at, d / 2.0), &mut unusable);
@@ -897,12 +924,15 @@ fn overlays_within(
             let (bare_all, masked_all) = (f.bare.union(), f.masked.union());
             let bare = bare_all.difference(&drilled);
             let masked = masked_all.difference(&drilled).difference(&bare);
-            // Silkscreen is not printed over holes, via caps or bare pads.
+            let opening_all = f.opening.union();
+            // Silkscreen is not printed over holes, via caps, or the mask openings (the bare
+            // pads and the ring of laminate round them).
             let silk = f
                 .silk
                 .union()
                 .difference(&drilled)
                 .difference(&via_drilled)
+                .difference(&opening_all)
                 .difference(&bare);
             let plain = |name: String,
                          kind,
@@ -924,12 +954,17 @@ fn overlays_within(
                 finish_look,
                 opacity: None,
             };
-            // The mask fills only between the copper: not over the bare pads, the masked copper
-            // or the drills, so copper stands proud of it. One cut from the united shapes (the
+            // The mask fills only between the copper: not over the bare pads (grown by the mask
+            // expansion), the masked copper or the drills, so copper stands proud of it. One cut from the united shapes (the
             // copper before its drills are taken out), so no sliver is left where edges meet.
             let mask = face
                 .as_ref()
-                .map(|face| face.difference(&drilled.union(&bare_all).union(&masked_all)));
+                .map(|face| face.difference(
+                    &drilled
+                        .union(&bare_all)
+                        .union(&opening_all)
+                        .union(&masked_all),
+                ));
             built.push(plain(
                 format!("Copper {side}"),
                 "copper",

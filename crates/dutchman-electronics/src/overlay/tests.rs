@@ -132,9 +132,11 @@ fn square(x0: f64, y0: f64, x1: f64, y1: f64) -> board_model::Contour {
 #[test]
 fn the_mask_is_the_outline_less_cutouts_pads_copper_and_drills() {
     // A 20 x 10 board (200 mm2) with a 2 x 2 cutout (4 mm2) and, on the top, a bare 1 x 1 SMD
-    // pad (1 mm2) and a via of 1 mm across with a 0.5 mm drill. The mask stays off the via's
-    // copper ring and its drill, so a 1 mm circle (drawn as a 32-sided polygon of 0.78036 mm2)
-    // is open on both faces. Top mask: 200 - 4 - 1 - 0.78036 = 194.21964. Bottom: no pad, so
+    // pad and a via of 1 mm across with a 0.5 mm drill. The mask stays off the via's copper ring
+    // and its drill, so a 1 mm circle (drawn as a 32-sided polygon of 0.78036 mm2) is open on
+    // both faces; the via is tented, so its opening is not expanded. The pad's opening is grown
+    // by the default mask expansion of 0.1016 mm on each side: (1 + 2 * 0.1016)^2 = 1.2032^2 =
+    // 1.44769 mm2. Top mask: 200 - 4 - 1.44769 - 0.78036 = 193.77195. Bottom: no pad, so
     // 200 - 4 - 0.78036 = 195.21964.
     let mut b = board(
         vec![
@@ -170,7 +172,7 @@ fn the_mask_is_the_outline_less_cutouts_pads_copper_and_drills() {
     assert_eq!(top["color"], "#1f5f3a");
     // Bottom mask z = 0 - 0: 0.
     assert_eq!(bottom["z"], 0.0);
-    assert!((area(top) - 194.21964).abs() < 1e-3, "{}", area(top));
+    assert!((area(top) - 193.77195).abs() < 1e-3, "{}", area(top));
     assert!((area(bottom) - 195.21964).abs() < 1e-3, "{}", area(bottom));
     // Three holes in the top mask: the cutout, the pad and the drill.
     assert_eq!(top["areas"][0]["holes"].as_array().unwrap().len(), 3);
@@ -178,8 +180,9 @@ fn the_mask_is_the_outline_less_cutouts_pads_copper_and_drills() {
 
 #[test]
 fn pads_on_the_bottom_only_open_the_bottom_mask() {
-    // A 20 x 10 board (200 mm2) and one bare 1 x 1 SMD pad (1 mm2) on Bottom Layer: the top
-    // mask is whole (200), the bottom mask has the pad's opening (199).
+    // A 20 x 10 board (200 mm2) and one bare 1 x 1 SMD pad on Bottom Layer: the top mask is
+    // whole (200), the bottom mask has the pad's opening, grown by the default mask expansion of
+    // 0.1016 mm a side: 1.2032^2 = 1.44769 mm2, so 200 - 1.44769 = 198.55231.
     let mut b = board(
         vec![CopperItem::Pad {
             layer: 1,
@@ -201,7 +204,7 @@ fn pads_on_the_bottom_only_open_the_bottom_mask() {
     let bottom = named(&list, "Solder mask bottom");
     assert!((area(top) - 200.0).abs() < 1e-6, "{}", area(top));
     assert!(top["areas"][0]["holes"].as_array().unwrap().is_empty());
-    assert!((area(bottom) - 199.0).abs() < 1e-6, "{}", area(bottom));
+    assert!((area(bottom) - 198.55231).abs() < 1e-5, "{}", area(bottom));
     assert_eq!(bottom["areas"][0]["holes"].as_array().unwrap().len(), 1);
 }
 
