@@ -505,7 +505,10 @@ impl<'a> Composites<'a> {
             } else {
                 0
             };
-            at = at.saturating_add(4 + args + transform);
+            at = at
+                .saturating_add(4)
+                .saturating_add(args)
+                .saturating_add(transform);
             if flags & MORE_COMPONENTS == 0 {
                 return Ok((height, parts));
             }
@@ -837,16 +840,28 @@ mod tests {
     /// A font by hand: glyph 0 (which every character maps to, as there is no `cmap`) is the
     /// first of `glyphs`.
     fn font_of(glyphs: &[Vec<u8>]) -> Vec<u8> {
+        font_with(glyphs, false)
+    }
+
+    /// [`font_of`] with a short `loca` (offsets halved, 16 bits) when `short`.
+    fn font_with(glyphs: &[Vec<u8>], short: bool) -> Vec<u8> {
         let n = glyphs.len() as u32;
         let (mut glyf, mut loca) = (Vec::new(), Vec::new());
+        let offset = |loca: &mut Vec<u8>, at: usize| {
+            if short {
+                be(loca, (at / 2) as u32, 2);
+            } else {
+                be(loca, at as u32, 4);
+            }
+        };
         for g in glyphs {
-            be(&mut loca, glyf.len() as u32, 4);
+            offset(&mut loca, glyf.len());
             glyf.extend_from_slice(g);
             while glyf.len() % 4 != 0 {
                 glyf.push(0);
             }
         }
-        be(&mut loca, glyf.len() as u32, 4);
+        offset(&mut loca, glyf.len());
         let mut head = vec![0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
         be(&mut head, 0x5f0f3cf5, 4);
         be(&mut head, 0, 2);
@@ -854,7 +869,7 @@ mod tests {
         head.extend_from_slice(&[0; 16]);
         head.extend_from_slice(&[0; 8]);
         head.extend_from_slice(&[0; 6]); // mac style .. direction hint
-        be(&mut head, 1, 2); // long loca
+        be(&mut head, u32::from(!short), 2); // 1: long loca
         be(&mut head, 0, 2);
         let mut hhea = vec![0, 1, 0, 0];
         for v in [800u32, 0xff38, 0, 1000] {
@@ -1010,5 +1025,108 @@ mod tests {
             })
             .collect();
         assert!(glyph_areas(&[big], &|c| c).is_none());
+    }
+
+    /// A composite glyph from records of (flags, part, bytes after the part number).
+    fn records_glyph(records: &[(u16, u16, usize)]) -> Vec<u8> {
+        let mut g = Vec::new();
+        be(&mut g, 0xffff, 2);
+        g.extend_from_slice(&[0; 8]);
+        for (i, &(flags, part, tail)) in records.iter().enumerate() {
+            let more = if i + 1 < records.len() { 0x20 } else { 0 };
+            be(&mut g, u32::from(flags | more), 2);
+            be(&mut g, u32::from(part), 2);
+            g.extend(std::iter::repeat_n(0u8, tail));
+        }
+        g
+    }
+
+    fn draws_one_square(font: &[u8]) -> bool {
+        let o = outline(&text_in_font(), font, 1_000).ok().unwrap().unwrap();
+        (o.areas.len(), o.failed) == (1, 0)
+    }
+
+    fn refuses(font: &[u8]) -> bool {
+        let o = outline(&text_in_font(), font, 1_000).ok().unwrap().unwrap();
+        (o.areas.len(), o.failed) == (0, 1)
+    }
+
+    fn measure(font: &[u8], gid: u16) -> Option<(u32, u64)> {
+        let face = Face::parse(font, 0).ok().unwrap();
+        let mut table = Composites::new(&face).ok().unwrap().unwrap();
+        table.visit(gid, 0).ok()
+    }
+
+    #[test]
+    fn short_location_tables_are_read() {
+        let mut glyphs: Vec<Vec<u8>> = (0..4)
+            .map(|i| composite_glyph(u16::try_from(i + 1).unwrap(), 2))
+            .collect();
+        glyphs.push(square_glyph());
+        let font = font_with(&glyphs, true);
+        assert!(draws_one_square(&font));
+        assert_eq!(measure(&font, 0), Some((4, 16)));
+    }
+
+    #[test]
+    fn every_kind_of_component_record_is_skipped_by_its_own_length() {
+        // (flags, bytes after the part number): 2-byte arguments; 4-byte (words); a scale;
+        // an x and y scale; a two by two. The second record, found only if the first is
+        // skipped by exactly its length, uses glyph 1; a misread one would read zero flags
+        // and part 0, the glyph itself.
+        for (flags, tail) in [
+            (0x0002u16, 2usize),
+            (0x0003, 4),
+            (0x000a, 4),
+            (0x0042, 6),
+            (0x0082, 10),
+        ] {
+            let glyphs = [
+                records_glyph(&[(flags, 1, tail), (0x0002, 1, 2)]),
+                square_glyph(),
+            ];
+            let font = font_of(&glyphs);
+            assert!(draws_one_square(&font), "flags {flags:#06x}");
+            assert_eq!(measure(&font, 0), Some((1, 2)), "flags {flags:#06x}");
+        }
+    }
+
+    #[test]
+    fn a_part_used_twice_through_two_paths_is_counted_each_time() {
+        // 0 uses 1 and 2; both use 3, a square: a diamond of two parts, two levels deep.
+        let glyphs = [
+            records_glyph(&[(0x0002, 1, 2), (0x0002, 2, 2)]),
+            records_glyph(&[(0x0002, 3, 2)]),
+            records_glyph(&[(0x0002, 3, 2)]),
+            square_glyph(),
+        ];
+        let font = font_of(&glyphs);
+        assert_eq!(measure(&font, 0), Some((2, 2)));
+        assert!(draws_one_square(&font));
+    }
+
+    #[test]
+    fn a_part_that_does_not_exist_is_refused() {
+        let font = font_of(&[records_glyph(&[(0x0002, 99, 2)]), square_glyph()]);
+        assert!(refuses(&font));
+        // A record cut short by the end of the glyph.
+        let mut cut = records_glyph(&[(0x0002, 1, 2)]);
+        cut.truncate(cut.len() - 3);
+        assert!(refuses(&font_of(&[cut, square_glyph()])));
+    }
+
+    #[test]
+    fn nine_levels_of_composites_are_too_deep_and_eight_are_not() {
+        let chain = |levels: usize| {
+            let mut glyphs: Vec<Vec<u8>> = (0..levels)
+                .map(|i| composite_glyph(u16::try_from(i + 1).unwrap(), 1))
+                .collect();
+            glyphs.push(square_glyph());
+            font_of(&glyphs)
+        };
+        assert!(draws_one_square(&chain(8)));
+        assert_eq!(measure(&chain(8), 0), Some((8, 1)));
+        assert!(refuses(&chain(9)));
+        assert_eq!(measure(&chain(9), 0), None);
     }
 }
