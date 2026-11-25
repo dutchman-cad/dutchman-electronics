@@ -193,6 +193,23 @@ fn length_mm(text: &str) -> Option<f64> {
 }
 
 /// The solder mask and silkscreen colours of `3DCONFIGURATION`.
+/// A Windows COLORREF in decimal (red in the low byte, `3307556` is (36, 120, 50)) with an
+/// opacity from 0 to 1, or `None` when either is not one.
+pub(crate) fn colorref(value: &str, opacity: Option<f64>) -> Option<Color> {
+    let c = value
+        .trim()
+        .parse::<u32>()
+        .ok()
+        .filter(|&c| c <= 0xff_ffff)?;
+    let [r, g, b, _] = c.to_le_bytes();
+    Some(Color {
+        r,
+        g,
+        b,
+        opacity: opacity.filter(|o| (0.0..=1.0).contains(o))?,
+    })
+}
+
 fn colors(board: &Properties, notes: &mut Vec<Note>) -> Appearance {
     let Some(config) = board.get("3DCONFIGURATION") else {
         return Appearance::default();
@@ -212,23 +229,13 @@ fn colors(board: &Properties, notes: &mut Vec<Note>) -> Appearance {
         let value = get(&format!("CFG3D.{name}COLOR"))?;
         let opacity = match get(&format!("CFG3D.{name}COLOROPACITY")) {
             None => Some(1.0),
-            Some(v) => v.parse::<f64>().ok().filter(|o| (0.0..=1.0).contains(o)),
+            Some(v) => v.parse::<f64>().ok(),
         };
-        match (
-            value.parse::<u32>().ok().filter(|&c| c <= 0xff_ffff),
-            opacity,
-        ) {
-            (Some(c), Some(opacity)) => Some(Color {
-                r: (c & 0xff) as u8,
-                g: ((c >> 8) & 0xff) as u8,
-                b: ((c >> 16) & 0xff) as u8,
-                opacity,
-            }),
-            _ => {
-                unreadable += 1;
-                None
-            }
+        let found = colorref(value, opacity);
+        if found.is_none() {
+            unreadable += 1;
         }
+        found
     };
     let appearance = Appearance {
         top_solder_mask: color("TOPSOLDERMASK"),

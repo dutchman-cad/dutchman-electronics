@@ -58,15 +58,21 @@
 //!   15.918). On the flipped `one-bottom-y-tilted-step-resistor` ROTY stays 90 and, in the part's
 //!   own frame, offset (0, 0.4) and no turn give Altium's x 24.55 to 25; a tilt of -90 would put
 //!   it at x 25 to 25.45. So a flip keeps both tilts, and the reader hands them over unchanged.
+//! - `BODYCOLOR3D` and `BODYOPACITY3D` are a body's colour, a Windows COLORREF in decimal (red in
+//!   the low byte), and opacity. Every body on the earlier boards has 8421504, (128, 128, 128),
+//!   and 1.000; `one-colored-body-resistor` (R1's extruded box set to (32, 128, 224) and 0.5)
+//!   has 14712864 and 0.500. The reader hands the colour over for extruded bodies only: a STEP
+//!   model brings its own colours, and its body keeps the grey all the same.
 //! - `/ShapeBasedComponentBodies6/Data` repeats the bodies; see `shape_based.rs`.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use board_model::{
-    Contour, EmbeddedModel, ModelRef, ModelSource, Note, Placement, Point, Segment, Severity, Side,
-    MAX_INPUT_BYTES,
+    Color, Contour, EmbeddedModel, ModelRef, ModelSource, Note, Placement, Point, Segment,
+    Severity, Side, MAX_INPUT_BYTES,
 };
 
+use crate::appearance::colorref;
 use crate::board::Properties;
 use crate::components::{text_records, Components, COMPONENT_AT, NO_COMPONENT};
 use crate::copper::{read_u16, read_u32};
@@ -102,6 +108,7 @@ pub(crate) fn attach(
     let mut extra = 0usize;
     let mut free = 0usize;
     let mut unread: BTreeMap<String, usize> = BTreeMap::new();
+    let mut no_color = 0usize;
     for body in records(bodies6, notes)? {
         let Some(component) = read_u16(body, COMPONENT_AT).filter(|&c| c != NO_COMPONENT) else {
             free += 1;
@@ -121,7 +128,12 @@ pub(crate) fn attach(
             continue;
         }
         match model(body, placement, &models) {
-            Ok(m) => placement.model = Some(m),
+            Ok((m, color_read)) => {
+                if !color_read {
+                    no_color += 1;
+                }
+                placement.model = Some(m);
+            }
             Err(why) => *unread.entry(why).or_default() += 1,
         }
     }
@@ -137,6 +149,14 @@ pub(crate) fn attach(
         notes.push(Note {
             severity: Severity::Dropped,
             message: format!("{free} 3D bod(ies) that belong to no component not read"),
+        });
+    }
+    if no_color > 0 {
+        notes.push(Note {
+            severity: Severity::Warning,
+            message: format!(
+                "{no_color} extruded 3D bod(ies) have a colour or opacity that could not be read;                  left without a colour"
+            ),
         });
     }
     for (why, n) in unread {
@@ -249,12 +269,13 @@ fn unpack_within(
     models
 }
 
-/// The model of one body record, or why it was left out.
+/// The model of one body record and whether its colour could be read (always true for a model
+/// file, which has no colour here), or why it was left out.
 fn model(
     body: &[u8],
     placement: &Placement,
     models: &BTreeMap<String, Stored>,
-) -> Result<ModelRef, String> {
+) -> Result<(ModelRef, bool), String> {
     let text_len = read_u32(body, BODY_SKIPPED).ok_or("record cut short")?;
     let text_start = BODY_SKIPPED + 4;
     let text_end = text_start
@@ -270,7 +291,9 @@ fn model(
             let height = props
                 .length_mm("OVERALLHEIGHT")?
                 .ok_or("no OVERALLHEIGHT")?;
-            Ok(ModelRef {
+            let color = body_color(&props);
+            let color_read = color.is_some() || props.get("BODYCOLOR3D").is_none();
+            let model = ModelRef {
                 name: String::new(),
                 source: ModelSource::Extruded {
                     outline: closed(
@@ -284,7 +307,9 @@ fn model(
                 },
                 offset: [0.0; 3],
                 rotation_deg: [0.0; 3],
-            })
+                color,
+            };
+            Ok((model, color_read))
         }
         Some("1") => {
             let name = props
@@ -318,7 +343,7 @@ fn model(
                 Side::Top => rotz - placement.rotation_deg,
                 Side::Bottom => rotz + placement.rotation_deg,
             });
-            Ok(ModelRef {
+            let model = ModelRef {
                 name,
                 source,
                 offset: [local.x, local.y, dz],
@@ -327,10 +352,21 @@ fn model(
                     angle(&props, "MODEL.3D.ROTY")?,
                     turn,
                 ],
-            })
+                color: None,
+            };
+            Ok((model, true))
         }
         other => Err(format!("model type {} not read yet", other.unwrap_or("?"))),
     }
+}
+
+/// A body's colour (`BODYCOLOR3D`, a COLORREF) and opacity (`BODYOPACITY3D`, 1 when missing).
+fn body_color(props: &Properties) -> Option<Color> {
+    let opacity = match props.get("BODYOPACITY3D") {
+        None => Some(1.0),
+        Some(v) => v.trim().parse::<f64>().ok(),
+    };
+    colorref(props.get("BODYCOLOR3D")?, opacity)
 }
 
 /// An angle in degrees brought into -180..=180 (a whole turn is the same turn; -0.0 becomes 0).
@@ -491,6 +527,7 @@ mod tests {
                 source: ModelSource::Embedded { id: id.into() },
                 offset: [0.0; 3],
                 rotation_deg: [0.0; 3],
+                color: None,
             }),
         }
     }
@@ -554,5 +591,27 @@ mod tests {
         assert!(models.is_empty());
         assert!(parts[0].model.is_none());
         assert!(notes[0].message.contains("more than 5 bytes"), "{notes:?}");
+    }
+
+    #[test]
+    fn a_body_colour_is_read_with_its_opacity() {
+        let color = |text: &str| body_color(&Properties::parse(text.as_bytes()));
+        let blue = |opacity| {
+            Some(Color {
+                r: 32,
+                g: 128,
+                b: 224,
+                opacity,
+            })
+        };
+        assert_eq!(
+            color("|BODYCOLOR3D=14712864|BODYOPACITY3D=0.500|"),
+            blue(0.5)
+        );
+        assert_eq!(color("|BODYCOLOR3D=14712864|"), blue(1.0));
+        assert_eq!(color("|BODYOPACITY3D=0.500|"), None);
+        assert_eq!(color("|BODYCOLOR3D=red|BODYOPACITY3D=1|"), None);
+        assert_eq!(color("|BODYCOLOR3D=16777216|BODYOPACITY3D=1|"), None);
+        assert_eq!(color("|BODYCOLOR3D=0|BODYOPACITY3D=1.5|"), None);
     }
 }

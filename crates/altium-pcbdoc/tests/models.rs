@@ -2,7 +2,7 @@
 //! tests/boards/README.txt (to 0.001 mm, as AGENTS.md asks).
 
 use altium_pcbdoc::Altium;
-use board_model::{InputFormat, ModelRef, ModelSource, ReadOutcome, Segment};
+use board_model::{Color, InputFormat, ModelRef, ModelSource, ReadOutcome, Segment};
 
 const TOLERANCE: f64 = 0.001;
 
@@ -210,5 +210,47 @@ fn the_shape_based_copy_of_the_bodies_raises_no_note() -> Result<(), Box<dyn std
             out.notes
         );
     }
+    Ok(())
+}
+
+#[test]
+fn an_extruded_body_has_its_colour_and_opacity() -> Result<(), Box<dyn std::error::Error>> {
+    let grey = read("one-resistor.PcbDoc")?;
+    let colored = read("one-colored-body-resistor.PcbDoc")?;
+    let grey_model = r1_model(&grey).ok_or("R1 has no model")?;
+    let model = r1_model(&colored).ok_or("R1 has no model")?;
+    assert_eq!(
+        grey_model.color,
+        Some(Color {
+            r: 128,
+            g: 128,
+            b: 128,
+            opacity: 1.0
+        })
+    );
+    assert_eq!(
+        model.color,
+        Some(Color {
+            r: 32,
+            g: 128,
+            b: 224,
+            opacity: 0.5
+        })
+    );
+    // Only the colour differs: the same box in the same place, and no notes.
+    assert_eq!(model.source, grey_model.source);
+    assert_eq!(
+        (model.offset, model.rotation_deg),
+        (grey_model.offset, grey_model.rotation_deg)
+    );
+    assert!(colored.notes.is_empty(), "{:?}", colored.notes);
+    Ok(())
+}
+
+#[test]
+fn a_step_model_has_no_body_colour() -> Result<(), Box<dyn std::error::Error>> {
+    let out = read("one-step-resistor.PcbDoc")?;
+    let model = r1_model(&out).ok_or("R1 has no model")?;
+    assert_eq!(model.color, None);
     Ok(())
 }
