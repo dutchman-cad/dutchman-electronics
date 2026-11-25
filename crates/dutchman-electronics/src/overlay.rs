@@ -957,14 +957,14 @@ fn overlays_within(
             // The mask fills only between the copper: not over the bare pads (grown by the mask
             // expansion), the masked copper or the drills, so copper stands proud of it. One cut from the united shapes (the
             // copper before its drills are taken out), so no sliver is left where edges meet.
-            let mask = face
-                .as_ref()
-                .map(|face| face.difference(
+            let mask = face.as_ref().map(|face| {
+                face.difference(
                     &drilled
                         .union(&bare_all)
                         .union(&opening_all)
                         .union(&masked_all),
-                ));
+                )
+            });
             built.push(plain(
                 format!("Copper {side}"),
                 "copper",
