@@ -494,6 +494,20 @@ one-hasl-resistor.PcbDoc
     Top Surface Finish and Bottom Surface Finish: process HASL, material "PbSn", colour
     #FFF2F2F2 (opaque; 242, 242, 242), thickness 0.020. Altium's total thickness: 1.640.
 
+3D body colour and opacity
+--------------------------
+Made on 2026-11-25 by my own script, from a file copy of one-resistor.PcbDoc: R1's extruded box
+was given another colour and opacity, read back and logged, and the board saved. Nothing else
+was changed on purpose.
+
+one-colored-body-resistor.PcbDoc
+    R1's extruded body: colour red 32, green 128, blue 224, opacity 0.5. Before the change it
+    had Altium's default, red 128, green 128, blue 128, opacity 1, like every body on the boards
+    above, extruded or STEP. The box itself is the one of one-resistor: 1.600 x 0.800, height
+    0.450, centred on R1 at (25, 15).
+    On saving, Altium gave the body a new random model ID and left out the footprint library
+    field that was blanked on one-resistor (see "Paths inside the files").
+
 Paths inside the files
 ----------------------
 Altium writes a few paths from the PC that saved a board into the file. After the last save, I
