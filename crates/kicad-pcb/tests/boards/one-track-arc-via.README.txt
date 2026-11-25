@@ -1,0 +1,11 @@
+Original test board made for Dutchman Electronics. Released under CC0 1.0 (public domain): https://creativecommons.org/publicdomain/zero/1.0/
+
+one-track-arc-via: one of each copper item, on the 50 x 30 mm rectangle.
+
+Made with KiCad 9.0.9 (file version 20241229) by fixtures/kicad/build_boards.py. KiCad shows coordinates in millimetres with Y pointing down; the board's top-left corner is at page position (100, 100), and every number below is relative to that corner (so add 100 to x and y for the page position). The reader gives Y up: model x = 100 + X, model y = -(100 + Y).
+
+- Nets: GND (1), SIG (2).
+- Track on F.Cu from (10,10) to (20,10), width 0.5, net SIG.
+- Track on B.Cu from (10,20) to (30,20), width 0.4, net GND.
+- Arc on F.Cu from (30,10) through (33.535534, 11.464466) to (35,15): a quarter circle of radius 5 about (30,15), width 0.3, net SIG.
+- Via at (40,20): pad diameter 0.8, drill 0.4, through, net GND.

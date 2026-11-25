@@ -1,0 +1,10 @@
+Original test board made for Dutchman Electronics. Released under CC0 1.0 (public domain): https://creativecommons.org/publicdomain/zero/1.0/
+
+one-resistor: one footprint on the top side with a 3D model reference.
+
+Made with KiCad 9.0.9 (file version 20241229) by fixtures/kicad/build_boards.py. KiCad shows coordinates in millimetres with Y pointing down; the board's top-left corner is at page position (100, 100), and every number below is relative to that corner (so add 100 to x and y for the page position). The reader gives Y up: model x = 100 + X, model y = -(100 + Y).
+
+- Footprint test:R_0603, designator R1, value 10k, on F.Cu at (25,15), rotation 0.
+- Pads, both surface-mount rectangles 0.9 x 0.95 on F.Cu, F.Mask and F.Paste: "1" at (24.2,15) and "2" at (25.8,15) (0.8 either side of the footprint origin).
+- 3D model "box-1608.step" (not stored in the board): offset (0.5, 0.25, 0.1), scale (1, 1, 1), rotation (0, 0, 30). The reader gives the rotation as (0, 0, -30): KiCad turns a model the other way about each axis (X first, then Y, then Z), which we measured with KiCad's own VRML export of a box turned about each axis (fixtures/kicad/model_axes). The offset is the same in the reader and in KiCad (x right, y up, z out of the board face the part sits on, for both sides).
+- Reference text "R1" on F.SilkS at the footprint origin, 1.27 high, thickness 0.15.
