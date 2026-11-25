@@ -139,10 +139,12 @@ fn the_mask_is_the_outline_less_cutouts_pads_copper_and_drills() {
     let top = named(&list, "Solder mask top");
     let bottom = named(&list, "Solder mask bottom");
     assert_eq!(top["kind"], "mask");
-    assert_eq!(top["z"], 1.605);
+    // Mask z = T + 0: 1.6.
+    assert_eq!(top["z"], 1.6);
     assert_eq!(top["opacity"], 0.85);
     assert_eq!(top["color"], "#1f5f3a");
-    assert_eq!(bottom["z"], -0.005);
+    // Bottom mask z = 0 - 0: 0.
+    assert_eq!(bottom["z"], 0.0);
     assert!((area(top) - 194.21964).abs() < 1e-3, "{}", area(top));
     assert!((area(bottom) - 195.21964).abs() < 1e-3, "{}", area(bottom));
     // Three holes in the top mask: the cutout, the pad and the drill.
@@ -227,8 +229,9 @@ fn a_track_is_a_stroke_with_round_ends_on_its_face() {
     assert_eq!(o["kind"], "copper");
     assert_eq!(o["finish"], "masked");
     assert_eq!(o["side"], "top");
-    // Masked copper sits MASKED_COPPER_LIFT (0.007) above the 1.6 top face: 1.607.
-    assert_eq!(o["z"], 1.607);
+    // Masked copper z = T + 0 = 1.6; its thickness is 0.035.
+    assert_eq!(o["z"], 1.6);
+    assert_eq!(o["thickness"], 0.035);
     // 10 x 0.5 plus two half circles of radius 0.25; the polyline loses at most 0.02 mm a side.
     let exact = 5.0 + PI * 0.25 * 0.25;
     assert!(area(o) < exact && area(o) > exact - 0.01, "{}", area(o));
@@ -242,8 +245,8 @@ fn a_bottom_track_is_drawn_below_the_board() {
         "Board",
     );
     let o = named(&list, "Copper bottom");
-    // Masked copper sits MASKED_COPPER_LIFT (0.007) below the bottom face at 0: -0.007.
-    assert_eq!(o["z"], -0.007);
+    // Bottom masked copper z = 0 - 0 = 0, extruded down.
+    assert_eq!(o["z"], 0.0);
     assert_eq!(o["side"], "bottom");
 }
 
@@ -389,7 +392,9 @@ fn silkscreen_lines_and_arcs_are_drawn_and_other_layers_are_noted() {
     let o = named(&list, "Silkscreen top");
     assert_eq!(o["kind"], "silkscreen");
     assert!(o.get("finish").is_none());
-    assert_eq!(o["z"], 1.61);
+    // Silkscreen z = T + 0.035 = 1.635; its thickness is 0.015.
+    assert_eq!(o["z"], 1.635);
+    assert_eq!(o["thickness"], 0.015);
     // The line, and a ring of width 0.2 around radius 2 (with a hole).
     let exact = 10.0 * 0.2 + PI * 0.01 + 2.0 * PI * 2.0 * 0.2;
     assert!((area(o) - exact).abs() < 0.05, "{}", area(o));

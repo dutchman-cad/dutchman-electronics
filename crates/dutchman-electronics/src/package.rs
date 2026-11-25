@@ -965,9 +965,17 @@ mod tests {
                 assert_eq!(o["part"], "Board");
                 assert!(overlay_area(o) > 0.0, "{}: {o}", path.display());
                 let z = o["z"].as_f64().unwrap();
+                // Overlays stack from a face (z = T on the top, 0 on the bottom: copper and
+                // mask) or from the copper (T + 0.035 or -0.035: silkscreen), off the board.
+                let from_face = if o["side"] == "top" {
+                    z >= 1.6 - 1e-3
+                } else {
+                    z <= 1e-9
+                };
+                assert!(from_face, "{}: drawn off the faces: {o}", path.display());
                 assert!(
-                    z > 1.6 || z < 0.0,
-                    "{}: drawn off the faces",
+                    o["thickness"].as_f64().is_some_and(|t| t > 0.0),
+                    "{}: no thickness: {o}",
                     path.display()
                 );
                 let color = o["color"].as_str().unwrap_or_default();
@@ -977,11 +985,11 @@ mod tests {
                     path.display()
                 );
                 if o["kind"] == "mask" {
-                    // The mask rides 0.005 mm off the face: above the top, below the bottom.
+                    // The mask starts at the face: z = T on the top, z = 0 on the bottom.
                     let ok = if o["side"] == "top" {
-                        z > 1.6
+                        z >= 1.6 - 1e-3
                     } else {
-                        (z + 0.005).abs() < 1e-9
+                        z.abs() < 1e-9
                     };
                     assert!(ok, "{}: mask z {z}", path.display());
                     assert_eq!(o["opacity"], 0.85);
@@ -1093,9 +1101,9 @@ mod tests {
         assert_eq!(mask["opacity"], 0.85);
         assert_eq!(mask["kind"], "mask");
         // The board is 1.6 mm thick (the file stores 1.600002 after its unit conversion).
-        assert!((mask["z"].as_f64().unwrap() - 1.605).abs() < 1e-4);
+        assert!((mask["z"].as_f64().unwrap() - 1.6).abs() < 1e-4);
         let bottom = overlay_named(m, "one-plated-pad", "Solder mask bottom");
-        assert_eq!(bottom["z"].as_f64().unwrap(), -0.005);
+        assert_eq!(bottom["z"].as_f64().unwrap(), 0.0);
         // Masked copper and silkscreen: boards that have them.
         let track = package_of("one-track");
         assert_eq!(
