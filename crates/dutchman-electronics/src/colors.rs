@@ -239,8 +239,10 @@ mod tests {
     fn masked_copper_is_lighter_and_warmer_and_capped() {
         // Blue mask 17, 85, 204 gives 23.63, 98.43, 235.62.
         assert_eq!(masked_copper(&rgb(17, 85, 204)), "#1862ec");
-        assert_eq!(masked_copper(&rgb(255, 255, 255)), "#ffffff");
-        assert_eq!(masked_copper(&rgb(0, 0, 0)), "#000000");
+        // Copper under a light mask is darker and yellower, not the same white; under black it
+        // is nudged lighter. Neither may vanish into the mask.
+        assert_eq!(masked_copper(&rgb(255, 255, 255)), "#f2e6c7");
+        assert_eq!(masked_copper(&rgb(0, 0, 0)), "#100c0c");
     }
 
     #[test]
