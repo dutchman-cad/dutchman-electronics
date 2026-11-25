@@ -263,3 +263,77 @@ fn every_kicad_test_board_gives_a_package_with_a_board_solid(
     assert!(count >= 9);
     Ok(())
 }
+
+#[cfg(feature = "kicad")]
+#[test]
+fn read_survives_absurd_numbers_in_a_kicad_board() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = std::env::temp_dir().join(format!("de-read-absurd-{}", std::process::id()));
+    std::fs::create_dir_all(&dir)?;
+    let board = dir.join("big.kicad_pcb");
+    std::fs::write(
+        &board,
+        "(kicad_pcb (version 20241229) (generator \"pcbnew\") (general (thickness 1.6))\n\
+         (layers (0 \"F.Cu\" signal) (2 \"B.Cu\" signal) (5 \"F.SilkS\" user) (25 \"Edge.Cuts\" user))\n\
+         (gr_rect (start 0 0) (end 50 30) (layer \"Edge.Cuts\") (stroke (width 0.1) (type default)))\n\
+         (gr_rect (start 5 5) (end 1e300 1e300) (layer \"Edge.Cuts\") (stroke (width 0.1) (type default)))\n\
+         (via (at 10 10) (size 1e300) (drill 1e300) (layers \"F.Cu\" \"B.Cu\"))\n\
+         (via (at 1e300 1e300) (size 0.8) (drill 0.4) (layers \"F.Cu\" \"B.Cu\"))\n\
+         (segment (start 1 1) (end 2 2) (width 1e300) (layer \"F.Cu\"))\n\
+         (gr_text \"HI\" (at 10 10) (layer \"F.SilkS\") (effects (font (size 1e300 1e300) (thickness 1e300))))\n\
+         (gr_circle (center 20 20) (end 1e300 20) (layer \"F.SilkS\") (stroke (width 0.1) (type default))))",
+    )?;
+    let out = dir.join("out");
+    let result = run(&[
+        "read",
+        &board.to_string_lossy(),
+        "--out",
+        &out.to_string_lossy(),
+        "--json",
+    ]);
+    let step = std::fs::read_to_string(out.join("board.step"));
+    let manifest = std::fs::read_to_string(out.join("manifest.json"));
+    let _ = std::fs::remove_dir_all(&dir);
+    let (ok, v) = result?;
+    assert!(ok, "{v}");
+    let step = step?.to_ascii_lowercase();
+    assert!(
+        !step.contains("inf")
+            && !step.contains("nan")
+            && !step.contains("e+3")
+            && !step.contains("e300")
+    );
+    let manifest = manifest?.to_ascii_lowercase();
+    assert!(!manifest.contains("inf\"") && !manifest.contains("nan"));
+    assert!(v["notes"].to_string().contains("beyond 100 m"), "{v}");
+    Ok(())
+}
+
+#[cfg(feature = "kicad")]
+#[test]
+fn an_unrelated_dropped_note_is_not_added_to_another_failure(
+) -> Result<(), Box<dyn std::error::Error>> {
+    // The outline is there but flat, so the board cannot be made for that reason; the reader's
+    // note about the dimension has nothing to do with it and must not be tacked on.
+    let dir = std::env::temp_dir().join(format!("de-read-flat-{}", std::process::id()));
+    std::fs::create_dir_all(&dir)?;
+    let board = dir.join("flat.kicad_pcb");
+    std::fs::write(
+        &board,
+        "(kicad_pcb (version 20241229) (generator \"pcbnew\") (general (thickness 1.6))\n\
+         (layers (0 \"F.Cu\" signal) (2 \"B.Cu\" signal) (25 \"Edge.Cuts\" user))\n\
+         (dimension (type aligned))\n\
+         (gr_rect (start 0 0) (end 0 5) (layer \"Edge.Cuts\") (stroke (width 0.1) (type default))))",
+    )?;
+    let result = run(&[
+        "read",
+        &board.to_string_lossy(),
+        "--out",
+        &dir.join("out").to_string_lossy(),
+        "--json",
+    ]);
+    let _ = std::fs::remove_dir_all(&dir);
+    let (ok, v) = result?;
+    assert!(!ok, "{v}");
+    assert!(!v.to_string().contains("dimension"), "{v}");
+    Ok(())
+}
