@@ -1,6 +1,7 @@
 Original test board made for Dutchman Electronics. Released under CC0 1.0 (public domain): https://creativecommons.org/publicdomain/zero/1.0/
+Exception: the TrueType font files embedded in one-dejavu-text, one-dejavu-bold-text and one-dejavu-italic-text are not CC0; they keep the DejaVu / Bitstream Vera licence (LICENSE-DejaVu.txt). Everything else in those three boards is CC0.
 
-(This line covers every board in this folder: empty-outline, outline-with-hole, one-track,
+(The first line covers every board in this folder: empty-outline, outline-with-hole, one-track,
 one-resistor, one-via, one-plated-pad, one-rotated-pad, one-oval-pad, one-bottom-track,
 one-arc, one-fill, one-region, one-pour, one-text, one-rotated-text,
 one-bottom-text, one-step-resistor, one-rotated-resistor, one-bottom-resistor, one-net,
@@ -618,6 +619,38 @@ dense-board.PcbDoc
     height 0.800, stroke 0.120. Comments are hidden.
     Altium embedded Arial on saving although no text uses a TrueType font; it was removed the
     same way as for one-ttf-text (see above).
+
+Embedded TrueType font: DejaVu Sans Mono
+----------------------------------------
+Made on 2026-11-25 by my own script, each from a file copy of empty-outline.PcbDoc plus one text,
+every number read back and logged. Each text is in the TrueType font DejaVu Sans Mono (not the
+stroke font), layer Top Overlay, position (10.000, 10.000), height 2.000, rotation 0, not
+mirrored, no component and no net. The box is the text's bounding rectangle as Altium reports
+it.
+
+one-dejavu-text.PcbDoc
+    text "DejaVu", not bold, not italic. Box x 10.000 to 15.936, y 9.643 to 11.305.
+one-dejavu-bold-text.PcbDoc
+    text "Bold", bold, not italic. Box x 10.000 to 13.905, y 9.977 to 11.305.
+one-dejavu-italic-text.PcbDoc
+    text "Italic", italic, not bold. Box x 10.000 to 16.075, y 9.977 to 11.313.
+
+Altium embeds the font file each text uses in EmbeddedFonts6: one font on each board, with
+full name, family and style "DejaVu Sans Mono" / "DejaVu Sans Mono" / "Book", "DejaVu Sans Mono
+Bold" / "DejaVu Sans Mono" / "Bold" and "DejaVu Sans Mono Oblique" / "DejaVu Sans Mono" /
+"Oblique". Unpacked, each is byte for byte the public DejaVu Sans Mono 2.37 file, with SHA-256:
+    DejaVuSansMono.ttf          b4a6c3e4faab8773f4ff761d56451646409f29abedd68f05d38c2df667d3c582
+    DejaVuSansMono-Bold.ttf     bce60f1b4421acd9ea51ba6623d7024ecbe6817a953e3654df62a5e6bdf8f769
+    DejaVuSansMono-Oblique.ttf  742097840c541870e8d6dc5c9b37bb1ceeea6c0dedd1d475faf903ef9df734b0
+No other font is embedded.
+
+The embedded font files are not CC0. They keep their own licence: the Bitstream Vera fonts
+licence, with the DejaVu changes in the public domain (the font names
+http://dejavu.sourceforge.net/wiki/index.php/License). It allows the fonts to be copied and
+passed on as long as the copyright and trademark notices and the licence go with them; each font
+file carries them in its own name table, which Altium keeps unchanged, and LICENSE-DejaVu.txt
+in this folder holds the same text. Everything else in these three boards is CC0 like the
+others.
 
 Paths inside the files
 ----------------------

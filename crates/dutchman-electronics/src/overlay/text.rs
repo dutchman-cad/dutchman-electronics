@@ -304,6 +304,8 @@ mod tests {
         let mut t = text("H", 0.0, false);
         t.font = TextFont::TrueType {
             name: "Arial".into(),
+            bold: false,
+            italic: false,
         };
         assert!(close(draw(&t).unwrap().pen, 0.21));
     }

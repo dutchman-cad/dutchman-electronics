@@ -53,6 +53,45 @@ fn committed_boards_carry_the_declaration() -> Result<(), Box<dyn std::error::Er
     Ok(())
 }
 
+/// The second line of tests/boards/README.txt names the boards whose embedded font files are not
+/// CC0 (they keep their own licence, LICENSE-DejaVu.txt). It must name exactly the boards that
+/// hand over an embedded font, so a new board with a font cannot slip past the exception.
+#[test]
+fn the_font_exception_names_every_board_with_an_embedded_font(
+) -> Result<(), Box<dyn std::error::Error>> {
+    use board_model::InputFormat;
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/boards");
+    let readme = std::fs::read_to_string(dir.join("README.txt"))?;
+    let exception = readme.lines().nth(1).unwrap_or_default();
+    assert!(exception.starts_with("Exception: "), "{exception}");
+    let named = |stem: &str| {
+        exception
+            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '-'))
+            .any(|word| word == stem)
+    };
+    let mut wrong = Vec::new();
+    for path in walk(&dir)?.iter().filter(|p| is_board(p)) {
+        let stem = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let has_font = !altium_pcbdoc::Altium
+            .read(&std::fs::read(path)?)?
+            .fonts
+            .is_empty();
+        if has_font != named(&stem) {
+            wrong.push(format!(
+                "{stem}: embedded font {has_font}, named {}",
+                !has_font
+            ));
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    assert!(named("one-dejavu-text"));
+    assert!(dir.join("LICENSE-DejaVu.txt").is_file());
+    Ok(())
+}
+
 #[test]
 fn the_declaration_check_tells_good_from_missing() -> Result<(), Box<dyn std::error::Error>> {
     let dir = std::env::temp_dir().join(format!("de-declaration-{}", std::process::id()));

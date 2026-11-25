@@ -739,7 +739,7 @@ fn overlays_within(
         budget = budget.saturating_sub(added.saturating_add(failed));
         if added > 0 {
             texts.drawn = texts.drawn.saturating_add(1);
-            if let board_model::TextFont::TrueType { name } = &t.font {
+            if let board_model::TextFont::TrueType { name, .. } = &t.font {
                 let n = texts.truetype.entry(name.clone()).or_default();
                 *n = n.saturating_add(1);
             }

@@ -819,6 +819,8 @@ fn truetype_font_notes_are_capped_at_twenty_names() {
         let mut t = text_on(3, "H", 2.0, p(10.0, 10.0 + f64::from(i) * 5.0));
         t.font = board_model::TextFont::TrueType {
             name: format!("Font {i:02}"),
+            bold: false,
+            italic: false,
         };
         b.texts.push(t);
     }
