@@ -12,12 +12,14 @@
 //! the top of a capital at -12. The text's height is taken as the height of a capital, and its
 //! position as the left end of its baseline, before it is mirrored and turned.
 
+use std::collections::{HashMap, HashSet};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::OnceLock;
 
 use board_model::{Point, Text, TextFont};
 use geo::orient::{Direction, Orient};
-use geo::{BooleanOps, Coord, MultiPolygon, Polygon};
+use geo::algorithm::bool_ops::FillRule;
+use geo::{BooleanOps, Coord, LineString, MultiPolygon, Polygon};
 use ttf_parser::{Face, GlyphId, OutlineBuilder};
 
 /// Font units from the top of a capital down to the baseline.
@@ -192,6 +194,15 @@ pub(super) fn draw(text: &Text) -> Option<Drawn> {
 const MAX_GLYPH_POINTS: usize = 20_000;
 /// The most contours one glyph may have; a glyph with more is not drawn.
 const MAX_GLYPH_CONTOURS: usize = 64;
+/// The most points a glyph may have to be united: past it the glyph is not drawn, so a hostile
+/// glyph cannot make the union slow.
+const MAX_UNION_POINTS: usize = 5_000;
+/// The most levels of composite glyphs inside composite glyphs a glyph may have. The font
+/// library follows these without a limit on how many components each level has, so the
+/// structure is checked before any glyph is outlined.
+const MAX_COMPOSITE_DEPTH: u32 = 8;
+/// The most simple glyphs a glyph may expand to once all its composite parts are followed.
+const MAX_COMPOSITE_PARTS: u64 = 64;
 /// The most straight pieces one curve is cut into (DejaVu's curves need a handful).
 const MAX_CURVE_STEPS: usize = 256;
 
@@ -338,33 +349,183 @@ fn twice_area(ring: &[Coord]) -> f64 {
         .sum()
 }
 
-/// One glyph's rings as filled areas. The rings of the glyph's main winding (the winding of its
-/// biggest ring: clockwise in a TrueType font with y up, counter-clockwise in a CFF one) are
-/// added and those of the other winding are taken away, biggest first, so that an island inside
-/// a hole (the inner part of an "@") stays. `place` maps a ring point from the text's own
-/// frame to the board. `None` when a point lands past the overlay limit or the cut fails.
+/// One glyph's rings as filled areas, by the non-zero winding rule the font format uses: a point
+/// is inside when the rings wind round it a net number of times other than zero, so a ring of
+/// the opposite winding inside another is a hole, and two separate rings of opposite winding are
+/// both filled. The rings keep their own winding (geo's polygon type is not reoriented before
+/// the fill rule reads it). `place` maps a ring point from the text's own frame to the board.
+/// `None` when a point lands past the overlay limit, the glyph is too complex to unite, or the
+/// union fails.
 fn glyph_areas(rings: &[Vec<Coord>], place: &dyn Fn(Coord) -> Coord) -> Option<Vec<Polygon>> {
-    let mut rings: Vec<(f64, Vec<Coord>)> = rings
-        .iter()
-        .map(|r| (twice_area(r), r.iter().map(|&c| place(c)).collect()))
-        .filter(|(a, _)| a.abs() > 1e-12)
-        .collect();
-    rings.sort_by(|a, b| b.0.abs().total_cmp(&a.0.abs()));
-    let outer = rings.first()?.0.is_sign_negative();
-    let shape = catch_unwind(AssertUnwindSafe(|| {
-        let mut shape = MultiPolygon::new(Vec::new());
-        for (area, ring) in rings {
-            let poly = super::polygon(ring)?;
-            shape = if area.is_sign_negative() == outer {
-                shape.union(&poly)
-            } else {
-                shape.difference(&poly)
-            };
+    let points = rings.iter().fold(0usize, |n, r| n.saturating_add(r.len()));
+    if rings.len() > MAX_GLYPH_CONTOURS || points > MAX_UNION_POINTS {
+        return None;
+    }
+    let mut polygons = Vec::new();
+    for ring in rings.iter().filter(|r| twice_area(r).abs() > 1e-12) {
+        let ring: Vec<Coord> = ring.iter().map(|&c| place(c)).collect();
+        let in_range = |c: &Coord| {
+            c.x.abs() <= super::MAX_COORDINATE && c.y.abs() <= super::MAX_COORDINATE
+        };
+        if !ring.iter().all(in_range) {
+            return None;
         }
-        Some(shape.orient(Direction::Default))
+        polygons.push(Polygon::new(LineString::from(ring), Vec::new()));
+    }
+    let shape = catch_unwind(AssertUnwindSafe(|| {
+        MultiPolygon::new(polygons)
+            .union_with_fill_rule(&MultiPolygon::new(Vec::new()), FillRule::NonZero)
+            .orient(Direction::Default)
     }))
-    .ok()??;
+    .ok()?;
     Some(shape.0)
+}
+
+/// The glyph table's composite glyphs, measured before anything is outlined: the font library
+/// follows a composite glyph's parts to a depth of 32 but with no limit on their number, so a
+/// chain of composites that each use the next one twice would take 2^31 steps. The layout is
+/// the public OpenType `glyf` and `loca` tables.
+struct Composites<'a> {
+    glyf: &'a [u8],
+    loca: &'a [u8],
+    long_loca: bool,
+    /// Per glyph: its height in composite levels and its number of simple parts, or `None` when
+    /// it is refused.
+    done: HashMap<u16, Option<(u32, u64)>>,
+    /// Glyphs being measured: meeting one again is a cycle.
+    active: HashSet<u16>,
+}
+
+/// Why a glyph cannot be measured.
+enum Unfit {
+    /// It is too deep or wide, loops, or its data is damaged.
+    Refused,
+    /// A measurement went deeper than [`MAX_COMPOSITE_DEPTH`]; the glyph it started from is
+    /// refused, but the glyphs in between may be fine from elsewhere.
+    TooDeep,
+}
+
+fn be16(data: &[u8], at: usize) -> Option<u16> {
+    let end = at.checked_add(2)?;
+    Some(u16::from_be_bytes(data.get(at..end)?.try_into().ok()?))
+}
+
+fn be32(data: &[u8], at: usize) -> Option<u32> {
+    let end = at.checked_add(4)?;
+    Some(u32::from_be_bytes(data.get(at..end)?.try_into().ok()?))
+}
+
+impl<'a> Composites<'a> {
+    /// `Ok(None)` for a font without a `glyf` table (outlines of another kind, which the
+    /// library does not follow this way); `Err` when it has one but no usable `loca`.
+    fn new(face: &Face<'a>) -> Result<Option<Self>, FontError> {
+        let raw = face.raw_face();
+        let Some(glyf) = raw.table(ttf_parser::Tag::from_bytes(b"glyf")) else {
+            return Ok(None);
+        };
+        let loca = raw
+            .table(ttf_parser::Tag::from_bytes(b"loca"))
+            .ok_or(FontError)?;
+        let long_loca = face.tables().head.index_to_location_format
+            == ttf_parser::head::IndexToLocationFormat::Long;
+        Ok(Some(Self {
+            glyf,
+            loca,
+            long_loca,
+            done: HashMap::new(),
+            active: HashSet::new(),
+        }))
+    }
+
+    /// The bytes of a glyph (empty for a glyph without outline), or `None` if damaged.
+    fn data(&self, gid: u16) -> Option<&'a [u8]> {
+        let i = usize::from(gid);
+        let at = |n: usize| -> Option<usize> {
+            if self.long_loca {
+                usize::try_from(be32(self.loca, n.checked_mul(4)?)?).ok()
+            } else {
+                Some(usize::from(be16(self.loca, n.checked_mul(2)?)?).checked_mul(2)?)
+            }
+        };
+        let (start, end) = (at(i)?, at(i.checked_add(1)?)?);
+        self.glyf.get(start..end)
+    }
+
+    fn visit(&mut self, gid: u16, level: u32) -> Result<(u32, u64), Unfit> {
+        if let Some(known) = self.done.get(&gid) {
+            return known.ok_or(Unfit::Refused);
+        }
+        if level > MAX_COMPOSITE_DEPTH {
+            return Err(Unfit::TooDeep);
+        }
+        if !self.active.insert(gid) {
+            return Err(Unfit::Refused);
+        }
+        let measured = self.measure(gid, level);
+        self.active.remove(&gid);
+        match &measured {
+            Ok(m) => {
+                self.done.insert(gid, Some(*m));
+            }
+            Err(Unfit::Refused) => {
+                self.done.insert(gid, None);
+            }
+            Err(Unfit::TooDeep) => {}
+        }
+        measured
+    }
+
+    fn measure(&mut self, gid: u16, level: u32) -> Result<(u32, u64), Unfit> {
+        let data = self.data(gid).ok_or(Unfit::Refused)?;
+        // A simple glyph, or none: one part. A composite has a negative contour count.
+        if data.len() < 10 || be16(data, 0).is_none_or(|n| n < 0x8000) {
+            return Ok((0, 1));
+        }
+        const ARGS_ARE_WORDS: u16 = 0x0001;
+        const MORE_COMPONENTS: u16 = 0x0020;
+        const HAVE_SCALE: u16 = 0x0008;
+        const HAVE_XY_SCALE: u16 = 0x0040;
+        const HAVE_2X2: u16 = 0x0080;
+        let (mut at, mut height, mut parts) = (10usize, 0u32, 0u64);
+        loop {
+            let flags = be16(data, at).ok_or(Unfit::Refused)?;
+            let part = be16(data, at.saturating_add(2)).ok_or(Unfit::Refused)?;
+            let (child_height, child_parts) = self.visit(part, level.saturating_add(1))?;
+            height = height.max(child_height.saturating_add(1));
+            parts = parts.saturating_add(child_parts);
+            if height > MAX_COMPOSITE_DEPTH || parts > MAX_COMPOSITE_PARTS {
+                return Err(Unfit::Refused);
+            }
+            let args = if flags & ARGS_ARE_WORDS != 0 { 4 } else { 2 };
+            let transform = if flags & HAVE_SCALE != 0 {
+                2
+            } else if flags & HAVE_XY_SCALE != 0 {
+                4
+            } else if flags & HAVE_2X2 != 0 {
+                8
+            } else {
+                0
+            };
+            at = at.saturating_add(4 + args + transform);
+            if flags & MORE_COMPONENTS == 0 {
+                return Ok((height, parts));
+            }
+        }
+    }
+}
+
+/// The glyphs among `needed` that are too deep or wide to outline safely.
+fn refused_composites(face: &Face, needed: &[GlyphId]) -> Result<HashSet<u16>, FontError> {
+    let mut refused = HashSet::new();
+    let Some(mut table) = Composites::new(face)? else {
+        return Ok(refused);
+    };
+    for gid in needed {
+        if table.visit(gid.0, 0).is_err() {
+            refused.insert(gid.0);
+        }
+    }
+    Ok(refused)
 }
 
 /// `text` drawn with the glyph outlines of the TrueType file `font`, using at most `budget`
@@ -400,7 +561,6 @@ pub(super) fn outline(
     // Where each glyph goes: its pen position in font units and its line.
     let mut placed: Vec<(GlyphId, f64, f64)> = Vec::new();
     let (mut pen_x, mut line) = (0.0f64, 0.0f64);
-    let mut ink_left = f64::INFINITY;
     for c in text.content.chars().take(MAX_CHARS) {
         match c {
             '\n' => {
@@ -415,15 +575,27 @@ pub(super) fn outline(
             out.missing = out.missing.saturating_add(1);
             GlyphId(0)
         });
-        if let Some(b) = face.glyph_bounding_box(gid) {
-            ink_left = ink_left.min(pen_x + f64::from(b.x_min));
-        }
         placed.push((gid, pen_x, line));
         pen_x += face.glyph_hor_advance(gid).map_or(0.0, f64::from);
     }
-    if !ink_left.is_finite() {
-        ink_left = 0.0;
-    }
+    // The composites are measured before the library outlines anything: its bounding box of a
+    // glyph is made by outlining it.
+    let needed: Vec<GlyphId> = placed.iter().map(|p| p.0).collect();
+    let refused = refused_composites(&face, &needed)?;
+    let mut boxes: HashMap<u16, Option<ttf_parser::Rect>> = HashMap::new();
+    let mut ink = |gid: GlyphId| {
+        if refused.contains(&gid.0) {
+            return None;
+        }
+        *boxes
+            .entry(gid.0)
+            .or_insert_with(|| face.glyph_bounding_box(gid))
+    };
+    let ink_left = placed
+        .iter()
+        .filter_map(|&(gid, x, _)| ink(gid).map(|b| x + f64::from(b.x_min)))
+        .fold(f64::INFINITY, f64::min);
+    let ink_left = if ink_left.is_finite() { ink_left } else { 0.0 };
     let (sin, cos) = text.rotation_deg.to_radians().sin_cos();
     let mirror = if text.mirrored { -1.0 } else { 1.0 };
     let place = |c: Coord| {
@@ -437,9 +609,16 @@ pub(super) fn outline(
     let mut exhausted = false;
     for (gid, x, line) in placed {
         if exhausted {
-            if face.glyph_bounding_box(gid).is_some() {
+            if refused.contains(&gid.0) || ink(gid).is_some() {
                 out.over_budget = out.over_budget.saturating_add(1);
             }
+            continue;
+        }
+        // Every glyph with ink costs at least one point, whether it is drawn or not.
+        if refused.contains(&gid.0) {
+            out.failed = out.failed.saturating_add(1);
+            out.points = out.points.saturating_add(1);
+            left = left.saturating_sub(1);
             continue;
         }
         let mut flat = Flatten {
@@ -453,20 +632,29 @@ pub(super) fn outline(
             over: false,
         };
         if face.outline_glyph(gid, &mut flat).is_none() {
+            if ink(gid).is_some() {
+                out.failed = out.failed.saturating_add(1);
+                out.points = out.points.saturating_add(1);
+                left = left.saturating_sub(1);
+            }
             continue;
         }
         flat.finish();
+        let cost = flat.points.max(1);
+        out.points = out.points.saturating_add(cost);
         if flat.over {
+            // Past its own cap: stop the text, a glyph like it costs too much to look for more.
             out.failed = out.failed.saturating_add(1);
+            exhausted = true;
             continue;
         }
-        if flat.points > left {
+        if cost > left {
             exhausted = true;
+            left = 0;
             out.over_budget = out.over_budget.saturating_add(1);
             continue;
         }
-        left = left.saturating_sub(flat.points);
-        out.points = out.points.saturating_add(flat.points);
+        left = left.saturating_sub(cost);
         match glyph_areas(&flat.rings, &place) {
             Some(areas) => out.areas.extend(areas),
             None => out.failed = out.failed.saturating_add(1),
@@ -607,5 +795,210 @@ mod tests {
             italic: false,
         };
         assert!(close(draw(&t).unwrap().pen, 0.21));
+    }
+
+    // ---- outlines ----
+
+    fn be(out: &mut Vec<u8>, v: u32, bytes: usize) {
+        out.extend_from_slice(v.to_be_bytes().get(4 - bytes..).unwrap());
+    }
+
+    /// A 100 x 100 square as a simple glyph.
+    fn square_glyph() -> Vec<u8> {
+        let mut g = Vec::new();
+        for v in [1u32, 0, 0, 100, 100] {
+            be(&mut g, v, 2); // contours, then the box
+        }
+        be(&mut g, 3, 2); // last point of the one contour
+        be(&mut g, 0, 2); // no instructions
+        g.extend_from_slice(&[1, 1, 1, 1]); // on-curve, 16-bit deltas
+        for dx in [0i32, 100, 0, -100] {
+            g.extend_from_slice(&(dx as i16).to_be_bytes());
+        }
+        for dy in [0i32, 0, 100, 0] {
+            g.extend_from_slice(&(dy as i16).to_be_bytes());
+        }
+        g
+    }
+
+    /// A composite glyph made of `parts` uses of glyph `child`.
+    fn composite_glyph(child: u16, parts: usize) -> Vec<u8> {
+        let mut g = Vec::new();
+        be(&mut g, 0xffff, 2);
+        g.extend_from_slice(&[0; 8]);
+        for i in 0..parts {
+            let more = if i + 1 < parts { 0x20 } else { 0 };
+            be(&mut g, 0x02 | more, 2);
+            be(&mut g, u32::from(child), 2);
+            g.extend_from_slice(&[0, 0]);
+        }
+        g
+    }
+
+    /// A font by hand: glyph 0 (which every character maps to, as there is no `cmap`) is the
+    /// first of `glyphs`.
+    fn font_of(glyphs: &[Vec<u8>]) -> Vec<u8> {
+        let n = glyphs.len() as u32;
+        let (mut glyf, mut loca) = (Vec::new(), Vec::new());
+        for g in glyphs {
+            be(&mut loca, glyf.len() as u32, 4);
+            glyf.extend_from_slice(g);
+            while glyf.len() % 4 != 0 {
+                glyf.push(0);
+            }
+        }
+        be(&mut loca, glyf.len() as u32, 4);
+        let mut head = vec![0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        be(&mut head, 0x5f0f3cf5, 4);
+        be(&mut head, 0, 2);
+        be(&mut head, 1000, 2); // units per em
+        head.extend_from_slice(&[0; 16]);
+        head.extend_from_slice(&[0; 8]);
+        head.extend_from_slice(&[0; 6]); // mac style .. direction hint
+        be(&mut head, 1, 2); // long loca
+        be(&mut head, 0, 2);
+        let mut hhea = vec![0, 1, 0, 0];
+        for v in [800u32, 0xff38, 0, 1000] {
+            be(&mut hhea, v, 2); // ascender 800, descender -200
+        }
+        hhea.extend_from_slice(&[0; 22]);
+        be(&mut hhea, n, 2);
+        let mut maxp = vec![0, 1, 0, 0];
+        be(&mut maxp, n, 2);
+        let mut hmtx = Vec::new();
+        for _ in 0..n {
+            be(&mut hmtx, 500, 2);
+            be(&mut hmtx, 0, 2);
+        }
+        let tables = [
+            (b"glyf", glyf),
+            (b"head", head),
+            (b"hhea", hhea),
+            (b"hmtx", hmtx),
+            (b"loca", loca),
+            (b"maxp", maxp),
+        ];
+        let mut file = vec![0, 1, 0, 0];
+        be(&mut file, tables.len() as u32, 2);
+        file.extend_from_slice(&[0; 6]);
+        let mut at = 12 + 16 * tables.len();
+        for (tag, data) in &tables {
+            file.extend_from_slice(*tag);
+            be(&mut file, 0, 4);
+            be(&mut file, at as u32, 4);
+            be(&mut file, data.len() as u32, 4);
+            at += data.len().div_ceil(4) * 4;
+        }
+        for (_, data) in &tables {
+            file.extend_from_slice(data);
+            while file.len() % 4 != 0 {
+                file.push(0);
+            }
+        }
+        file
+    }
+
+    /// Glyph 0 uses glyph 1 twice, glyph 1 glyph 2 twice, and so on down to a square.
+    fn chain_font(levels: usize) -> Vec<u8> {
+        let mut glyphs: Vec<Vec<u8>> = (0..levels)
+            .map(|i| composite_glyph(u16::try_from(i + 1).unwrap(), 2))
+            .collect();
+        glyphs.push(square_glyph());
+        font_of(&glyphs)
+    }
+
+    fn text_in_font() -> Text {
+        let mut t = text("A", 0.0, false);
+        t.font = TextFont::TrueType {
+            name: "Test".into(),
+            bold: false,
+            italic: false,
+        };
+        t
+    }
+
+    #[test]
+    fn a_hand_made_font_draws_a_square() {
+        let o = outline(&text_in_font(), &font_of(&[square_glyph()]), 1_000)
+            .ok()
+            .unwrap()
+            .unwrap();
+        // 100 units of 1000 per em, with a text height of 2.1 over the 1000 unit span.
+        assert_eq!((o.areas.len(), o.failed, o.missing), (1, 0, 1));
+        let w = o.areas[0].exterior().0.iter().map(|c| c.x).fold(0.0, f64::max);
+        assert!(close(w - 10.0, 0.21), "{w}");
+    }
+
+    #[test]
+    fn a_shallow_composite_is_drawn() {
+        // Four levels of two parts: 16 squares, 4 deep.
+        let o = outline(&text_in_font(), &chain_font(4), 1_000).ok().unwrap().unwrap();
+        assert_eq!((o.areas.len(), o.failed), (1, 0));
+    }
+
+    #[test]
+    fn composites_too_wide_or_too_deep_are_refused_before_they_are_outlined() {
+        // Seven levels of two parts: 128 squares, over the 64 allowed.
+        let wide = outline(&text_in_font(), &chain_font(7), 1_000);
+        let wide = wide.ok().unwrap().unwrap();
+        assert_eq!((wide.areas.len(), wide.failed), (0, 1));
+        // 31 levels of two parts would take 2^31 steps if outlined; it returns at once.
+        let deep = outline(&text_in_font(), &chain_font(31), 1_000);
+        let deep = deep.ok().unwrap().unwrap();
+        assert_eq!((deep.areas.len(), deep.failed), (0, 1));
+        // A refused glyph still costs a point.
+        assert_eq!(deep.points, 1);
+    }
+
+    #[test]
+    fn a_composite_that_uses_itself_is_refused() {
+        let glyphs = [composite_glyph(0, 1), square_glyph()];
+        let o = outline(&text_in_font(), &font_of(&glyphs), 1_000).ok().unwrap().unwrap();
+        assert_eq!((o.areas.len(), o.failed), (0, 1));
+    }
+
+    #[test]
+    fn a_glyph_table_without_a_location_table_is_unusable() {
+        let mut font = font_of(&[square_glyph()]);
+        // Rename the `loca` table's tag.
+        let at = font.windows(4).position(|w| w == b"loca").unwrap();
+        font[at..at + 4].copy_from_slice(b"lopa");
+        assert!(outline(&text_in_font(), &font, 1_000).is_err());
+    }
+
+    fn ring(points: &[(f64, f64)]) -> Vec<Coord> {
+        points.iter().map(|&(x, y)| Coord { x, y }).collect()
+    }
+
+    #[test]
+    fn two_separate_rings_of_opposite_winding_are_both_filled() {
+        let ccw = ring(&[(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]);
+        let cw = ring(&[(5.0, 0.0), (5.0, 1.0), (6.0, 1.0), (6.0, 0.0)]);
+        let areas = glyph_areas(&[ccw, cw], &|c| c).unwrap();
+        assert_eq!(areas.len(), 2, "{areas:?}");
+        assert!(areas.iter().all(|a| a.interiors().is_empty()));
+    }
+
+    #[test]
+    fn a_ring_of_opposite_winding_inside_another_is_a_hole() {
+        let outer = ring(&[(0.0, 0.0), (4.0, 0.0), (4.0, 4.0), (0.0, 4.0)]);
+        let inner = ring(&[(1.0, 1.0), (1.0, 3.0), (3.0, 3.0), (3.0, 1.0)]);
+        let areas = glyph_areas(&[outer.clone(), inner], &|c| c).unwrap();
+        assert_eq!((areas.len(), areas[0].interiors().len()), (1, 1));
+        // The same winding inside is no hole.
+        let same = ring(&[(1.0, 1.0), (3.0, 1.0), (3.0, 3.0), (1.0, 3.0)]);
+        let areas = glyph_areas(&[outer, same], &|c| c).unwrap();
+        assert_eq!((areas.len(), areas[0].interiors().len()), (1, 0));
+    }
+
+    #[test]
+    fn a_glyph_with_too_many_points_is_not_united() {
+        let big: Vec<Coord> = (0..=MAX_UNION_POINTS)
+            .map(|i| Coord {
+                x: i as f64,
+                y: (i % 7) as f64,
+            })
+            .collect();
+        assert!(glyph_areas(&[big], &|c| c).is_none());
     }
 }

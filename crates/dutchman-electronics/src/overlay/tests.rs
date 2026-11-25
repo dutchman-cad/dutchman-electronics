@@ -1180,8 +1180,10 @@ fn dejavu_board(content: &str, rotation_deg: f64, mirrored: bool) -> (Board, Fon
 #[test]
 fn dejavu_texts_fill_the_boxes_altium_reports() {
     // The README's boxes. The layout takes the left edge of the ink from the glyphs' bounding
-    // boxes; the flattened outline touches those boxes or lies inside them by at most one chord
-    // (0.02 mm, on curved edges only), so a tolerance of 0.01 mm holds for these letters.
+    // boxes, while the boxes here come from the flattened outline, which can lie inside them
+    // by up to one chord (0.02 mm) on curved edges. The 0.01 mm tolerance is empirical for these
+    // three fonts and letters (the largest difference measured is about 0.004 mm); it is not
+    // guaranteed by the chord.
     for (name, want) in [
         ("one-dejavu-text", (10.000, 9.643, 15.936, 11.305)),
         ("one-dejavu-bold-text", (10.000, 9.977, 13.905, 11.305)),
