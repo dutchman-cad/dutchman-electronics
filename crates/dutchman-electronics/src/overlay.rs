@@ -18,7 +18,10 @@
 use std::f64::consts::PI;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
-use board_model::{Board, Contour, CopperItem, Graphic, LayerKind, PadShape, Point, Segment, Side};
+use board_model::{
+    Board, Contour, CopperItem, EmbeddedFont, Graphic, LayerKind, PadShape, Point, Segment, Side,
+    TextFont,
+};
 use geo::orient::{Direction, Orient};
 use geo::{BooleanOps, Coord, LineString, MultiPolygon, Polygon};
 use serde_json::{json, Value};
@@ -68,8 +71,9 @@ const MAX_REGION_HOLES: usize = 10_000;
 /// The most hole vertices cut from copper regions on one board, summed over all regions; a
 /// region that would go past it is drawn solid and counted in a note.
 const MAX_HOLE_VERTICES: usize = 200_000;
-/// The most pen segments drawn for all texts of a board together. Each segment becomes a polygon
-/// that is united with the rest, so without a cap a hostile board of many long texts could ask
+/// The most pen segments (or, for a text drawn with its font's outlines, flattened outline
+/// points) drawn for all texts of a board together. Each segment becomes a polygon that is
+/// united with the rest, so without a cap a hostile board of many long texts could ask
 /// for billions of them. Texts past the budget are counted in a Dropped note.
 const MAX_TEXT_SEGMENTS: usize = 2_000_000;
 /// The most TrueType font names listed one by one in notes; the rest are counted in one note.
@@ -402,7 +406,17 @@ struct TextCounts {
     cut: usize,
     /// Texts left out because the board's texts had used up [`MAX_TEXT_SEGMENTS`].
     over_budget: usize,
-    truetype: std::collections::BTreeMap<String, usize>,
+    /// TrueType texts drawn as strokes, by font name: `false` when the board does not embed the
+    /// font, `true` when its file cannot be used.
+    truetype: std::collections::BTreeMap<(String, bool), usize>,
+    /// Texts drawn with their font's own outlines.
+    outlined: usize,
+    /// Characters the embedded font has no glyph for.
+    no_glyph: usize,
+    /// Glyphs left out because the texts' budget was used up.
+    glyphs_over_budget: usize,
+    /// Glyphs that are too complex, out of range or could not be built.
+    glyphs_failed: usize,
 }
 
 #[derive(Default)]
@@ -521,10 +535,17 @@ fn mask_outline(board: &Board) -> (Option<MultiPolygon>, Pile, usize, usize) {
 
 /// The overlays of a board whose substrate is `thickness` thick (its top face at z = thickness,
 /// its bottom at z = 0, in the frame of the part named `board_part`), and notes on what was left
-/// out.
-pub fn overlays(board: &Board, thickness: f64, board_part: &str) -> (Vec<Value>, Vec<Value>) {
+/// out. `fonts` are the TrueType files the board embeds, which texts in those fonts are drawn
+/// with.
+pub fn overlays(
+    board: &Board,
+    fonts: &[EmbeddedFont],
+    thickness: f64,
+    board_part: &str,
+) -> (Vec<Value>, Vec<Value>) {
     overlays_within(
         board,
+        fonts,
         thickness,
         board_part,
         MAX_TEXT_SEGMENTS,
@@ -533,11 +554,12 @@ pub fn overlays(board: &Board, thickness: f64, board_part: &str) -> (Vec<Value>,
     )
 }
 
-/// [`overlays`] with `text_budget` as the most text segments drawn (a parameter so a test can
-/// use a small one), `hole_budget` as the most hole vertices cut from copper regions and
-/// `face_budget` as the most faces the overlays' solids have together.
+/// [`overlays`] with `text_budget` as the most text segments and outline points drawn (a
+/// parameter so a test can use a small one), `hole_budget` as the most hole vertices cut from
+/// copper regions and `face_budget` as the most faces the overlays' solids have together.
 fn overlays_within(
     board: &Board,
+    fonts: &[EmbeddedFont],
     thickness: f64,
     board_part: &str,
     text_budget: usize,
@@ -710,6 +732,31 @@ fn overlays_within(
             texts.over_budget = texts.over_budget.saturating_add(1);
             continue;
         }
+        // A TrueType text whose font the board embeds is drawn with the font's outlines; one
+        // whose font is missing or unusable falls back to strokes.
+        let mut unreadable = false;
+        if let TextFont::TrueType { .. } = &t.font {
+            if let Some(font) = fonts.iter().find(|f| f.serves(&t.font)) {
+                match text::outline(t, &font.data, budget) {
+                    Ok(Some(o)) => {
+                        budget = budget.saturating_sub(o.points);
+                        texts.cut = texts.cut.saturating_add(o.cut);
+                        texts.no_glyph = texts.no_glyph.saturating_add(o.missing);
+                        texts.glyphs_over_budget =
+                            texts.glyphs_over_budget.saturating_add(o.over_budget);
+                        texts.glyphs_failed = texts.glyphs_failed.saturating_add(o.failed);
+                        pile.polygons.extend(o.areas);
+                        texts.outlined = texts.outlined.saturating_add(1);
+                        continue;
+                    }
+                    Ok(None) => {
+                        unusable = unusable.saturating_add(1);
+                        continue;
+                    }
+                    Err(_) => unreadable = true,
+                }
+            }
+        }
         let Some(drawn) = text::draw(t) else {
             unusable = unusable.saturating_add(1);
             continue;
@@ -739,8 +786,8 @@ fn overlays_within(
         budget = budget.saturating_sub(added.saturating_add(failed));
         if added > 0 {
             texts.drawn = texts.drawn.saturating_add(1);
-            if let board_model::TextFont::TrueType { name, .. } = &t.font {
-                let n = texts.truetype.entry(name.clone()).or_default();
+            if let TextFont::TrueType { name, .. } = &t.font {
+                let n = texts.truetype.entry((name.clone(), unreadable)).or_default();
                 *n = n.saturating_add(1);
             }
         }
@@ -1012,6 +1059,14 @@ fn overlays_within(
             texts.over_budget,
             "text(s) past the drawing limit were not drawn",
         ),
+        (
+            texts.glyphs_over_budget,
+            "glyph(s) past the drawing limit were not drawn",
+        ),
+        (
+            texts.glyphs_failed,
+            "glyph(s) were too complex, too far out or could not be built and were not drawn",
+        ),
     ] {
         if count > 0 {
             notes.push(json!({ "severity": "Dropped", "message": format!("{count} {what}") }));
@@ -1028,12 +1083,17 @@ fn overlays_within(
             ),
         }));
     }
-    for (font, n) in texts.truetype.iter().take(MAX_FONT_NOTES) {
+    for ((font, unreadable), n) in texts.truetype.iter().take(MAX_FONT_NOTES) {
+        let why = if *unreadable {
+            "the board's copy of the font cannot be read"
+        } else {
+            "the board does not embed the font"
+        };
         notes.push(json!({
             "severity": "Degraded",
             "message": format!(
                 "{n} text(s) in the TrueType font \"{font}\" are drawn as single strokes, a \
-                 tenth of their height wide"
+                 tenth of their height wide, because {why}"
             ),
         }));
     }
@@ -1042,6 +1102,16 @@ fn overlays_within(
         notes.push(json!({
             "severity": "Degraded",
             "message": format!("and {more_fonts} more TrueType font(s) used by drawn texts"),
+        }));
+    }
+    if texts.no_glyph > 0 {
+        notes.push(json!({
+            "severity": "Degraded",
+            "message": format!(
+                "{} character(s) the text's font has no glyph for are drawn as the font's \
+                 missing-glyph shape, or as nothing if it has none",
+                texts.no_glyph
+            ),
         }));
     }
     if texts.missing > 0 {

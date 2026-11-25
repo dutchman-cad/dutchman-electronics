@@ -3,6 +3,31 @@ use serde_json::Value;
 
 use super::*;
 
+/// [`super::overlays`] for a board with no embedded fonts.
+fn overlays(board: &Board, thickness: f64, board_part: &str) -> (Vec<Value>, Vec<Value>) {
+    super::overlays(board, &[], thickness, board_part)
+}
+
+/// [`super::overlays_within`] for a board with no embedded fonts.
+fn overlays_within(
+    board: &Board,
+    thickness: f64,
+    board_part: &str,
+    text_budget: usize,
+    hole_budget: usize,
+    face_budget: usize,
+) -> (Vec<Value>, Vec<Value>) {
+    super::overlays_within(
+        board,
+        &[],
+        thickness,
+        board_part,
+        text_budget,
+        hole_budget,
+        face_budget,
+    )
+}
+
 fn p(x: f64, y: f64) -> Point {
     Point { x, y }
 }
@@ -1107,4 +1132,218 @@ fn the_largest_overlays_are_drawn_flat_past_the_face_budget() {
     for o in &list {
         assert!(all.contains(o["name"].as_str().unwrap()), "{all}");
     }
+}
+
+// ---- TrueType outlines ----
+
+type Fonts = Vec<board_model::EmbeddedFont>;
+
+/// A test board read through the Altium reader: its board and the font files it embeds.
+#[cfg(feature = "altium")]
+fn read_board(name: &str) -> (Board, Fonts) {
+    let path = format!(
+        "{}/../altium-pcbdoc/tests/boards/{name}.PcbDoc",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let bytes = std::fs::read(path).unwrap();
+    let outcome = crate::detect(&bytes, Some("PcbDoc"))
+        .unwrap()
+        .read(&bytes)
+        .unwrap();
+    (outcome.board, outcome.fonts)
+}
+
+/// The box (x0, y0, x1, y1) around every outer ring of an overlay.
+fn bounds(o: &Value) -> (f64, f64, f64, f64) {
+    let (mut x0, mut y0, mut x1, mut y1) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
+    for a in o["areas"].as_array().unwrap() {
+        for q in a["outer"].as_array().unwrap() {
+            let (x, y) = (q[0].as_f64().unwrap(), q[1].as_f64().unwrap());
+            (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x), y1.max(y));
+        }
+    }
+    (x0, y0, x1, y1)
+}
+
+/// A one-text silkscreen board: "one-dejavu-text" with its text changed.
+#[cfg(feature = "altium")]
+fn dejavu_board(content: &str, rotation_deg: f64, mirrored: bool) -> (Board, Fonts) {
+    let (mut b, fonts) = read_board("one-dejavu-text");
+    let t = &mut b.texts[0];
+    t.content = content.into();
+    t.rotation_deg = rotation_deg;
+    t.mirrored = mirrored;
+    (b, fonts)
+}
+
+#[cfg(feature = "altium")]
+#[test]
+fn dejavu_texts_fill_the_boxes_altium_reports() {
+    // The README's boxes. The layout takes the left edge of the ink from the glyphs' bounding
+    // boxes; the flattened outline touches those boxes or lies inside them by at most one chord
+    // (0.02 mm, on curved edges only), so a tolerance of 0.01 mm holds for these letters.
+    for (name, want) in [
+        ("one-dejavu-text", (10.000, 9.643, 15.936, 11.305)),
+        ("one-dejavu-bold-text", (10.000, 9.977, 13.905, 11.305)),
+        ("one-dejavu-italic-text", (10.000, 9.977, 16.075, 11.313)),
+    ] {
+        let (b, fonts) = read_board(name);
+        assert_eq!(b.texts.len(), 1, "{name}");
+        let (list, notes) = super::overlays(&b, &fonts, 1.6, "Board");
+        let got = bounds(named(&list, "Silkscreen top"));
+        eprintln!("{name}: {got:?} against {want:?}");
+        let pairs = [(got.0, want.0), (got.1, want.1), (got.2, want.2), (got.3, want.3)];
+        for (g, w) in pairs {
+            assert!((g - w).abs() < 0.01, "{name}: {got:?} against {want:?}");
+        }
+        let m = messages(&notes);
+        assert!(
+            m.iter()
+                .all(|m| !m.contains("single strokes") && !m.contains("Hershey")),
+            "a text in its own font is not degraded: {m:?}"
+        );
+    }
+}
+
+#[cfg(feature = "altium")]
+#[test]
+fn a_hole_in_a_letter_stays_a_hole() {
+    // "O" is a ring: one area with one hole.
+    let (b, fonts) = dejavu_board("O", 0.0, false);
+    let (list, _) = super::overlays(&b, &fonts, 1.6, "Board");
+    let o = named(&list, "Silkscreen top");
+    let areas = o["areas"].as_array().unwrap();
+    assert_eq!(areas.len(), 1);
+    assert_eq!(areas[0]["holes"].as_array().unwrap().len(), 1);
+    assert!(area(o) < ring_area(&areas[0]["outer"]) * 0.8);
+    // "B" has two holes.
+    let (b, fonts) = dejavu_board("B", 0.0, false);
+    let (list, _) = super::overlays(&b, &fonts, 1.6, "Board");
+    let o = named(&list, "Silkscreen top");
+    let areas = o["areas"].as_array().unwrap();
+    assert_eq!(areas.len(), 1);
+    assert_eq!(areas[0]["holes"].as_array().unwrap().len(), 2);
+}
+
+#[cfg(feature = "altium")]
+#[test]
+fn a_mirrored_text_runs_left_and_a_turned_one_runs_up() {
+    let flat = {
+        let (b, fonts) = dejavu_board("DejaVu", 0.0, false);
+        let (list, _) = super::overlays(&b, &fonts, 1.6, "Board");
+        bounds(named(&list, "Silkscreen top"))
+    };
+    let height = flat.3 - flat.1;
+    // Mirrored (a bottom text): the ink's left edge becomes its right edge, at the position.
+    let (mut b, fonts) = dejavu_board("DejaVu", 0.0, true);
+    b.layers.push(board_model::Layer {
+        name: "Bottom Overlay".into(),
+        kind: LayerKind::Silkscreen,
+        side: Some(Side::Bottom),
+    });
+    b.texts[0].layer = b.layers.len() - 1;
+    let (list, _) = super::overlays(&b, &fonts, 1.6, "Board");
+    let m = bounds(named(&list, "Silkscreen bottom"));
+    assert!((m.2 - (10.0 - (flat.0 - 10.0))).abs() < 1e-5, "{m:?}");
+    assert!((m.0 - (10.0 - (flat.2 - 10.0))).abs() < 1e-5, "{m:?}");
+    assert!((m.1 - flat.1).abs() < 1e-5 && (m.3 - flat.3).abs() < 1e-5, "{m:?}");
+    // Turned 90 degrees counter-clockwise: the text runs up from the position and its letters
+    // stand to the left of it (local (x, y) lands at (10 - y, 10 + x)).
+    let (b, fonts) = dejavu_board("DejaVu", 90.0, false);
+    let (list, _) = super::overlays(&b, &fonts, 1.6, "Board");
+    let t = bounds(named(&list, "Silkscreen top"));
+    assert!((t.1 - flat.0).abs() < 1e-5 && (t.3 - flat.2).abs() < 1e-5, "{t:?}");
+    assert!((t.0 - (10.0 - (flat.3 - 10.0))).abs() < 1e-5, "{t:?}");
+    assert!((t.2 - (10.0 - (flat.1 - 10.0))).abs() < 1e-5, "{t:?}");
+    assert!((t.2 - t.0 - height).abs() < 1e-5, "{t:?}");
+}
+
+#[cfg(feature = "altium")]
+#[test]
+fn a_font_that_does_not_parse_falls_back_to_strokes_with_a_note() {
+    let (b, mut fonts) = dejavu_board("DejaVu", 0.0, false);
+    fonts[0].data = b"this is not a font".to_vec();
+    let (list, notes) = super::overlays(&b, &fonts, 1.6, "Board");
+    assert!(area(named(&list, "Silkscreen top")) > 0.0);
+    let m = messages(&notes);
+    assert!(
+        m.iter().any(|m| m.contains("\"DejaVu Sans Mono\"")
+            && m.contains("single strokes")
+            && m.contains("cannot be read")),
+        "{m:?}"
+    );
+}
+
+#[cfg(feature = "altium")]
+#[test]
+fn a_font_the_board_does_not_embed_falls_back_to_strokes_with_a_note() {
+    let (mut b, fonts) = dejavu_board("DejaVu", 0.0, false);
+    b.texts[0].font = board_model::TextFont::TrueType {
+        name: "Arial".into(),
+        bold: false,
+        italic: false,
+    };
+    let (list, notes) = super::overlays(&b, &fonts, 1.6, "Board");
+    assert!(area(named(&list, "Silkscreen top")) > 0.0);
+    let m = messages(&notes);
+    assert!(
+        m.iter()
+            .any(|m| m.contains("\"Arial\"") && m.contains("does not embed")),
+        "{m:?}"
+    );
+}
+
+#[cfg(feature = "altium")]
+#[test]
+fn outline_points_count_against_the_text_budget() {
+    // A budget of 20 points holds not even one letter: nothing is drawn, and all six glyphs
+    // are counted.
+    let (b, fonts) = dejavu_board("DejaVu", 0.0, false);
+    let (list, notes) = super::overlays_within(
+        &b,
+        &fonts,
+        1.6,
+        "Board",
+        20,
+        MAX_HOLE_VERTICES,
+        MAX_SOLID_FACES,
+    );
+    assert!(list.iter().all(|o| o["name"] != "Silkscreen top"));
+    let m = messages(&notes);
+    assert!(
+        m.contains(&"6 glyph(s) past the drawing limit were not drawn".to_string()),
+        "{m:?}"
+    );
+    // A budget for some glyphs but not all draws the first ones and counts the rest.
+    let (list, notes) = super::overlays_within(
+        &b,
+        &fonts,
+        1.6,
+        "Board",
+        150,
+        MAX_HOLE_VERTICES,
+        MAX_SOLID_FACES,
+    );
+    assert!(area(named(&list, "Silkscreen top")) > 0.0);
+    assert!(
+        messages(&notes)
+            .iter()
+            .any(|m| m.ends_with("glyph(s) past the drawing limit were not drawn")),
+        "{notes:?}"
+    );
+}
+
+#[cfg(feature = "altium")]
+#[test]
+fn a_character_the_font_lacks_is_noted() {
+    // U+0E01 (Thai) is not in DejaVu Sans Mono; it draws as the .notdef glyph.
+    let (b, fonts) = dejavu_board("A\u{0e01}", 0.0, false);
+    let (list, notes) = super::overlays(&b, &fonts, 1.6, "Board");
+    assert!(area(named(&list, "Silkscreen top")) > 0.0);
+    assert!(
+        messages(&notes)
+            .iter()
+            .any(|m| m.starts_with("1 character(s) the text's font has no glyph for")),
+        "{notes:?}"
+    );
 }
