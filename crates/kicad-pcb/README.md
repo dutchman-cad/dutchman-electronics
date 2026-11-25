@@ -27,6 +27,25 @@ Texts are anchored by their middle in KiCad and at the left end of their baselin
 Without glyph widths the reader estimates the shift (0.6 of the height per letter) and says so in
 a note.
 
+## What is not exact
+
+- Cutouts are told from the outline by their bounding boxes (an arc counts as its whole
+  circle), so a contour that sticks out of the biggest one's box is dropped with a note, and a
+  cutout is not tested to lie inside the outline's shape.
+- A full circle is one arc with equal start and end angles, as the model defines it.
+- Outline pieces are joined within 5 micrometres (our choice: KiCad gives an arc by three
+  rounded points, which leave its ends about a micrometre off). Only the first 5000 loose
+  Edge.Cuts pieces are joined; the rest are dropped with a note.
+- Numbers beyond 100 m for a position or 10 m for a size make the item holding them unreadable
+  (dropped with a note). A file may hold at most 4 million nodes (about 100 bytes each once
+  read).
+- Text widths (0.6 of the height per letter, used to place centred and right-aligned text) and
+  the pen width of a text that sets none (0.12 of its height, from KiCad's 0.15 mm pen on a
+  1.27 mm text) are our own estimates, not KiCad's metrics.
+- A slotted hole is read as a round hole as wide as the slot's narrow side; a hole set off-centre
+  in its pad is drawn centred (a warning).
+- A zone's fill is the polygon KiCad saved, with its zero-width bridges to the holes.
+
 ## Frames
 
 KiCad has Y pointing down; the model has Y up, so the reader negates every Y. A footprint's
@@ -55,7 +74,9 @@ layer) the behaviour comes from those boards and from KiCad's own exports of the
 ## Tests
 
 `tests/boards/*.kicad_pcb` are CC0 boards, one feature each, with every number in the board's
-`README.txt`. `fixtures/kicad/run.sh` rebuilds them (needs podman). `tests/hand_written.rs`
+`README.txt`; the `k10-` boards are the same boards made with KiCad 10.0.8 and must read the
+same. `model-placements` pins where a model lands on a top and a bottom part against KiCad's own
+VRML export. `fixtures/kicad/run.sh` rebuilds them (needs podman). `tests/hand_written.rs`
 covers what no KiCad-made board holds yet from text written by hand from the documentation: the
 stack-up table, older and newer version numbers and net names written as strings. Real
 KiCad-made boards with a saved stack-up, and larger open-hardware boards, are still wanted (see
