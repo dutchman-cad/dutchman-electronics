@@ -513,6 +513,7 @@ impl Reader {
             rotation_deg,
             mirrored,
             font: TextFont::Stroke { width: thickness },
+            component: None,
         });
     }
 
@@ -771,6 +772,7 @@ impl Reader {
             rotation_deg: angle,
             side: if bottom { Side::Bottom } else { Side::Top },
             model,
+            comment: String::new(),
         });
     }
 
