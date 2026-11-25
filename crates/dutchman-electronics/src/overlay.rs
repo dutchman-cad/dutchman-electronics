@@ -1,4 +1,4 @@
-//! Copper and silkscreen as flat overlays for the parts package (`overlays` in
+//! Copper, silkscreen and solder mask as thin overlays for the parts package (`overlays` in
 //! `dutchman.parts/1`, agreed on dutchman-cad/dutchman#1005).
 //!
 //! Dutchman only draws polygons, so all the geometry happens here: every item becomes a polygon
@@ -6,7 +6,12 @@
 //! overlay are united, every drill is cut out, and masked copper stops where a pad begins. Arcs
 //! are polylines within [`CHORD`] mm. Up to eight overlays come out, for each side: copper under
 //! the mask (`masked`), bare pad copper (`bare`), silkscreen, and the solder mask itself (the
-//! board face less the bare pads and every drill). Each carries its colour from [`crate::colors`].
+//! board face less the bare pads, the masked copper and every drill). Each carries its colour from
+//! [`crate::colors`] and a `thickness`: every area is extruded from its `z` away from the board.
+//! Copper starts at the face and is [`COPPER_THICKNESS`] thick, the mask starts there too and is
+//! [`MASK_THICKNESS`] thick (so copper stands proud of it), silkscreen starts on top of the
+//! copper. The bottom side mirrors the top. Past [`MAX_SOLID_FACES`] the largest overlays are
+//! drawn flat, and a note says which.
 //!
 //! This module knows the neutral board model only, nothing about any input format.
 
@@ -24,18 +29,30 @@ use crate::colors::{
 
 /// The most an arc's polyline strays from the true arc, in mm.
 pub const CHORD: f64 = 0.02;
-/// How far bare copper (the pads, seen through the mask openings) is drawn off the board face,
-/// in mm (as SolidCraft's KiCad import does).
-pub const COPPER_LIFT: f64 = 0.001;
-/// How far copper under the mask is drawn off the board face, in mm: just above the mask, in
-/// the mask-tinted colour, so tracks and pours show the way they do through a real mask even
-/// where a viewer draws the mask opaque.
-pub const MASKED_COPPER_LIFT: f64 = 0.007;
-/// How far silkscreen is drawn off the board face, in mm.
-pub const SILK_LIFT: f64 = 0.01;
-/// How far the solder mask is drawn off the board face, in mm: above the bare pads, below the
-/// copper under it (see [`MASKED_COPPER_LIFT`]) and the silkscreen.
-pub const MASK_LIFT: f64 = 0.005;
+/// How thick copper is, in mm (35 um, 1 oz): bare pads and copper under the mask are each
+/// extruded this far from the board face, away from the board.
+pub const COPPER_THICKNESS: f64 = 0.035;
+/// How thick the solder mask is, in mm (20 um). It fills only between the copper, so copper
+/// stands [`COPPER_THICKNESS`] less this proud of it.
+pub const MASK_THICKNESS: f64 = 0.020;
+/// How thick silkscreen ink is, in mm (15 um).
+pub const SILK_THICKNESS: f64 = 0.015;
+/// How far silkscreen starts off the board face, in mm: on top of the copper, which it is
+/// printed over ([`COPPER_THICKNESS`]).
+pub const SILK_LIFT: f64 = COPPER_THICKNESS;
+/// How far a flat sheet of copper under the mask (no `thickness`, see [`MAX_SOLID_FACES`]) is
+/// drawn off the board face, in mm, away from the board, so it does not share the face's plane.
+pub const FLAT_MASKED_COPPER_LIFT: f64 = 0.007;
+/// The same for a flat solder mask sheet, in mm.
+pub const FLAT_MASK_LIFT: f64 = 0.005;
+/// The same for a flat sheet of bare pads, in mm.
+pub const FLAT_PADS_LIFT: f64 = 0.001;
+/// The same for a flat silkscreen sheet, in mm.
+pub const FLAT_SILK_LIFT: f64 = 0.01;
+/// The most faces the solids of one board's overlays may have together, as estimated by
+/// [`faces`]. Dutchman refuses more, so the largest overlays are sent flat (without `thickness`)
+/// until the rest fit.
+pub const MAX_SOLID_FACES: usize = 250_000;
 /// The most points one arc is drawn with: enough to hold [`CHORD`] on a whole circle as big as
 /// [`MAX_COORDINATE`] allows.
 const MAX_ARC_POINTS: usize = 4096;
@@ -394,6 +411,48 @@ struct SideFaces {
     silk: Pile,
 }
 
+/// An estimate of the faces of the solid an overlay's `shape` extrudes to: for each area, a top
+/// and a bottom, plus one side face for each vertex of its outer ring and its holes.
+fn faces(shape: &MultiPolygon) -> usize {
+    shape.iter().fold(0usize, |total, p| {
+        let ring = |l: &LineString| l.0.len().saturating_sub(1);
+        let sides = p
+            .interiors()
+            .iter()
+            .map(ring)
+            .fold(ring(p.exterior()), usize::saturating_add);
+        total.saturating_add(sides).saturating_add(2)
+    })
+}
+
+/// Draws the largest overlays flat (no `thickness`) until the solids of the rest have at most
+/// `budget` faces together. Returns the names of the overlays drawn flat, in the order they were
+/// dropped.
+fn fit_faces(built: &mut [Built], budget: usize) -> Vec<String> {
+    let mut sizes: Vec<(usize, usize)> = built
+        .iter()
+        .enumerate()
+        .filter(|(_, b)| b.thickness.is_some())
+        .map(|(i, b)| (faces(&b.shape), i))
+        .collect();
+    let mut total = sizes.iter().fold(0usize, |t, (n, _)| t.saturating_add(*n));
+    // Largest first; the earlier overlay first among equals.
+    sizes.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    let mut flat = Vec::new();
+    for (n, i) in sizes {
+        if total <= budget {
+            break;
+        }
+        if let Some(b) = built.get_mut(i) {
+            b.thickness = None;
+            b.z = b.flat_z;
+            total = total.saturating_sub(n);
+            flat.push(b.name.clone());
+        }
+    }
+    flat
+}
+
 /// The area of a multipolygon's rings as the package carries them: `outer` counter-clockwise,
 /// `holes` clockwise, each ring open (its first point not repeated), in mm to 1 nm.
 fn areas(shape: &MultiPolygon) -> Vec<Value> {
@@ -434,6 +493,10 @@ struct Built {
     finish: Option<&'static str>,
     side: &'static str,
     z: f64,
+    /// The height the overlay is drawn at when it is flat (see [`MAX_SOLID_FACES`]).
+    flat_z: f64,
+    /// How far the areas are extruded from `z`, away from the board; `None` for a flat sheet.
+    thickness: Option<f64>,
     shape: MultiPolygon,
     color: &'static str,
     opacity: Option<f64>,
@@ -464,21 +527,30 @@ pub fn overlays(board: &Board, thickness: f64, board_part: &str) -> (Vec<Value>,
         board_part,
         MAX_TEXT_SEGMENTS,
         MAX_HOLE_VERTICES,
+        MAX_SOLID_FACES,
     )
 }
 
 /// [`overlays`] with `text_budget` as the most text segments drawn (a parameter so a test can
-/// use a small one) and `hole_budget` as the most hole vertices cut from copper regions.
+/// use a small one), `hole_budget` as the most hole vertices cut from copper regions and
+/// `face_budget` as the most faces the overlays' solids have together.
 fn overlays_within(
     board: &Board,
     thickness: f64,
     board_part: &str,
     text_budget: usize,
     hole_budget: usize,
+    face_budget: usize,
 ) -> (Vec<Value>, Vec<Value>) {
     let top = SideFaces::default();
     let bottom = SideFaces::default();
+    // The drills of pads cut copper, mask and silkscreen. Vias are drawn tented: most boards
+    // cover their vias with mask, so a via is a solid copper disc under its mask (a small raised
+    // dot), not a black hole, and its drill cuts only the silkscreen, which is not printed over
+    // a via. The board part and the plating keep the real hole. When the board file says
+    // whether a via is tented, that flag can replace this rule.
     let mut holes = Pile::default();
+    let mut via_holes = Pile::default();
     let (mut inner, mut unusable, mut other_graphics) = (0usize, 0usize, 0usize);
     let mut hole_counts = HoleCounts::default();
     let mut hole_budget = hole_budget;
@@ -557,7 +629,7 @@ fn overlays_within(
                         Some(ring) => {
                             faces.0.masked.polygons.push(ring.clone());
                             faces.1.masked.polygons.push(ring);
-                            holes.add(circle(*at, drill / 2.0), &mut unusable);
+                            via_holes.add(circle(*at, drill / 2.0), &mut unusable);
                         }
                         None => unusable = unusable.saturating_add(1),
                     }
@@ -743,31 +815,48 @@ fn overlays_within(
     // A failure inside the polygon library must not take the whole package down with it.
     let built = catch_unwind(AssertUnwindSafe(|| {
         let drilled = holes.union();
+        let via_drilled = via_holes.union();
         let face = outline.map(|o| o.difference(&cutouts.union()));
         let mut built = Vec::new();
         for (side, f, sign) in [("top", &top, 1.0), ("bottom", &bottom, -1.0)] {
-            // The top side sits above the face at z = thickness, the bottom below z = 0.
+            // The top side stacks up from the face at z = thickness, the bottom down from z = 0.
             let base = if sign > 0.0 { thickness } else { 0.0 };
             let at = |lift: f64| base + sign * lift;
-            let bare = f.bare.union().difference(&drilled);
-            let masked = f.masked.union().difference(&drilled).difference(&bare);
-            // Silkscreen is not printed over holes or on bare pads.
-            let silk = f.silk.union().difference(&drilled).difference(&bare);
-            let plain = |name: String, kind, finish, lift, shape, color| Built {
+            let (bare_all, masked_all) = (f.bare.union(), f.masked.union());
+            let bare = bare_all.difference(&drilled);
+            let masked = masked_all.difference(&drilled).difference(&bare);
+            // Silkscreen is not printed over holes, via caps or bare pads.
+            let silk = f
+                .silk
+                .union()
+                .difference(&drilled)
+                .difference(&via_drilled)
+                .difference(&bare);
+            let plain = |name: String, kind, finish, lift, flat_lift, height, shape, color| Built {
                 name,
                 kind,
                 finish,
                 side,
                 z: at(lift),
+                flat_z: at(flat_lift),
+                thickness: Some(height),
                 shape,
                 color,
                 opacity: None,
             };
+            // The mask fills only between the copper: not over the bare pads, the masked copper
+            // or the drills, so copper stands proud of it. One cut from the united shapes (the
+            // copper before its drills are taken out), so no sliver is left where edges meet.
+            let mask = face
+                .as_ref()
+                .map(|face| face.difference(&drilled.union(&bare_all).union(&masked_all)));
             built.push(plain(
                 format!("Copper {side}"),
                 "copper",
                 Some("masked"),
-                MASKED_COPPER_LIFT,
+                0.0,
+                FLAT_MASKED_COPPER_LIFT,
+                COPPER_THICKNESS,
                 masked,
                 COPPER_MASKED_COLOR,
             ));
@@ -775,8 +864,10 @@ fn overlays_within(
                 format!("Copper {side} pads"),
                 "copper",
                 Some("bare"),
-                COPPER_LIFT,
-                bare.clone(),
+                0.0,
+                FLAT_PADS_LIFT,
+                COPPER_THICKNESS,
+                bare,
                 COPPER_BARE_COLOR,
             ));
             built.push(plain(
@@ -784,19 +875,21 @@ fn overlays_within(
                 "silkscreen",
                 None,
                 SILK_LIFT,
+                FLAT_SILK_LIFT,
+                SILK_THICKNESS,
                 silk,
                 SILKSCREEN_COLOR,
             ));
-            // The mask covers the whole face except the bare pads and the drills.
-            if let Some(face) = &face {
-                let mask = face.difference(&drilled).difference(&bare);
+            if let Some(mask) = mask {
                 built.push(Built {
                     opacity: Some(MASK_OPACITY),
                     ..plain(
                         format!("Solder mask {side}"),
                         "mask",
                         None,
-                        MASK_LIFT,
+                        0.0,
+                        FLAT_MASK_LIFT,
+                        MASK_THICKNESS,
                         mask,
                         MASK_COLOR,
                     )
@@ -806,11 +899,18 @@ fn overlays_within(
         built
     }));
     match built {
-        Ok(built) => {
+        Ok(mut built) => {
+            built.retain(|b| !b.shape.0.is_empty());
+            for name in fit_faces(&mut built, face_budget) {
+                notes.push(json!({
+                    "severity": "Degraded",
+                    "message": format!(
+                        "{name} is drawn flat, without thickness: the solids of all overlays \
+                         would pass {face_budget} faces"
+                    ),
+                }));
+            }
             for b in built {
-                if b.shape.0.is_empty() {
-                    continue;
-                }
                 let mut o = json!({
                     "name": b.name,
                     "part": board_part,
@@ -823,6 +923,9 @@ fn overlays_within(
                 if let Some(map) = o.as_object_mut() {
                     if let Some(finish) = b.finish {
                         map.insert("finish".into(), json!(finish));
+                    }
+                    if let Some(height) = b.thickness {
+                        map.insert("thickness".into(), json!((height * 1e6).round() / 1e6));
                     }
                     if let Some(opacity) = b.opacity {
                         map.insert("opacity".into(), json!(opacity));

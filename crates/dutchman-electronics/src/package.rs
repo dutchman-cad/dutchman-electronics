@@ -961,15 +961,37 @@ mod tests {
             }
             let bytes = std::fs::read(&path).unwrap();
             let package = build(&path, &bytes).unwrap();
+            // The board's thickness T: the top face of its STEP solid.
+            let (_, step) = package
+                .files
+                .iter()
+                .find(|(name, _)| name == BOARD_FILE)
+                .unwrap();
+            let t = point_heights(&String::from_utf8(step.clone()).unwrap())
+                .into_iter()
+                .fold(f64::MIN, f64::max);
             for o in package.manifest["overlays"].as_array().unwrap() {
                 assert_eq!(o["part"], "Board");
                 assert!(overlay_area(o) > 0.0, "{}: {o}", path.display());
                 let z = o["z"].as_f64().unwrap();
+                // Copper and mask start at the face, silkscreen on top of the copper, and the
+                // bottom side mirrors the top below z = 0.
+                let (offset, thickness) = match o["kind"].as_str().unwrap() {
+                    "copper" => (0.0, 0.035),
+                    "mask" => (0.0, 0.020),
+                    _ => (0.035, 0.015),
+                };
+                let want = if o["side"] == "top" {
+                    t + offset
+                } else {
+                    -offset
+                };
                 assert!(
-                    z > 1.6 || z < 0.0,
-                    "{}: drawn off the faces",
+                    (z - want).abs() < 1e-5,
+                    "{}: z {z}, want {want}",
                     path.display()
                 );
+                assert_eq!(o["thickness"], thickness, "{}: {o}", path.display());
                 let color = o["color"].as_str().unwrap_or_default();
                 assert!(
                     color.len() == 7 && color.starts_with('#'),
@@ -977,13 +999,6 @@ mod tests {
                     path.display()
                 );
                 if o["kind"] == "mask" {
-                    // The mask rides 0.005 mm off the face: above the top, below the bottom.
-                    let ok = if o["side"] == "top" {
-                        z > 1.6
-                    } else {
-                        (z + 0.005).abs() < 1e-9
-                    };
-                    assert!(ok, "{}: mask z {z}", path.display());
                     assert_eq!(o["opacity"], 0.85);
                 } else {
                     assert!(o.get("opacity").is_none(), "{}: {o}", path.display());
@@ -1014,7 +1029,7 @@ mod tests {
 
     #[cfg(feature = "altium")]
     #[test]
-    fn the_solder_mask_is_the_board_less_pads_and_drills() {
+    fn the_solder_mask_is_the_board_less_pads_copper_and_drills() {
         let mask = |board: &str, side: &str| {
             let package = package_of(board);
             overlay_area(overlay_named(
@@ -1029,13 +1044,13 @@ mod tests {
         // 1500 - 2 * 0.8 = 1498.4; the bottom has no pads, so it stays 1500.
         assert!((mask("one-resistor", "top") - 1498.4).abs() < 1e-3);
         assert!((mask("one-resistor", "bottom") - 1500.0).abs() < 1e-3);
-        // one-via: the via's ring is tented (copper under the mask, not a bare pad), so only its
-        // 0.5 mm drill is open: 1500 - pi * 0.25^2 = 1499.80365. The drill is drawn as a 32-sided
-        // polygon, a little under the circle (16 * 0.25^2 * sin(11.25 deg) = 0.19509 mm2), so the
-        // tolerance is 0.003.
-        let tented = 1500.0 - std::f64::consts::PI * 0.0625;
-        assert!((mask("one-via", "top") - tented).abs() < 0.003);
-        assert!((mask("one-via", "bottom") - tented).abs() < 0.003);
+        // one-via: the mask stops at the via's copper (1.0 mm across, under the mask) and covers
+        // no drill, so a whole 1.0 mm circle is open: 1500 - pi * 0.5^2 = 1499.21460. It is drawn
+        // as a 32-sided polygon, a little under the circle (16 * 0.5^2 * sin(11.25 deg) =
+        // 0.78036 mm2 against 0.78540), so the tolerance is 0.01.
+        let open_via = 1500.0 - std::f64::consts::PI * 0.25;
+        assert!((mask("one-via", "top") - open_via).abs() < 0.01);
+        assert!((mask("one-via", "bottom") - open_via).abs() < 0.01);
         // one-plated-pad: a round 2.0 mm pad on all layers with a 1.0 mm hole. Its bare copper
         // and its drill together open the whole pad, on both faces: 1500 - pi * 1^2 = 1496.85841,
         // less a little for the 32-sided polygon (16 * sin(11.25 deg) = 3.12145 mm2 against
@@ -1093,9 +1108,9 @@ mod tests {
         assert_eq!(mask["opacity"], 0.85);
         assert_eq!(mask["kind"], "mask");
         // The board is 1.6 mm thick (the file stores 1.600002 after its unit conversion).
-        assert!((mask["z"].as_f64().unwrap() - 1.605).abs() < 1e-4);
+        assert!((mask["z"].as_f64().unwrap() - 1.6).abs() < 1e-4);
         let bottom = overlay_named(m, "one-plated-pad", "Solder mask bottom");
-        assert_eq!(bottom["z"].as_f64().unwrap(), -0.005);
+        assert_eq!(bottom["z"].as_f64().unwrap(), 0.0);
         // Masked copper and silkscreen: boards that have them.
         let track = package_of("one-track");
         assert_eq!(
@@ -1143,6 +1158,18 @@ mod tests {
         // 0.25 mm; the plating is 0.025 mm thick, so the inside radius is 0.225 mm.
         let package = package_of("one-via");
         let m = &package.manifest;
+        // The overlays draw the via tented (a solid disc under the mask), but the board keeps
+        // its drill: a 0.25 mm cylinder in board.step.
+        let top = overlay_named(m, "one-via", "Copper top");
+        assert_eq!(top["areas"][0]["holes"].as_array().unwrap().len(), 0);
+        assert!((overlay_area(top) - 0.78).abs() < 0.01);
+        let (_, board_step) = package
+            .files
+            .iter()
+            .find(|(name, _)| name == BOARD_FILE)
+            .unwrap();
+        let radii = cylinder_radii(&String::from_utf8(board_step.clone()).unwrap());
+        assert!(radii.iter().any(|r| (r - 0.25).abs() < 1e-3), "{radii:?}");
         let part = part_named(m, "Plating");
         assert_eq!(part["model"], "plating");
         assert_eq!(part["color"], "#d4af37");

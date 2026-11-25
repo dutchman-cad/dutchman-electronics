@@ -105,11 +105,12 @@ fn square(x0: f64, y0: f64, x1: f64, y1: f64) -> board_model::Contour {
 }
 
 #[test]
-fn the_mask_is_the_outline_less_cutouts_bare_pads_and_drills() {
+fn the_mask_is_the_outline_less_cutouts_pads_copper_and_drills() {
     // A 20 x 10 board (200 mm2) with a 2 x 2 cutout (4 mm2) and, on the top, a bare 1 x 1 SMD
-    // pad (1 mm2) and a via with a 0.5 mm drill (pi * 0.25^2 = 0.19635 mm2, drawn as a 32-sided
-    // polygon of 0.19509). Top mask: 200 - 4 - 1 - 0.19509 = 194.80491. Bottom: no pad, so
-    // 200 - 4 - 0.19509 = 195.80491.
+    // pad (1 mm2) and a via of 1 mm across with a 0.5 mm drill. The mask stays off the via's
+    // copper ring and its drill, so a 1 mm circle (drawn as a 32-sided polygon of 0.78036 mm2)
+    // is open on both faces. Top mask: 200 - 4 - 1 - 0.78036 = 194.21964. Bottom: no pad, so
+    // 200 - 4 - 0.78036 = 195.21964.
     let mut b = board(
         vec![
             CopperItem::Pad {
@@ -138,12 +139,14 @@ fn the_mask_is_the_outline_less_cutouts_bare_pads_and_drills() {
     let top = named(&list, "Solder mask top");
     let bottom = named(&list, "Solder mask bottom");
     assert_eq!(top["kind"], "mask");
-    assert_eq!(top["z"], 1.605);
+    // Mask z = T + 0: 1.6.
+    assert_eq!(top["z"], 1.6);
     assert_eq!(top["opacity"], 0.85);
     assert_eq!(top["color"], "#1f5f3a");
-    assert_eq!(bottom["z"], -0.005);
-    assert!((area(top) - 194.80491).abs() < 1e-3, "{}", area(top));
-    assert!((area(bottom) - 195.80491).abs() < 1e-3, "{}", area(bottom));
+    // Bottom mask z = 0 - 0: 0.
+    assert_eq!(bottom["z"], 0.0);
+    assert!((area(top) - 194.21964).abs() < 1e-3, "{}", area(top));
+    assert!((area(bottom) - 195.21964).abs() < 1e-3, "{}", area(bottom));
     // Three holes in the top mask: the cutout, the pad and the drill.
     assert_eq!(top["areas"][0]["holes"].as_array().unwrap().len(), 3);
 }
@@ -226,8 +229,9 @@ fn a_track_is_a_stroke_with_round_ends_on_its_face() {
     assert_eq!(o["kind"], "copper");
     assert_eq!(o["finish"], "masked");
     assert_eq!(o["side"], "top");
-    // Masked copper sits MASKED_COPPER_LIFT (0.007) above the 1.6 top face: 1.607.
-    assert_eq!(o["z"], 1.607);
+    // Masked copper z = T + 0 = 1.6; its thickness is 0.035.
+    assert_eq!(o["z"], 1.6);
+    assert_eq!(o["thickness"], 0.035);
     // 10 x 0.5 plus two half circles of radius 0.25; the polyline loses at most 0.02 mm a side.
     let exact = 5.0 + PI * 0.25 * 0.25;
     assert!(area(o) < exact && area(o) > exact - 0.01, "{}", area(o));
@@ -241,26 +245,32 @@ fn a_bottom_track_is_drawn_below_the_board() {
         "Board",
     );
     let o = named(&list, "Copper bottom");
-    // Masked copper sits MASKED_COPPER_LIFT (0.007) below the bottom face at 0: -0.007.
-    assert_eq!(o["z"], -0.007);
+    // Bottom masked copper z = 0 - 0 = 0, extruded down.
+    assert_eq!(o["z"], 0.0);
     assert_eq!(o["side"], "bottom");
 }
 
 #[test]
-fn a_via_is_a_ring_on_both_faces() {
-    // one-via's numbers: diameter 1, hole 0.5.
+fn a_via_is_a_tented_disc_on_both_faces() {
+    // one-via's numbers: diameter 1, hole 0.5. Vias are drawn tented: the copper is the whole
+    // disc, with no hole, and the mask stays off it.
     let via = CopperItem::Via {
         at: p(25.0, 15.0),
         diameter: 1.0,
         drill: 0.5,
     };
-    let (list, _) = overlays(&board(vec![via], vec![]), 1.6, "Board");
-    assert_eq!(list.len(), 2);
-    let ring = PI * (0.25 - 0.0625);
-    for name in ["Copper top", "Copper bottom"] {
-        let o = named(&list, name);
-        assert_eq!(o["areas"][0]["holes"].as_array().unwrap().len(), 1);
-        assert!((area(o) - ring).abs() < 0.01, "{name}: {}", area(o));
+    let mut b = board(vec![via], vec![]);
+    b.outline.outer = square(0.0, 0.0, 50.0, 30.0);
+    let (list, _) = overlays(&b, 1.6, "Board");
+    let disc = PI * 0.25;
+    for side in ["top", "bottom"] {
+        let o = named(&list, &format!("Copper {side}"));
+        assert_eq!(o["areas"].as_array().unwrap().len(), 1);
+        assert_eq!(o["areas"][0]["holes"].as_array().unwrap().len(), 0);
+        assert!(covers(o, 25.0, 15.0), "{side}: no copper over the drill");
+        assert!((area(o) - disc).abs() < 0.01, "{side}: {}", area(o));
+        let mask = named(&list, &format!("Solder mask {side}"));
+        assert!(!covers(mask, 25.0, 15.0), "{side}: mask over the via");
     }
 }
 
@@ -283,6 +293,8 @@ fn a_plated_pad_is_bare_copper_on_both_faces_with_its_hole() {
     for name in ["Copper top pads", "Copper bottom pads"] {
         let o = named(&list, name);
         assert_eq!(o["finish"], "bare");
+        // A pad's drill stays open, unlike a via's.
+        assert!(!covers(o, 25.0, 15.0), "{name}: copper over the hole");
         assert!((area(o) - ring).abs() < 0.02, "{name}: {}", area(o));
     }
 }
@@ -388,7 +400,9 @@ fn silkscreen_lines_and_arcs_are_drawn_and_other_layers_are_noted() {
     let o = named(&list, "Silkscreen top");
     assert_eq!(o["kind"], "silkscreen");
     assert!(o.get("finish").is_none());
-    assert_eq!(o["z"], 1.61);
+    // Silkscreen z = T + 0.035 = 1.635; its thickness is 0.015.
+    assert_eq!(o["z"], 1.635);
+    assert_eq!(o["thickness"], 0.015);
     // The line, and a ring of width 0.2 around radius 2 (with a hole).
     let exact = 10.0 * 0.2 + PI * 0.01 + 2.0 * PI * 2.0 * 0.2;
     assert!((area(o) - exact).abs() < 0.05, "{}", area(o));
@@ -767,7 +781,7 @@ fn texts_past_the_segment_budget_are_counted_not_drawn() {
         let at = p(10.0, 10.0 + f64::from(i) * 5.0);
         b.texts.push(text_on(3, "HHHH", 2.0, at));
     }
-    let (list, notes) = overlays_within(&b, 1.6, "Board", 20, MAX_HOLE_VERTICES);
+    let (list, notes) = overlays_within(&b, 1.6, "Board", 20, MAX_HOLE_VERTICES, MAX_SOLID_FACES);
     assert!(area(named(&list, "Silkscreen top")) > 0.0);
     let m = messages(&notes);
     assert!(
@@ -905,7 +919,7 @@ fn overlapping_holes_are_cut_once() {
 #[test]
 fn regions_past_the_hole_budget_are_drawn_solid_and_noted() {
     let b = pour(vec![square(4.0, 4.0, 6.0, 6.0)]);
-    let (list, notes) = overlays_within(&b, 1.6, "Board", 20, 3);
+    let (list, notes) = overlays_within(&b, 1.6, "Board", 20, 3, MAX_SOLID_FACES);
     let copper = named(&list, "Copper top");
     assert!((area(copper) - 100.0).abs() < 1e-9, "{}", area(copper));
     assert!(
@@ -915,7 +929,7 @@ fn regions_past_the_hole_budget_are_drawn_solid_and_noted() {
         "{notes:?}"
     );
     // With room for the four vertices the hole is cut.
-    let (list, _) = overlays_within(&b, 1.6, "Board", 20, 4);
+    let (list, _) = overlays_within(&b, 1.6, "Board", 20, 4, MAX_SOLID_FACES);
     assert!((area(named(&list, "Copper top")) - 96.0).abs() < 1e-9);
 }
 
@@ -935,4 +949,160 @@ fn holes_past_the_cap_are_noted_not_cut() {
             .any(|m| m.starts_with("3 hole(s) past the first 10000")),
         "{notes:?}"
     );
+}
+
+/// A 20 x 10 board with, on the copper layer `copper` and the silkscreen layer `silk`: a track
+/// along y = 8 from x = 2 to 8 (0.5 wide), a 2 x 2 pad at (15, 5) and a silkscreen line along
+/// y = 2.
+fn stacked_board(copper: usize, silk: usize) -> Board {
+    let pad = CopperItem::Pad {
+        layer: copper,
+        at: p(15.0, 5.0),
+        shape: PadShape::Rectangle,
+        size_x: 2.0,
+        size_y: 2.0,
+        rotation_deg: 0.0,
+        drill: None,
+        plated: false,
+        owner: None,
+    };
+    let line = Graphic::Line {
+        layer: silk,
+        from: p(2.0, 2.0),
+        to: p(4.0, 2.0),
+        width: 0.2,
+        owner: None,
+    };
+    let mut b = board(
+        vec![track(copper, p(2.0, 8.0), p(8.0, 8.0), 0.5), pad],
+        vec![line],
+    );
+    b.layers.push(Layer {
+        name: "Bottom Overlay".into(),
+        kind: LayerKind::Silkscreen,
+        side: Some(Side::Bottom),
+    });
+    b.outline.outer = square(0.0, 0.0, 20.0, 10.0);
+    b
+}
+
+/// The face count the estimate gives a package overlay: 2 for each area plus its ring vertices.
+fn faces_of(o: &Value) -> usize {
+    o["areas"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| {
+            2 + a["outer"].as_array().unwrap().len()
+                + a["holes"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|h| h.as_array().unwrap().len())
+                    .sum::<usize>()
+        })
+        .sum()
+}
+
+#[test]
+fn each_overlay_has_its_z_thickness_and_colour() {
+    // T = 1.6: copper and mask start at the face, silkscreen on top of the copper (T + 0.035).
+    let (list, notes) = overlays(&stacked_board(0, 3), 1.6, "Board");
+    assert!(notes.is_empty(), "{notes:?}");
+    assert_eq!(list.len(), 5);
+    for (name, z, thickness, color) in [
+        ("Copper top", 1.6, 0.035, "#2b6e43"),
+        ("Copper top pads", 1.6, 0.035, "#d4af37"),
+        ("Solder mask top", 1.6, 0.02, "#1f5f3a"),
+        ("Silkscreen top", 1.635, 0.015, "#f2f2f2"),
+    ] {
+        let o = named(&list, name);
+        assert_eq!(o["z"], z, "{name}");
+        assert_eq!(o["thickness"], thickness, "{name}");
+        assert_eq!(o["color"], color, "{name}");
+    }
+    assert_eq!(named(&list, "Solder mask top")["opacity"], 0.85);
+}
+
+#[test]
+fn the_mask_no_longer_covers_a_track() {
+    let (list, _) = overlays(&stacked_board(0, 3), 1.6, "Board");
+    let mask = named(&list, "Solder mask top");
+    let copper = named(&list, "Copper top");
+    // On the track (y = 8): copper, no mask. Beside it (y = 8.5, the track ends at 8.25): mask.
+    assert!(covers(copper, 5.0, 8.0));
+    assert!(!covers(mask, 5.0, 8.0));
+    assert!(covers(mask, 5.0, 8.5));
+    assert!(!covers(copper, 5.0, 8.5));
+    // The bare pad stays open too.
+    assert!(!covers(mask, 15.0, 5.0));
+}
+
+#[test]
+fn the_bottom_side_mirrors_the_top() {
+    let (top, _) = overlays(&stacked_board(0, 3), 1.6, "Board");
+    let (bottom, notes) = overlays(&stacked_board(1, 6), 1.6, "Board");
+    assert!(notes.is_empty(), "{notes:?}");
+    assert_eq!(bottom.len(), top.len());
+    for (name, z) in [
+        ("Copper bottom", 0.0),
+        ("Copper bottom pads", 0.0),
+        ("Solder mask bottom", 0.0),
+        ("Silkscreen bottom", -0.035),
+    ] {
+        let o = named(&bottom, name);
+        let t = named(&top, &name.replace("bottom", "top"));
+        assert_eq!(o["z"], z, "{name}");
+        assert_eq!(o["side"], "bottom");
+        assert_eq!(o["thickness"], t["thickness"], "{name}");
+        assert_eq!(o["color"], t["color"], "{name}");
+        assert_eq!(o["areas"], t["areas"], "{name}");
+    }
+    let mask = named(&bottom, "Solder mask bottom");
+    assert!(!covers(mask, 5.0, 8.0));
+    assert!(covers(mask, 5.0, 8.5));
+}
+
+#[test]
+fn the_largest_overlays_are_drawn_flat_past_the_face_budget() {
+    let b = stacked_board(0, 3);
+    let (full, notes) = overlays(&b, 1.6, "Board");
+    assert!(notes.is_empty(), "{notes:?}");
+    let total: usize = full.iter().map(faces_of).sum();
+    let biggest = full.iter().map(faces_of).max().unwrap();
+    assert_eq!(faces_of(named(&full, "Solder mask top")), biggest);
+    // A budget just under the total sends only the mask (the largest) flat.
+    let (list, notes) = overlays_within(&b, 1.6, "Board", 20, MAX_HOLE_VERTICES, total - 1);
+    let flat = named(&list, "Solder mask top");
+    assert!(flat.get("thickness").is_none());
+    // Flat, the mask sits FLAT_MASK_LIFT above the face: T + 0.005.
+    assert_eq!(flat["z"], 1.605);
+    assert_eq!(list.len(), full.len());
+    for o in list.iter().filter(|o| o["name"] != "Solder mask top") {
+        assert!(o.get("thickness").is_some(), "{o}");
+    }
+    let degraded: Vec<&Value> = notes
+        .iter()
+        .filter(|n| n["severity"] == "Degraded")
+        .collect();
+    assert_eq!(degraded.len(), 1, "{notes:?}");
+    let message = degraded[0]["message"].as_str().unwrap();
+    assert!(message.contains("Solder mask top"), "{message}");
+    // No room at all: every overlay is flat and each is named.
+    let (list, notes) = overlays_within(&b, 1.6, "Board", 20, MAX_HOLE_VERTICES, 0);
+    assert!(list.iter().all(|o| o.get("thickness").is_none()));
+    // Flat sheets are lifted off the face, away from the board, so they do not z-fight it.
+    for (name, z) in [
+        ("Copper top", 1.607),
+        ("Copper top pads", 1.601),
+        ("Solder mask top", 1.605),
+        ("Silkscreen top", 1.61),
+        ("Solder mask bottom", -0.005),
+    ] {
+        assert_eq!(named(&list, name)["z"], z, "{name}");
+    }
+    let all = messages(&notes).join("\n");
+    for o in &list {
+        assert!(all.contains(o["name"].as_str().unwrap()), "{all}");
+    }
 }
