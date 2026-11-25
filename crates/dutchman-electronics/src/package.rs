@@ -1116,7 +1116,10 @@ mod tests {
         );
         let mask = overlay_named(m, "one-plated-pad", "Solder mask top");
         assert_eq!(mask["opacity"], 0.85);
-        assert_eq!((&mask["metallic"], &mask["roughness"]), (&json!(0.0), &json!(0.35)));
+        assert_eq!(
+            (&mask["metallic"], &mask["roughness"]),
+            (&json!(0.0), &json!(0.35))
+        );
         assert_eq!(mask["kind"], "mask");
         // The board is 1.6 mm thick (the file stores 1.600002 after its unit conversion).
         assert!((mask["z"].as_f64().unwrap() - 1.6).abs() < 1e-4);

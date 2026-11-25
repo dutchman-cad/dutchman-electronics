@@ -24,8 +24,8 @@ use geo::{BooleanOps, Coord, LineString, MultiPolygon, Polygon};
 use serde_json::{json, Value};
 
 use crate::colors::{
-    Finish, COPPER_BARE_COLOR, COPPER_MASKED_COLOR, GOLD_FINISH, MASK_COLOR, MASK_FINISH, MASK_OPACITY,
-    SILKSCREEN_COLOR, SILKSCREEN_FINISH,
+    Finish, COPPER_BARE_COLOR, COPPER_MASKED_COLOR, GOLD_FINISH, MASK_COLOR, MASK_FINISH,
+    MASK_OPACITY, SILKSCREEN_COLOR, SILKSCREEN_FINISH,
 };
 
 /// The most an arc's polyline strays from the true arc, in mm.
@@ -834,26 +834,27 @@ fn overlays_within(
                 .difference(&drilled)
                 .difference(&via_drilled)
                 .difference(&bare);
-            let plain = |name: String,
-                         kind,
-                         finish,
-                         lift,
-                         flat_lift,
-                         height,
-                         shape,
-                         (color, finish_look): (&'static str, Finish)| Built {
-                name,
-                kind,
-                finish,
-                side,
-                z: at(lift),
-                flat_z: at(flat_lift),
-                thickness: Some(height),
-                shape,
-                color,
-                finish_look,
-                opacity: None,
-            };
+            let plain =
+                |name: String,
+                 kind,
+                 finish,
+                 lift,
+                 flat_lift,
+                 height,
+                 shape,
+                 (color, finish_look): (&'static str, Finish)| Built {
+                    name,
+                    kind,
+                    finish,
+                    side,
+                    z: at(lift),
+                    flat_z: at(flat_lift),
+                    thickness: Some(height),
+                    shape,
+                    color,
+                    finish_look,
+                    opacity: None,
+                };
             // The mask fills only between the copper: not over the bare pads, the masked copper
             // or the drills, so copper stands proud of it. One cut from the united shapes (the
             // copper before its drills are taken out), so no sliver is left where edges meet.
