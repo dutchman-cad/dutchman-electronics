@@ -251,20 +251,26 @@ fn a_bottom_track_is_drawn_below_the_board() {
 }
 
 #[test]
-fn a_via_is_a_ring_on_both_faces() {
-    // one-via's numbers: diameter 1, hole 0.5.
+fn a_via_is_a_tented_disc_on_both_faces() {
+    // one-via's numbers: diameter 1, hole 0.5. Vias are drawn tented: the copper is the whole
+    // disc, with no hole, and the mask stays off it.
     let via = CopperItem::Via {
         at: p(25.0, 15.0),
         diameter: 1.0,
         drill: 0.5,
     };
-    let (list, _) = overlays(&board(vec![via], vec![]), 1.6, "Board");
-    assert_eq!(list.len(), 2);
-    let ring = PI * (0.25 - 0.0625);
-    for name in ["Copper top", "Copper bottom"] {
-        let o = named(&list, name);
-        assert_eq!(o["areas"][0]["holes"].as_array().unwrap().len(), 1);
-        assert!((area(o) - ring).abs() < 0.01, "{name}: {}", area(o));
+    let mut b = board(vec![via], vec![]);
+    b.outline.outer = square(0.0, 0.0, 50.0, 30.0);
+    let (list, _) = overlays(&b, 1.6, "Board");
+    let disc = PI * 0.25;
+    for side in ["top", "bottom"] {
+        let o = named(&list, &format!("Copper {side}"));
+        assert_eq!(o["areas"].as_array().unwrap().len(), 1);
+        assert_eq!(o["areas"][0]["holes"].as_array().unwrap().len(), 0);
+        assert!(covers(o, 25.0, 15.0), "{side}: no copper over the drill");
+        assert!((area(o) - disc).abs() < 0.01, "{side}: {}", area(o));
+        let mask = named(&list, &format!("Solder mask {side}"));
+        assert!(!covers(mask, 25.0, 15.0), "{side}: mask over the via");
     }
 }
 
@@ -287,6 +293,8 @@ fn a_plated_pad_is_bare_copper_on_both_faces_with_its_hole() {
     for name in ["Copper top pads", "Copper bottom pads"] {
         let o = named(&list, name);
         assert_eq!(o["finish"], "bare");
+        // A pad's drill stays open, unlike a via's.
+        assert!(!covers(o, 25.0, 15.0), "{name}: copper over the hole");
         assert!((area(o) - ring).abs() < 0.02, "{name}: {}", area(o));
     }
 }
@@ -1067,7 +1075,8 @@ fn the_largest_overlays_are_drawn_flat_past_the_face_budget() {
     let (list, notes) = overlays_within(&b, 1.6, "Board", 20, MAX_HOLE_VERTICES, total - 1);
     let flat = named(&list, "Solder mask top");
     assert!(flat.get("thickness").is_none());
-    assert_eq!(flat["z"], 1.6);
+    // Flat, the mask sits FLAT_MASK_LIFT above the face: T + 0.005.
+    assert_eq!(flat["z"], 1.605);
     assert_eq!(list.len(), full.len());
     for o in list.iter().filter(|o| o["name"] != "Solder mask top") {
         assert!(o.get("thickness").is_some(), "{o}");
@@ -1082,6 +1091,16 @@ fn the_largest_overlays_are_drawn_flat_past_the_face_budget() {
     // No room at all: every overlay is flat and each is named.
     let (list, notes) = overlays_within(&b, 1.6, "Board", 20, MAX_HOLE_VERTICES, 0);
     assert!(list.iter().all(|o| o.get("thickness").is_none()));
+    // Flat sheets are lifted off the face, away from the board, so they do not z-fight it.
+    for (name, z) in [
+        ("Copper top", 1.607),
+        ("Copper top pads", 1.601),
+        ("Solder mask top", 1.605),
+        ("Silkscreen top", 1.61),
+        ("Solder mask bottom", -0.005),
+    ] {
+        assert_eq!(named(&list, name)["z"], z, "{name}");
+    }
     let all = messages(&notes).join("\n");
     for o in &list {
         assert!(all.contains(o["name"].as_str().unwrap()), "{all}");

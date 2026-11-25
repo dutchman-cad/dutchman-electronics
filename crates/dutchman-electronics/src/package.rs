@@ -961,23 +961,33 @@ mod tests {
             }
             let bytes = std::fs::read(&path).unwrap();
             let package = build(&path, &bytes).unwrap();
+            // The board's thickness T: the top face of its STEP solid.
+            let (_, step) = package
+                .files
+                .iter()
+                .find(|(name, _)| name == BOARD_FILE)
+                .unwrap();
+            let t = point_heights(&String::from_utf8(step.clone()).unwrap())
+                .into_iter()
+                .fold(f64::MIN, f64::max);
             for o in package.manifest["overlays"].as_array().unwrap() {
                 assert_eq!(o["part"], "Board");
                 assert!(overlay_area(o) > 0.0, "{}: {o}", path.display());
                 let z = o["z"].as_f64().unwrap();
-                // Overlays stack from a face (z = T on the top, 0 on the bottom: copper and
-                // mask) or from the copper (T + 0.035 or -0.035: silkscreen), off the board.
-                let from_face = if o["side"] == "top" {
-                    z >= 1.6 - 1e-3
-                } else {
-                    z <= 1e-9
+                // Copper and mask start at the face, silkscreen on top of the copper, and the
+                // bottom side mirrors the top below z = 0.
+                let (offset, thickness) = match o["kind"].as_str().unwrap() {
+                    "copper" => (0.0, 0.035),
+                    "mask" => (0.0, 0.020),
+                    _ => (0.035, 0.015),
                 };
-                assert!(from_face, "{}: drawn off the faces: {o}", path.display());
-                assert!(
-                    o["thickness"].as_f64().is_some_and(|t| t > 0.0),
-                    "{}: no thickness: {o}",
-                    path.display()
-                );
+                let want = if o["side"] == "top" {
+                    t + offset
+                } else {
+                    -offset
+                };
+                assert!((z - want).abs() < 1e-5, "{}: z {z}, want {want}", path.display());
+                assert_eq!(o["thickness"], thickness, "{}: {o}", path.display());
                 let color = o["color"].as_str().unwrap_or_default();
                 assert!(
                     color.len() == 7 && color.starts_with('#'),
@@ -985,13 +995,6 @@ mod tests {
                     path.display()
                 );
                 if o["kind"] == "mask" {
-                    // The mask starts at the face: z = T on the top, z = 0 on the bottom.
-                    let ok = if o["side"] == "top" {
-                        z >= 1.6 - 1e-3
-                    } else {
-                        z.abs() < 1e-9
-                    };
-                    assert!(ok, "{}: mask z {z}", path.display());
                     assert_eq!(o["opacity"], 0.85);
                 } else {
                     assert!(o.get("opacity").is_none(), "{}: {o}", path.display());
@@ -1151,6 +1154,18 @@ mod tests {
         // 0.25 mm; the plating is 0.025 mm thick, so the inside radius is 0.225 mm.
         let package = package_of("one-via");
         let m = &package.manifest;
+        // The overlays draw the via tented (a solid disc under the mask), but the board keeps
+        // its drill: a 0.25 mm cylinder in board.step.
+        let top = overlay_named(m, "one-via", "Copper top");
+        assert_eq!(top["areas"][0]["holes"].as_array().unwrap().len(), 0);
+        assert!((overlay_area(top) - 0.78).abs() < 0.01);
+        let (_, board_step) = package
+            .files
+            .iter()
+            .find(|(name, _)| name == BOARD_FILE)
+            .unwrap();
+        let radii = cylinder_radii(&String::from_utf8(board_step.clone()).unwrap());
+        assert!(radii.iter().any(|r| (r - 0.25).abs() < 1e-3), "{radii:?}");
         let part = part_named(m, "Plating");
         assert_eq!(part["model"], "plating");
         assert_eq!(part["color"], "#d4af37");

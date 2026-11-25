@@ -40,6 +40,15 @@ pub const SILK_THICKNESS: f64 = 0.015;
 /// How far silkscreen starts off the board face, in mm: on top of the copper, which it is
 /// printed over ([`COPPER_THICKNESS`]).
 pub const SILK_LIFT: f64 = COPPER_THICKNESS;
+/// How far a flat sheet of copper under the mask (no `thickness`, see [`MAX_SOLID_FACES`]) is
+/// drawn off the board face, in mm, away from the board, so it does not share the face's plane.
+pub const FLAT_MASKED_COPPER_LIFT: f64 = 0.007;
+/// The same for a flat solder mask sheet, in mm.
+pub const FLAT_MASK_LIFT: f64 = 0.005;
+/// The same for a flat sheet of bare pads, in mm.
+pub const FLAT_PADS_LIFT: f64 = 0.001;
+/// The same for a flat silkscreen sheet, in mm.
+pub const FLAT_SILK_LIFT: f64 = 0.01;
 /// The most faces the solids of one board's overlays may have together, as estimated by
 /// [`faces`]. Dutchman refuses more, so the largest overlays are sent flat (without `thickness`)
 /// until the rest fit.
@@ -436,6 +445,7 @@ fn fit_faces(built: &mut [Built], budget: usize) -> Vec<String> {
         }
         if let Some(b) = built.get_mut(i) {
             b.thickness = None;
+            b.z = b.flat_z;
             total = total.saturating_sub(n);
             flat.push(b.name.clone());
         }
@@ -483,6 +493,8 @@ struct Built {
     finish: Option<&'static str>,
     side: &'static str,
     z: f64,
+    /// The height the overlay is drawn at when it is flat (see [`MAX_SOLID_FACES`]).
+    flat_z: f64,
     /// How far the areas are extruded from `z`, away from the board; `None` for a flat sheet.
     thickness: Option<f64>,
     shape: MultiPolygon,
@@ -532,7 +544,13 @@ fn overlays_within(
 ) -> (Vec<Value>, Vec<Value>) {
     let top = SideFaces::default();
     let bottom = SideFaces::default();
+    // The drills of pads cut copper, mask and silkscreen. Vias are drawn tented: most boards
+    // cover their vias with mask, so a via is a solid copper disc under its mask (a small raised
+    // dot), not a black hole, and its drill cuts only the silkscreen, which is not printed over
+    // a via. The board part and the plating keep the real hole. When the board file says
+    // whether a via is tented, that flag can replace this rule.
     let mut holes = Pile::default();
+    let mut via_holes = Pile::default();
     let (mut inner, mut unusable, mut other_graphics) = (0usize, 0usize, 0usize);
     let mut hole_counts = HoleCounts::default();
     let mut hole_budget = hole_budget;
@@ -611,7 +629,7 @@ fn overlays_within(
                         Some(ring) => {
                             faces.0.masked.polygons.push(ring.clone());
                             faces.1.masked.polygons.push(ring);
-                            holes.add(circle(*at, drill / 2.0), &mut unusable);
+                            via_holes.add(circle(*at, drill / 2.0), &mut unusable);
                         }
                         None => unusable = unusable.saturating_add(1),
                     }
@@ -797,6 +815,7 @@ fn overlays_within(
     // A failure inside the polygon library must not take the whole package down with it.
     let built = catch_unwind(AssertUnwindSafe(|| {
         let drilled = holes.union();
+        let via_drilled = via_holes.union();
         let face = outline.map(|o| o.difference(&cutouts.union()));
         let mut built = Vec::new();
         for (side, f, sign) in [("top", &top, 1.0), ("bottom", &bottom, -1.0)] {
@@ -806,14 +825,20 @@ fn overlays_within(
             let (bare_all, masked_all) = (f.bare.union(), f.masked.union());
             let bare = bare_all.difference(&drilled);
             let masked = masked_all.difference(&drilled).difference(&bare);
-            // Silkscreen is not printed over holes or on bare pads.
-            let silk = f.silk.union().difference(&drilled).difference(&bare);
-            let plain = |name: String, kind, finish, lift, height, shape, color| Built {
+            // Silkscreen is not printed over holes, via caps or bare pads.
+            let silk = f
+                .silk
+                .union()
+                .difference(&drilled)
+                .difference(&via_drilled)
+                .difference(&bare);
+            let plain = |name: String, kind, finish, lift, flat_lift, height, shape, color| Built {
                 name,
                 kind,
                 finish,
                 side,
                 z: at(lift),
+                flat_z: at(flat_lift),
                 thickness: Some(height),
                 shape,
                 color,
@@ -830,6 +855,7 @@ fn overlays_within(
                 "copper",
                 Some("masked"),
                 0.0,
+                FLAT_MASKED_COPPER_LIFT,
                 COPPER_THICKNESS,
                 masked,
                 COPPER_MASKED_COLOR,
@@ -839,6 +865,7 @@ fn overlays_within(
                 "copper",
                 Some("bare"),
                 0.0,
+                FLAT_PADS_LIFT,
                 COPPER_THICKNESS,
                 bare,
                 COPPER_BARE_COLOR,
@@ -848,6 +875,7 @@ fn overlays_within(
                 "silkscreen",
                 None,
                 SILK_LIFT,
+                FLAT_SILK_LIFT,
                 SILK_THICKNESS,
                 silk,
                 SILKSCREEN_COLOR,
@@ -860,6 +888,7 @@ fn overlays_within(
                         "mask",
                         None,
                         0.0,
+                        FLAT_MASK_LIFT,
                         MASK_THICKNESS,
                         mask,
                         MASK_COLOR,
