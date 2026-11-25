@@ -1,0 +1,3 @@
+Original test board made for Dutchman Electronics. Released under CC0 1.0 (public domain): https://creativecommons.org/publicdomain/zero/1.0/
+
+Same board as outline-shapes (see outline-shapes.README.txt for every number), made with KiCad 10.0.8 (file version 20260206) by the same script. The reader gives the same board from both files.

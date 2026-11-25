@@ -273,3 +273,45 @@ v.SetNet(sig)
 b.Add(v)
 # The fill is made afterwards by `fill_zones.py` (fill_zones.py).
 save(b, "one-zone")
+
+
+def part(b, ref, at, rot, flip, pads, model):
+    """A footprint with the given pads [(number, x, y, w, h)] (rectangles, surface mount), turned
+    by `rot` degrees, flipped to the bottom when `flip` is set, carrying one 3D model reference."""
+    fp = pcbnew.FOOTPRINT(b)
+    fp.SetReference(ref)
+    fp.SetFPID(pcbnew.LIB_ID("test", "Part"))
+    for num, x, y, w, h in pads:
+        pad = pcbnew.PAD(fp)
+        pad.SetNumber(num)
+        pad.SetShape(pcbnew.PAD_SHAPE_RECT)
+        pad.SetAttribute(pcbnew.PAD_ATTRIB_SMD)
+        pad.SetSize(VECTOR2I(FromMM(w), FromMM(h)))
+        pad.SetLayerSet(pad.SMDMask())
+        pad.SetPosition(VECTOR2I(FromMM(x), FromMM(y)))
+        fp.Add(pad)
+    m = pcbnew.FP_3DMODEL()
+    m.m_Filename = "box.step"
+    m.m_Offset = VECTOR3D(*model["offset"])
+    m.m_Scale = VECTOR3D(1, 1, 1)
+    m.m_Rotation = VECTOR3D(*model["rotate"])
+    fp.Models().append(m)
+    b.Add(fp)
+    fp.SetPosition(p(*at))
+    if rot:
+        fp.SetOrientationDegrees(rot)
+    if flip:
+        fp.Flip(fp.GetPosition(), False)
+    return fp
+
+
+# 10. model-placements: four parts with an off-centre pad pair each and a model reference, to
+#     check where a model lands: U1 and U2 on the bottom, U3 and U4 on the top.
+b = new_board()
+outline_rect(b)
+asym = [("1", -2.0, 0.5, 1.0, 1.0), ("2", 1.0, -1.5, 1.5, 0.8)]
+part(b, "U1", (12, 15), 90.0, True, asym, {"offset": (1.0, 2.0, 0.5), "rotate": (90.0, 0.0, 0.0)})
+part(b, "U2", (25, 15), 270.0, True, asym, {"offset": (-1.0, 0.5, 0.25), "rotate": (0.0, 90.0, 0.0)})
+part(b, "U3", (38, 15), 0.0, False, asym, {"offset": (0.0, 0.0, 0.0), "rotate": (90.0, 90.0, 0.0)})
+part(b, "U4", (38, 25), 90.0, False, asym, {"offset": (1.5, -1.0, 0.3), "rotate": (90.0, 0.0, 45.0)})
+save(b, "model-placements")

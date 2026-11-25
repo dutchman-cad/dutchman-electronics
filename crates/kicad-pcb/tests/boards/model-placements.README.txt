@@ -1,0 +1,27 @@
+Original test board made for Dutchman Electronics. Released under CC0 1.0 (public domain): https://creativecommons.org/publicdomain/zero/1.0/
+
+model-placements: four parts, each with two pads set off-centre and a 3D model reference, to show where a model lands.
+
+Made with KiCad 9.0.9 (file version 20241229) by fixtures/kicad/build_boards.py, on the 50 x 30 mm rectangle. KiCad's Y points down; the board's top-left corner is at page position (100, 100), and the numbers below are relative to it. The model "box.step" is not stored in the board.
+
+Every part has pads "1" (1.0 x 1.0) and "2" (1.5 x 0.8) written in the file at the position given in the library (-2, 0.5) and (1, -1.5) before turning and flipping.
+
+| part | side | origin | angle in the file | pad 1 | pad 2 | model offset | KiCad model rotate |
+|---|---|---|---|---|---|---|---|
+| U1 | bottom | (12, 15) | 90 | (11.5, 17) | (13.5, 14) | (1, 2, 0.5) | (90, 0, 0) |
+| U2 | bottom | (25, 15) | -90 (pads 270) | (25.5, 13) | (23.5, 16) | (-1, 0.5, 0.25) | (0, 90, 0) |
+| U3 | top | (38, 15) | 0 | (36, 15.5) | (39, 13.5) | (0, 0, 0) | (90, 90, 0) |
+| U4 | top | (38, 25) | 90 | (38.5, 27) | (36.5, 24) | (1.5, -1, 0.3) | (90, 0, 45) |
+
+The pad positions are KiCad's own (from its board scripting, GetPosition), so they show that a bottom part's pads are saved already in board orientation: the board position is the origin plus the pad's saved position turned by the angle, with no mirroring. The file holds the pads of a bottom part with their y already flipped (U1's pad 1 is saved at (-2, -0.5)).
+
+Where KiCad puts each model: we exported each board to VRML with kicad-cli (box STEP, see fixtures/kicad/model_axes) and read each model's rotation (axis and angle) and translation. Relative to the part's origin, in board directions with Y up and z up from the middle of the board (a bottom part's z is negative):
+
+| part | translation from the origin (x, y, z above its board face) | rotation axis | angle (rad) |
+|---|---|---|---|
+| U1 | (2, 1, -0.5) | (0.57735027, 0.57735027, 0.57735027) | 2.0943951 |
+| U2 | (-0.5, 1, -0.25) | (0.57735027, -0.57735027, -0.57735027) | 4.1887902 |
+| U3 | (0, 0, 0) | (-0.57735027, -0.57735027, -0.57735027) | 2.0943951 |
+| U4 | (1, 1.5, 0.3) | (-0.86285621, -0.35740674, 0.35740674) | 1.7177715 |
+
+(z: VRML gave the middle of the board as 0, so a model 0.5 below the bottom face is at -1.3, and we list it relative to the face.) tests/model_placements.rs checks that the reader's placement, offset and rotation give these.
