@@ -63,17 +63,36 @@ fn privacy_check(path: &str, rest: &[&str]) -> ExitCode {
             Kind::ComputerName => "computer name".to_string(),
             Kind::Watched(w) => format!("watched \"{w}\""),
             Kind::Text => "text".to_string(),
+            Kind::Unreadable => "not checked".to_string(),
         };
         println!("{}  @{}  {kind}: {}", f.stream, f.offset, f.text);
     }
     if report.not_listed > 0 {
         println!("... and {} more not listed", report.not_listed);
     }
+    let unreadable = report
+        .findings
+        .iter()
+        .filter(|f| f.kind == Kind::Unreadable)
+        .count();
+    let identifying = report
+        .findings
+        .iter()
+        .any(|f| !matches!(f.kind, Kind::Text | Kind::Unreadable))
+        || report.not_listed > 0;
+    if identifying {
+        println!("NOT clean: remove the items above before sharing this file");
+    }
+    if unreadable > 0 {
+        println!(
+            "NOT fully checked: {unreadable} packed value(s) above could not be unpacked, so what \
+             they hold is unknown; re-save the board in Altium, or do not share it"
+        );
+    }
     if report.is_clean() {
         println!("clean: no paths, e-mail addresses, computer names or watched words found");
         ExitCode::SUCCESS
     } else {
-        println!("NOT clean: remove the items above before sharing this file");
         ExitCode::FAILURE
     }
 }

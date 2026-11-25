@@ -19,6 +19,15 @@
 //! e-mail addresses and computer names, and the whole file for watched words; the rest of a
 //! font file is binary that would only give false alarms. A stream that cannot be split into
 //! fonts, or a font that is not a TrueType file, is checked byte for byte like any other stream.
+//!
+//! One value is unpacked too: `V9_STACKCUSTOMDATA`, the layer stack as zlib-compressed XML in
+//! base64 (see `appearance.rs`), whose packing hides its text. Each such value in any stream, its
+//! key written in single bytes or in UTF-16 right after a `|`, is unpacked and its XML checked
+//! like a stream of its own, once more with XML character references (`&#xFC;`, `&amp;`)
+//! decoded when it has any. A value that cannot be unpacked in full has its readable start
+//! checked and is reported as [`Kind::Unreadable`]: the check cannot say what the rest holds.
+//!
+//! The fonts and the stack values of a file share one unpacking budget, the input limit.
 
 use std::io::{Cursor, Read};
 
@@ -48,6 +57,8 @@ pub enum Kind {
     Watched(String),
     /// Any text at all (only with [`Options::all_text`]), for looking through by eye.
     Text,
+    /// Packed data that could not be unpacked in full, so not all of its text was checked.
+    Unreadable,
 }
 
 /// One place in the file with identifying text.
@@ -119,6 +130,8 @@ pub fn check(bytes: &[u8], options: &Options) -> Result<Report, ReadError> {
     }
     paths.sort();
     let mut report = Report::default();
+    // What all packed data in the file may unpack to, together.
+    let mut budget = MAX_INPUT_BYTES;
     // The streams together can never be bigger than the file, which is already bounded.
     for path in paths {
         let name = crate::container_path(&path);
@@ -128,9 +141,10 @@ pub fn check(bytes: &[u8], options: &Options) -> Result<Report, ReadError> {
             .and_then(|s| s.take(MAX_INPUT_BYTES as u64).read_to_end(&mut data))
             .map_err(|e| ReadError::Invalid(format!("{name}: {e}")))?;
         if name == FONTS_STREAM {
-            check_fonts(&name, &data, options, &mut report);
+            check_fonts(&name, &data, options, &mut budget, &mut report);
         } else {
             check_stream(&name, &data, options, &mut report);
+            check_stacks(&name, &data, options, &mut budget, &mut report);
         }
     }
     Ok(report)
@@ -145,18 +159,14 @@ const FONTS_STREAM: &str = "/EmbeddedFonts6/Data";
 const MAX_NAME_TABLE_TEXT: usize = 1 << 20;
 
 /// Checks each embedded font's names and its unpacked file, or the raw stream when it cannot be
-/// split into fonts or a font cannot be unpacked. All fonts together are unpacked to at most the
-/// input limit, one at a time: each is checked and dropped before the next is unpacked.
-fn check_fonts(stream: &str, data: &[u8], options: &Options, report: &mut Report) {
-    check_fonts_within(stream, data, options, MAX_INPUT_BYTES, report);
-}
-
-/// [`check_fonts`] with all fonts together allowed to unpack to at most `budget` bytes.
-fn check_fonts_within(
+/// split into fonts or a font cannot be unpacked. The fonts are unpacked one at a time, each
+/// checked and dropped before the next, from `budget`: what is left of the file's unpacking
+/// budget.
+fn check_fonts(
     stream: &str,
     data: &[u8],
     options: &Options,
-    mut budget: usize,
+    budget: &mut usize,
     report: &mut Report,
 ) {
     let Ok(records) = crate::fonts::records(data) else {
@@ -164,11 +174,15 @@ fn check_fonts_within(
         return;
     };
     for (i, r) in records.iter().enumerate() {
-        let Ok(file) = crate::fonts::unpack(r, budget) else {
-            check_stream(stream, data, options, report);
-            return;
+        let file = match crate::fonts::unpack(r, *budget) {
+            Ok(file) => file,
+            Err(e) => {
+                *budget = budget.saturating_sub(e.spent);
+                check_stream(stream, data, options, report);
+                return;
+            }
         };
-        budget = budget.saturating_sub(file.len());
+        *budget = budget.saturating_sub(file.len());
         check_stream(
             &format!("{stream} font {i} names"),
             r.names,
@@ -298,7 +312,8 @@ fn check_watched(stream: &str, data: &[u8], options: &Options, report: &mut Repo
     }
 }
 
-/// Every start offset of `needle` in `haystack`. An empty needle matches nothing.
+/// The start offsets of `needle` in `haystack`, at most one more than the report lists (so a
+/// report that is full still counts more). An empty needle matches nothing.
 fn find_all(haystack: &[u8], needle: &[u8]) -> Vec<usize> {
     if needle.is_empty() {
         return Vec::new();
@@ -308,7 +323,144 @@ fn find_all(haystack: &[u8], needle: &[u8]) -> Vec<usize> {
         .enumerate()
         .filter(|(_, w)| *w == needle)
         .map(|(i, _)| i)
+        .take(MAX_FINDINGS.saturating_add(1))
         .collect()
+}
+
+/// The key of the packed layer stack, with the `|` that starts every key in a record.
+const STACK_KEY: &str = "|V9_STACKCUSTOMDATA=";
+
+/// Unpacks each `V9_STACKCUSTOMDATA` value in the stream and checks its XML as
+/// "`<stream>` V9_STACKCUSTOMDATA `<n>`" (offsets in the XML). The key is found in single bytes
+/// and in UTF-16; a value ends at `|`, at a 0 or at the end of the stream. Each value takes what
+/// it unpacked to from `budget`, what is left of the file's unpacking budget.
+fn check_stacks(
+    stream: &str,
+    data: &[u8],
+    options: &Options,
+    budget: &mut usize,
+    report: &mut Report,
+) {
+    let mut values = Vec::new();
+    for at in find_all(data, STACK_KEY.as_bytes()) {
+        let start = at.saturating_add(STACK_KEY.len());
+        let rest = data.get(start..).unwrap_or_default();
+        let len = rest
+            .iter()
+            .position(|&b| b == b'|' || b == 0)
+            .unwrap_or(rest.len());
+        values.push((start, rest.get(..len).unwrap_or_default().to_vec()));
+    }
+    let wide_key: Vec<u8> = STACK_KEY
+        .encode_utf16()
+        .flat_map(u16::to_le_bytes)
+        .collect();
+    for at in find_all(data, &wide_key) {
+        let start = at.saturating_add(wide_key.len());
+        let units: Vec<u16> = data
+            .get(start..)
+            .unwrap_or_default()
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|&pair| u16::from_le_bytes(pair))
+            .take_while(|&u| u != 0 && u != u16::from(b'|'))
+            .collect();
+        values.push((start, String::from_utf16_lossy(&units).into_bytes()));
+    }
+    for (n, (offset, value)) in values.iter().enumerate() {
+        let name = format!("{stream} V9_STACKCUSTOMDATA {n}");
+        match crate::appearance::unpack_stack(value, *budget) {
+            Ok(xml) => {
+                *budget = budget.saturating_sub(xml.len());
+                check_xml(&name, &xml, options, report);
+            }
+            Err(partial) => {
+                *budget = budget.saturating_sub(partial.bytes.len());
+                check_xml(&name, &partial.bytes, options, report);
+                report.push(Finding {
+                    stream: stream.to_string(),
+                    offset: *offset,
+                    kind: Kind::Unreadable,
+                    text: format!(
+                        "V9_STACKCUSTOMDATA {n} could not be unpacked in full ({}); only its first \
+                         {} bytes were checked",
+                        partial.why,
+                        partial.bytes.len()
+                    ),
+                });
+            }
+        }
+    }
+}
+
+/// Checks XML like a stream, and once more with its character references decoded when it has
+/// any, as "`<name>` decoded" (offsets in the decoded text).
+fn check_xml(name: &str, xml: &[u8], options: &Options, report: &mut Report) {
+    check_stream(name, xml, options, report);
+    if let Some(decoded) = decode_references(&String::from_utf8_lossy(xml)) {
+        check_stream(
+            &format!("{name} decoded"),
+            decoded.as_bytes(),
+            options,
+            report,
+        );
+    }
+}
+
+/// The text with XML's character references (`&#252;`, `&#xFC;`) and its five named ones
+/// (`&amp;` and so on) replaced by their characters, or `None` when it holds none. A reference
+/// that is not well formed is kept as written.
+fn decode_references(text: &str) -> Option<String> {
+    if !text.contains('&') {
+        return None;
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut changed = false;
+    let mut rest = text;
+    while let Some(amp) = rest.find('&') {
+        let (before, from_amp) = rest.split_at(amp);
+        out.push_str(before);
+        let decoded = from_amp
+            .get(1..)
+            .and_then(|r| r.split_once(';'))
+            .filter(|(body, _)| body.len() <= 10)
+            .and_then(|(body, after)| reference(body).map(|c| (c, after)));
+        match decoded {
+            Some((c, after)) => {
+                out.push(c);
+                rest = after;
+                changed = true;
+            }
+            None => {
+                out.push('&');
+                rest = from_amp.get(1..).unwrap_or_default();
+            }
+        }
+    }
+    out.push_str(rest);
+    changed.then_some(out)
+}
+
+/// The character a reference body (between `&` and `;`) stands for.
+fn reference(body: &str) -> Option<char> {
+    let named = match body {
+        "amp" => Some('&'),
+        "lt" => Some('<'),
+        "gt" => Some('>'),
+        "quot" => Some('"'),
+        "apos" => Some('\''),
+        _ => None,
+    };
+    if named.is_some() {
+        return named;
+    }
+    let number = body.strip_prefix('#')?;
+    let code = match number.strip_prefix(['x', 'X']) {
+        Some(hex) => u32::from_str_radix(hex, 16).ok()?,
+        None => number.parse().ok()?,
+    };
+    char::from_u32(code)
 }
 
 /// Bytes as text a person can read: printable characters kept, the rest shown as dots.
@@ -629,7 +781,14 @@ mod tests {
             ..Options::default()
         };
         let mut report = Report::default();
-        check_fonts(FONTS_STREAM, &fonts_stream(file), &options, &mut report);
+        let mut budget = MAX_INPUT_BYTES;
+        check_fonts(
+            FONTS_STREAM,
+            &fonts_stream(file),
+            &options,
+            &mut budget,
+            &mut report,
+        );
         report
     }
 
@@ -660,10 +819,12 @@ mod tests {
         let report = fonts_report(b"not a font, C:\\Users\\someone", &[]);
         assert!(report.findings.iter().any(|f| f.kind == Kind::Path));
         let mut raw = Report::default();
+        let mut budget = MAX_INPUT_BYTES;
         check_fonts(
             FONTS_STREAM,
             b"\x05\x00\x00\x00C:\\x\\y",
             &Options::default(),
+            &mut budget,
             &mut raw,
         );
         assert!(raw.findings.iter().any(|f| f.stream == FONTS_STREAM));
@@ -675,11 +836,12 @@ mod tests {
         let data = fonts_stream_named(r"C:\Users\someone", &[&big, &big, &big]);
         let streams = |budget: usize| {
             let mut report = Report::default();
-            check_fonts_within(
+            let mut budget = budget;
+            check_fonts(
                 FONTS_STREAM,
                 &data,
                 &Options::default(),
-                budget,
+                &mut budget,
                 &mut report,
             );
             let mut s: Vec<String> = report.findings.into_iter().map(|f| f.stream).collect();
@@ -730,5 +892,245 @@ mod tests {
             found,
             [("/EmbeddedFonts6/Data font 0 unpacked", &Kind::Path)]
         );
+    }
+
+    /// Standard base64 with `=` padding.
+    fn base64(data: &[u8]) -> String {
+        const ABC: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut out = String::new();
+        for chunk in data.chunks(3) {
+            let b = [0, 1, 2].map(|i| chunk.get(i).copied().unwrap_or(0));
+            let n = u32::from(b[0]) << 16 | u32::from(b[1]) << 8 | u32::from(b[2]);
+            for i in 0..4 {
+                if i <= chunk.len() {
+                    let six = usize::try_from((n >> (18 - 6 * i)) & 63).unwrap_or(0);
+                    out.push(char::from(ABC.get(six).copied().unwrap_or(b'A')));
+                } else {
+                    out.push('=');
+                }
+            }
+        }
+        out
+    }
+
+    fn packed(xml: &[u8]) -> String {
+        base64(&miniz_oxide::deflate::compress_to_vec_zlib(xml, 6))
+    }
+
+    /// A `/Board6/Data`-like record holding each value after the stack key.
+    fn record(values: &[String]) -> Vec<u8> {
+        let mut out = b"|RECORD=Board".to_vec();
+        for v in values {
+            out.extend(b"|V9_STACKCUSTOMDATA=");
+            out.extend(v.bytes());
+        }
+        out.extend(b"|\0");
+        out
+    }
+
+    fn stacks_report(data: &[u8], watch: &[&str], budget: usize) -> Report {
+        let options = Options {
+            watch: watch.iter().map(|w| w.to_string()).collect(),
+            ..Options::default()
+        };
+        let mut report = Report::default();
+        let mut budget = budget;
+        check_stream("/Board6/Data", data, &options, &mut report);
+        check_stacks("/Board6/Data", data, &options, &mut budget, &mut report);
+        report
+    }
+
+    fn found(report: &Report) -> Vec<(&str, &Kind)> {
+        report
+            .findings
+            .iter()
+            .map(|f| (f.stream.as_str(), &f.kind))
+            .collect()
+    }
+
+    #[test]
+    fn the_packed_layer_stack_is_unpacked_and_checked() {
+        let clean = record(&[packed(b"<Stack><Layer Name=\"Top\"/></Stack>")]);
+        let report = stacks_report(&clean, &[], MAX_INPUT_BYTES);
+        assert!(report.is_clean(), "{:?}", report.findings);
+
+        let leaky = record(&[
+            packed(b"<Stack>"),
+            packed(br"<Stack><Property Name='File'>C:\Users\someone\stack.xml</Property></Stack>"),
+        ]);
+        let report = stacks_report(&leaky, &["someone"], MAX_INPUT_BYTES);
+        assert_eq!(
+            found(&report),
+            [
+                ("/Board6/Data V9_STACKCUSTOMDATA 1", &Kind::Path),
+                (
+                    "/Board6/Data V9_STACKCUSTOMDATA 1",
+                    &Kind::Watched("someone".into())
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_value_that_cannot_be_unpacked_is_reported() {
+        for value in ["not base64!", "AAAA", ""] {
+            let report = stacks_report(&record(&[value.to_string()]), &[], MAX_INPUT_BYTES);
+            assert_eq!(
+                found(&report),
+                [("/Board6/Data", &Kind::Unreadable)],
+                "{value:?}"
+            );
+            assert!(!report.is_clean());
+        }
+    }
+
+    #[test]
+    fn a_truncated_stack_still_has_its_readable_start_checked() {
+        let mut xml =
+            br"<Stack><Property Name='File'>C:\Users\someone\stack.xml</Property>".to_vec();
+        // Text that does not repeat, so the packed stream stays long and its end can be cut.
+        for i in 0..2_000u32 {
+            xml.extend(format!("<Layer Id='{}'/>", i.wrapping_mul(2_654_435_761)).bytes());
+        }
+        let whole = miniz_oxide::deflate::compress_to_vec_zlib(&xml, 6);
+        let cut = whole.get(..whole.len() / 2).unwrap_or_default();
+        let report = stacks_report(&record(&[base64(cut)]), &[], MAX_INPUT_BYTES);
+        assert_eq!(
+            found(&report),
+            [
+                ("/Board6/Data V9_STACKCUSTOMDATA 0", &Kind::Path),
+                ("/Board6/Data", &Kind::Unreadable),
+            ]
+        );
+        let note = &report
+            .findings
+            .last()
+            .map(|f| f.text.clone())
+            .unwrap_or_default();
+        assert!(
+            note.contains("could not be unpacked in full (not whole zlib data"),
+            "{note}"
+        );
+    }
+
+    #[test]
+    fn a_stack_over_the_per_value_limit_is_checked_up_to_it() {
+        let limit = crate::appearance::MAX_STACK_XML;
+        let mut xml = br"<Stack>C:\Users\someone</Stack>".to_vec();
+        xml.resize(limit.saturating_add(1), b' ');
+        let report = stacks_report(&record(&[packed(&xml)]), &[], MAX_INPUT_BYTES);
+        assert_eq!(
+            found(&report),
+            [
+                ("/Board6/Data V9_STACKCUSTOMDATA 0", &Kind::Path),
+                ("/Board6/Data", &Kind::Unreadable),
+            ]
+        );
+        let note = report
+            .findings
+            .last()
+            .map(|f| f.text.as_str())
+            .unwrap_or_default();
+        assert!(
+            note.contains(&format!("it unpacks to more than {limit} bytes")),
+            "{note}"
+        );
+    }
+
+    #[test]
+    fn a_stack_key_in_utf16_is_unpacked_too() {
+        let text = format!(
+            "|RECORD=Board|V9_STACKCUSTOMDATA={}|",
+            packed(br"<Stack>\\server\share</Stack>")
+        );
+        let mut data: Vec<u8> = text.encode_utf16().flat_map(u16::to_le_bytes).collect();
+        data.extend([0, 0]);
+        let report = stacks_report(&data, &[], MAX_INPUT_BYTES);
+        assert_eq!(
+            found(&report),
+            [("/Board6/Data V9_STACKCUSTOMDATA 0", &Kind::Path)]
+        );
+    }
+
+    #[test]
+    fn the_key_counts_only_after_a_bar() {
+        let value = packed(br"<Stack>C:\Users\someone</Stack>");
+        let data = format!("|RECORD=Board|XV9_STACKCUSTOMDATA={value}|");
+        let report = stacks_report(data.as_bytes(), &[], MAX_INPUT_BYTES);
+        assert!(report.is_clean(), "{:?}", report.findings);
+    }
+
+    #[test]
+    fn character_references_are_decoded_before_the_check() {
+        let xml = b"<Stack Owner='C:&#x5C;Users&#92;x' City='Z&#xFC;rich &amp; Co'/>";
+        let report = stacks_report(&record(&[packed(xml)]), &["Zürich"], MAX_INPUT_BYTES);
+        assert_eq!(
+            found(&report),
+            [
+                ("/Board6/Data V9_STACKCUSTOMDATA 0 decoded", &Kind::Path),
+                (
+                    "/Board6/Data V9_STACKCUSTOMDATA 0 decoded",
+                    &Kind::Watched("Zürich".into())
+                ),
+            ]
+        );
+        assert_eq!(
+            decode_references("a &lt;b&gt; &#65;&#x42; &bogus; & &#xZZ;"),
+            Some("a <b> AB &bogus; & &#xZZ;".to_string())
+        );
+        assert_eq!(decode_references("no references"), None);
+        assert_eq!(decode_references("& alone"), None);
+    }
+
+    #[test]
+    fn fonts_and_stacks_share_one_budget() {
+        let font = vec![0u8; 1_000];
+        let stack = vec![b' '; 1_000];
+        let mut budget = 1_500;
+        let mut report = Report::default();
+        let options = Options::default();
+        check_fonts(
+            FONTS_STREAM,
+            &fonts_stream(&font),
+            &options,
+            &mut budget,
+            &mut report,
+        );
+        assert_eq!(budget, 500);
+        check_stacks(
+            "/Board6/Data",
+            &record(&[packed(&stack)]),
+            &options,
+            &mut budget,
+            &mut report,
+        );
+        assert_eq!(budget, 0);
+        assert_eq!(found(&report), [("/Board6/Data", &Kind::Unreadable)]);
+    }
+
+    #[test]
+    fn check_reads_the_stack_of_a_real_board() -> Result<(), Box<dyn std::error::Error>> {
+        let board = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/boards/one-enig-resistor.PcbDoc");
+        let options = Options {
+            // A word only the unpacked stack holds: its finish material, "Nickel, Gold".
+            watch: vec!["Nickel".into()],
+            ..Options::default()
+        };
+        let report = check(&std::fs::read(board)?, &options)?;
+        let streams: Vec<_> = report
+            .findings
+            .iter()
+            .filter(|f| f.kind == Kind::Watched("Nickel".into()))
+            .map(|f| f.stream.as_str())
+            .collect();
+        assert!(!streams.is_empty());
+        assert!(
+            streams
+                .iter()
+                .all(|s| s.starts_with("/Board6/Data V9_STACKCUSTOMDATA ")),
+            "{streams:?}"
+        );
+        Ok(())
     }
 }
