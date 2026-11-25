@@ -199,7 +199,10 @@ const MAX_GLYPH_CONTOURS: usize = 64;
 const MAX_UNION_POINTS: usize = 5_000;
 /// The most levels of composite glyphs inside composite glyphs a glyph may have. The font
 /// library follows these without a limit on how many components each level has, so the
-/// structure is checked before any glyph is outlined.
+/// structure is checked before any glyph is outlined. This is harfbuzz/ttf-parser#220
+/// (composites sharing a subtree cost branching^depth outline calls), fixed upstream but in no
+/// release yet: drop this check, and [`MAX_COMPOSITE_PARTS`], once we use a ttf-parser release
+/// that carries the fix.
 const MAX_COMPOSITE_DEPTH: u32 = 8;
 /// The most simple glyphs a glyph may expand to once all its composite parts are followed.
 const MAX_COMPOSITE_PARTS: u64 = 64;
