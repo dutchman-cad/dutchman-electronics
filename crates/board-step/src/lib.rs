@@ -116,6 +116,48 @@ fn distance(a: Point, b: Point) -> f64 {
     (a.x - b.x).hypot(a.y - b.y)
 }
 
+/// The point of the circle nearest to `p`; `p` itself when it is the centre.
+fn project_on_circle(center: Point, radius: f64, p: Point) -> Point {
+    let d = distance(center, p);
+    if d == 0.0 {
+        return p;
+    }
+    Point {
+        x: center.x + radius * ((p.x - center.x) / d),
+        y: center.y + radius * ((p.y - center.y) / d),
+    }
+}
+
+/// Where two circles cross, the crossing nearest `near`, when it is within a hair of it.
+fn circle_crossing_near(c0: Point, r0: f64, c1: Point, r1: f64, near: Point) -> Option<Point> {
+    let d = distance(c0, c1);
+    if d == 0.0 {
+        return None;
+    }
+    let a = (r0 * r0 - r1 * r1 + d * d) / (2.0 * d);
+    let h2 = r0 * r0 - a * a;
+    if h2 < 0.0 {
+        return None;
+    }
+    let h = h2.sqrt();
+    let (ux, uy) = ((c1.x - c0.x) / d, (c1.y - c0.y) / d);
+    let (mx, my) = (c0.x + a * ux, c0.y + a * uy);
+    let one = Point {
+        x: mx - h * uy,
+        y: my + h * ux,
+    };
+    let two = Point {
+        x: mx + h * uy,
+        y: my - h * ux,
+    };
+    let best = if distance(one, near) <= distance(two, near) {
+        one
+    } else {
+        two
+    };
+    (distance(best, near) < 1e-3).then_some(best)
+}
+
 fn on_circle(center: Point, radius: f64, angle: f64) -> Point {
     Point {
         x: center.x + radius * angle.cos(),
@@ -336,24 +378,57 @@ fn contour_edges(contour: &Contour) -> Result<Vec<Edge2>, String> {
     if edges.len() < 2 {
         return Err("fewer than two edges".into());
     }
-    // Each edge must start where the previous one ends; snap the tiny gaps.
+    // Each edge must start where the previous one ends; snap the tiny gaps. A vertex next to an
+    // arc is put exactly on that arc's circle, so a coordinate that is a step off its circle
+    // (Altium works in 1e-4 mil, 2.54e-6 mm) does not leave an arc end point off its circle.
     let count = edges.len();
     for i in 0..count {
-        let prev_end = edges.get((i + count - 1) % count).map(|e| e.end);
-        let Some(prev_end) = prev_end else {
+        let prev_index = (i + count - 1) % count;
+        let Some(prev) = edges.get(prev_index).copied() else {
             continue;
         };
-        let Some(edge) = edges.get_mut(i) else {
+        let Some(edge) = edges.get(i).copied() else {
             continue;
         };
-        let gap = distance(prev_end, edge.start);
+        let gap = distance(prev.end, edge.start);
         if gap > 1e-3 {
             return Err(format!(
                 "not closed: a gap of {gap:.4} mm near ({:.3}, {:.3})",
                 edge.start.x, edge.start.y
             ));
         }
-        edge.start = prev_end;
+        let joint = match (prev.kind, edge.kind) {
+            (Kind2::Line, Kind2::Line) => prev.end,
+            // Two arcs: a point on both circles when they cross near the joint.
+            (
+                Kind2::Arc {
+                    center: c0,
+                    radius: r0,
+                    ..
+                },
+                Kind2::Arc {
+                    center: c1,
+                    radius: r1,
+                    ..
+                },
+            ) => {
+                if c0 == c1 && r0 == r1 {
+                    prev.end
+                } else {
+                    circle_crossing_near(c0, r0, c1, r1, prev.end).unwrap_or(prev.end)
+                }
+            }
+            (Kind2::Arc { .. }, Kind2::Line) => prev.end,
+            (Kind2::Line, Kind2::Arc { center, radius, .. }) => {
+                project_on_circle(center, radius, prev.end)
+            }
+        };
+        if let Some(p) = edges.get_mut(prev_index) {
+            p.end = joint;
+        }
+        if let Some(e) = edges.get_mut(i) {
+            e.start = joint;
+        }
     }
     Ok(edges)
 }
