@@ -117,6 +117,7 @@ fn every_board_has_the_same_outline_and_thickness() -> Result<(), Box<dyn std::e
         "one-rotated-fill.PcbDoc",
         "one-ttf-text.PcbDoc",
         "one-offset-extruded-resistor.PcbDoc",
+        "one-colored-body-resistor.PcbDoc",
         "one-bottom-extruded-resistor.PcbDoc",
         "shared-step-model.PcbDoc",
         "two-step-models.PcbDoc",
