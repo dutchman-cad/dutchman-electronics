@@ -16,3 +16,7 @@ cargo run -- privacy-check path/to/board.PcbDoc --watch "Your Name" --watch "You
 
 It must say `clean`. CI also checks every board here for paths, e-mail addresses and computer
 names.
+
+`param-project/` is a test project: a `.PrjPcb` with two boards and two parameters, with its own README.txt.
+Altium writes the PC's default printer into a project file (`TargetPrinter=`) and may link its documents by absolute
+paths. Run `privacy-check` on the `.PrjPcb` too: it reports both, and CI checks every project here.

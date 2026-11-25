@@ -28,6 +28,11 @@
 //! checked and is reported as [`Kind::Unreadable`]: the check cannot say what the rest holds.
 //!
 //! The fonts and the stack values of a file share one unpacking budget, the input limit.
+//!
+//! An Altium project file (`.PrjPcb`) is text, not a container: [`check_project`] checks it like
+//! one stream, and also reports each link to a document that is absolute or leaves the project's
+//! folder (`project.rs`) and each printer name Altium wrote into it (`TargetPrinter=`, which on
+//! `param-project` was the PC's default printer).
 
 use std::io::{Cursor, Read};
 
@@ -59,6 +64,8 @@ pub enum Kind {
     Text,
     /// Packed data that could not be unpacked in full, so not all of its text was checked.
     Unreadable,
+    /// A printer's name, which Altium writes into a project file.
+    Printer,
 }
 
 /// One place in the file with identifying text.
@@ -148,6 +155,59 @@ pub fn check(bytes: &[u8], options: &Options) -> Result<Report, ReadError> {
         }
     }
     Ok(report)
+}
+
+/// The name a project file's findings are reported under.
+pub const PROJECT_STREAM: &str = "project file";
+
+/// Checks an Altium project file (`.PrjPcb`): its text like a stream, plus every `DocumentPath=`
+/// whose link is absolute or leaves the project's folder, and every `TargetPrinter=` with a
+/// printer's name in it.
+pub fn check_project(bytes: &[u8], options: &Options) -> Result<Report, ReadError> {
+    if bytes.len() > MAX_INPUT_BYTES {
+        return Err(ReadError::TooLarge { bytes: bytes.len() });
+    }
+    for word in &options.watch {
+        if word.trim().chars().count() < MIN_WATCH_LEN {
+            return Err(ReadError::Invalid(format!(
+                "a watched word needs at least {MIN_WATCH_LEN} characters"
+            )));
+        }
+    }
+    let mut report = Report::default();
+    check_stream(PROJECT_STREAM, bytes, options, &mut report);
+    let mut offset = 0usize;
+    for line in bytes.split(|&b| b == b'\n') {
+        let text = String::from_utf8_lossy(line);
+        // Trimmed as the project reader trims, so an indented link is not missed.
+        let text = text.trim();
+        if let Some(link) = value_of(text, "DocumentPath") {
+            if let Some(why) = crate::project::link_problem(link) {
+                report.push(Finding {
+                    stream: PROJECT_STREAM.to_string(),
+                    offset,
+                    kind: Kind::Path,
+                    text: shorten(&format!("a document link that {why}: {link}")),
+                });
+            }
+        } else if let Some(printer) = value_of(text, "TargetPrinter") {
+            if !printer.trim().is_empty() {
+                report.push(Finding {
+                    stream: PROJECT_STREAM.to_string(),
+                    offset,
+                    kind: Kind::Printer,
+                    text: shorten(text),
+                });
+            }
+        }
+        offset = offset.saturating_add(line.len()).saturating_add(1);
+    }
+    Ok(report)
+}
+
+/// What follows `key =` on a project file's line (spaces allowed around the `=`).
+fn value_of<'a>(line: &'a str, key: &str) -> Option<&'a str> {
+    line.strip_prefix(key)?.trim_start().strip_prefix('=')
 }
 
 /// The stream that holds embedded font files, packed.
@@ -1131,6 +1191,59 @@ mod tests {
                 .all(|s| s.starts_with("/Board6/Data V9_STACKCUSTOMDATA ")),
             "{streams:?}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn a_project_file_is_checked_for_links_and_printers() -> Result<(), ReadError> {
+        let project = "\u{feff}[Design]\r\nVersion=1.0\r\n[Document1]\r\nDocumentPath=a.PcbDoc\r\n\
+            [Document2]\r\nDocumentPath=..\\up.PcbDoc\r\n[OutputGroup1]\r\nTargetPrinter=\r\n\
+            [OutputGroup2]\r\nTargetPrinter=Office Printer 3\r\n";
+        let report = check_project(project.as_bytes(), &Options::default())?;
+        let found: Vec<_> = report
+            .findings
+            .iter()
+            .map(|f| (&f.kind, f.text.as_str()))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                (
+                    &Kind::Path,
+                    "a document link that leaves the project's folder: ..\\up.PcbDoc"
+                ),
+                (&Kind::Printer, "TargetPrinter=Office Printer 3"),
+            ]
+        );
+        // Indented lines, as the project reader accepts them, are checked too.
+        let indented = "[Design]\r\n  DocumentPath=C:\\Users\\x\\b.PcbDoc\r\n\
+            \tTargetPrinter = Office Printer 3\r\n";
+        let report = check_project(indented.as_bytes(), &Options::default())?;
+        let texts: Vec<&str> = report.findings.iter().map(|f| f.text.as_str()).collect();
+        assert!(
+            texts
+                .iter()
+                .any(|t| t.starts_with("a document link that is absolute"))
+                && texts.contains(&"TargetPrinter = Office Printer 3"),
+            "{texts:?}"
+        );
+        let clean = "[Design]\r\n[Document1]\r\nDocumentPath=a.PcbDoc\r\nTargetPrinter=\r\n";
+        assert!(check_project(clean.as_bytes(), &Options::default())?.is_clean());
+        let options = Options {
+            watch: vec!["secretco".into()],
+            ..Options::default()
+        };
+        let watched = check_project(b"[Design]\r\nOwner=SecretCo\r\n", &options)?;
+        assert_eq!(watched.findings.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn the_committed_test_project_is_clean() -> Result<(), Box<dyn std::error::Error>> {
+        let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/boards/param-project/param-project.PrjPcb");
+        let report = check_project(&std::fs::read(file)?, &Options::default())?;
+        assert!(report.is_clean(), "{:?}", report.findings);
         Ok(())
     }
 }

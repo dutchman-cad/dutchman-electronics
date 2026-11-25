@@ -7,6 +7,7 @@ Reads circuit boards into [SolidCraft](https://github.com/tangency-labs/solidcra
 | Format | Status |
 |---|---|
 | Altium (`.PcbDoc`) | In progress |
+| Altium project (`.PrjPcb`) | In progress: reads the project's board and fills in the texts that refer to project parameters |
 | tscircuit | In progress |
 | KiCad (`.kicad_pcb`, KiCad 9 and 10) | In progress: reader in `crates/kicad-pcb` (scope: issue 75); more scope depends on the SolidCraft maintainers' answer on [tangency-labs/solidcraft#21320](https://github.com/tangency-labs/solidcraft/issues/21320) |
 | Fusion Electronics | TBD |
@@ -84,7 +85,16 @@ Each step is its own small pull request. Each ends with something you can run an
 cargo build
 cargo test
 cargo run -- streams path/to/board.PcbDoc
+cargo run -- read path/to/project.PrjPcb --out out --board main --param BoardRevision=C
 ```
+
+A text such as `.PCBNumber` refers to a project parameter, and `.Designator`, `.Comment` and `.Layer_Name` to the
+component or layer the text belongs to; they are shown with their value, as Altium shows them. Reading a `.PrjPcb`
+reads its board and uses the project's parameters; `--board` picks the board when a project holds several, by its
+name or, when two share a name, by the link the project lists (`a\Main.PcbDoc`). Only boards inside the project's
+folder are read, also when a symbolic link would lead elsewhere. A `.PcbDoc` on its own can take a project's
+parameters with `--project file.PrjPcb`, and `--param NAME=VALUE` gives one by hand, winning over the project's. A
+parameter value may be up to 64 KiB long.
 
 New here? Read [CONTRIBUTING.md](CONTRIBUTING.md). Working with an AI? Point it at [AGENTS.md](AGENTS.md) first.
 

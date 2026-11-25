@@ -236,6 +236,9 @@ pub struct Text {
     pub mirrored: bool,
     /// Where its letter shapes come from.
     pub font: TextFont,
+    /// The component it belongs to, as an index into [`Board::components`], for a text that is
+    /// part of a component (such as one drawn in its footprint); `None` for a free text.
+    pub component: Option<usize>,
 }
 
 /// The letter shapes of a [`Text`].
@@ -308,6 +311,8 @@ pub struct Placement {
     pub rotation_deg: f64,
     pub side: Side,
     pub model: Option<ModelRef>,
+    /// The component's comment, often its value ("10k"); empty when the file gives none.
+    pub comment: String,
 }
 
 /// A whole board, read from a file.

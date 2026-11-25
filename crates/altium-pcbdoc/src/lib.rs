@@ -19,7 +19,9 @@ mod copper;
 mod fonts;
 mod models;
 pub mod privacy;
+pub mod project;
 mod shape_based;
+pub mod special_strings;
 mod texts;
 
 use board_model::{
@@ -247,8 +249,16 @@ impl InputFormat for Altium {
             None => Default::default(),
         };
         let texts = match &texts6 {
-            Some(data) => texts::read(data, &wide, &components, &mut layers, &mut notes)
-                .map_err(ReadError::Invalid)?,
+            Some(data) => {
+                let read = texts::read(data, &wide, &components, &mut layers, &mut notes)
+                    .map_err(ReadError::Invalid)?;
+                for (index, comment) in read.comments {
+                    if let Some(p) = components.placements.get_mut(index) {
+                        p.comment = comment;
+                    }
+                }
+                read.texts
+            }
             None => Vec::new(),
         };
         let fonts_header = read_stream(&mut container, "/EmbeddedFonts6/Header")?;

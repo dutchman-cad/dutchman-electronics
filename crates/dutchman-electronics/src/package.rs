@@ -10,9 +10,14 @@
 //! - a `Plating` part when the board has plated holes: the copper lining them, one tube each, all
 //!   in one STEP file,
 //! - `notes`: everything read but not in the package, as `Info`, `Degraded` or `Dropped`.
+//!
+//! The file may also be an Altium project (`.PrjPcb`, with the `altium` feature): [`open`] then
+//! reads the board it holds. The reader never opens a file itself: this module opens the project
+//! and its board, and fills in the board's texts that refer to the project's parameters or to
+//! Altium's special strings (`altium_pcbdoc::special_strings`).
 
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use board_model::{
     Board, CopperItem, EmbeddedModel, ModelSource, Note, Placement, Severity, Side, MAX_INPUT_BYTES,
@@ -23,6 +28,13 @@ use crate::colors::{hex, pad_look, BOARD_COLOR, BOARD_FINISH, BODY_FINISH};
 
 /// Schema of the package manifest.
 pub const PARTS_SCHEMA: &str = "dutchman.parts/1";
+/// The longest parameter value taken, in bytes, from `--param` and from a project: every text
+/// that refers to a parameter gets its own copy of the value.
+#[cfg(feature = "altium")]
+pub use altium_pcbdoc::project::MAX_PARAMETER_VALUE;
+/// The longest parameter value taken, in bytes, from `--param`.
+#[cfg(not(feature = "altium"))]
+pub const MAX_PARAMETER_VALUE: usize = 64 * 1024;
 /// The board's own part name, stable across conversions.
 pub const BOARD_PART: &str = "Board";
 /// The board's model id and file.
@@ -72,14 +84,217 @@ pub fn read_input(path: &Path) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
+/// A board file to read, with the parameters its texts may refer to.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Input {
+    /// The board file itself (inside the project's folder when it came from a project).
+    pub path: PathBuf,
+    pub bytes: Vec<u8>,
+    /// (name, value), each name once in any case.
+    pub parameters: Vec<(String, String)>,
+}
+
+/// What `read` was asked to open besides the file itself.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Open<'a> {
+    /// For a project: which of its boards (file name, with or without `.PcbDoc`, any case).
+    pub board: Option<&'a str>,
+    /// For a board: the project whose parameters its texts use, without opening its links.
+    pub project: Option<&'a Path>,
+    /// Parameters given by hand; a name given here wins over the project's.
+    pub parameters: &'a [(String, String)],
+}
+
+/// Opens what `read` was given. A board file is read as it is, with the parameters of
+/// `with.project` when given. An Altium project (`.PrjPcb`) gives its board, the only one or
+/// the one `with.board` names, from inside the project's folder: a link that is absolute or
+/// leaves that folder is refused, and such a board can be read by passing it as the file with
+/// the project as `with.project`.
+pub fn open(path: &Path, with: &Open<'_>) -> Result<Input, String> {
+    let bytes = read_input(path)?;
+    let mut input = if is_project(path) {
+        if with.project.is_some() {
+            return Err("--project goes with a board file, not with a project".into());
+        }
+        project_board(path, &bytes, with.board)?
+    } else if let Some(name) = with.board {
+        return Err(format!(
+            "--board {name} chooses a board of a project, but {} is not a project",
+            path.display()
+        ));
+    } else {
+        let parameters = match with.project {
+            Some(project) => project_parameters(project)?,
+            None => Vec::new(),
+        };
+        Input {
+            path: path.to_path_buf(),
+            bytes,
+            parameters,
+        }
+    };
+    for (name, value) in with.parameters {
+        let known = input
+            .parameters
+            .iter_mut()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name));
+        match known {
+            Some((_, v)) => v.clone_from(value),
+            None => input.parameters.push((name.clone(), value.clone())),
+        }
+    }
+    Ok(input)
+}
+
+/// The parameters of a project file, for a board passed on its own.
+#[cfg(feature = "altium")]
+fn project_parameters(project: &Path) -> Result<Vec<(String, String)>, String> {
+    let bytes = read_input(project)?;
+    altium_pcbdoc::project::read(&bytes)
+        .map(|p| p.parameters)
+        .map_err(|e| format!("{}: {e}", project.display()))
+}
+
+#[cfg(not(feature = "altium"))]
+fn project_parameters(project: &Path) -> Result<Vec<(String, String)>, String> {
+    Err(format!(
+        "{}: this build does not read Altium projects",
+        project.display()
+    ))
+}
+
+/// True for an Altium project file (`.PrjPcb`, in any case), when this build reads Altium.
+fn is_project(path: &Path) -> bool {
+    cfg!(feature = "altium")
+        && path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case("prjpcb"))
+}
+
+/// The board a project holds, read from the project's folder, with the project's parameters.
+#[cfg(feature = "altium")]
+fn project_board(path: &Path, bytes: &[u8], choice: Option<&str>) -> Result<Input, String> {
+    let project =
+        altium_pcbdoc::project::read(bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+    let listed = project.boards.join(", ");
+    let index = match (choice, project.boards.len()) {
+        (_, 0) => return Err(format!("{} holds no board (.PcbDoc)", path.display())),
+        (None, 1) => 0,
+        (None, n) => {
+            return Err(format!(
+                "{} holds {n} boards ({listed}); choose one with --board NAME",
+                path.display()
+            ))
+        }
+        (Some(wanted), _) => {
+            let matches: Vec<usize> = project
+                .boards
+                .iter()
+                .enumerate()
+                .filter(|(_, link)| names_board(link, wanted))
+                .map(|(i, _)| i)
+                .collect();
+            match matches.as_slice() {
+                [one] => *one,
+                [] => {
+                    return Err(format!(
+                        "{} holds no board named {wanted} (it holds {listed})",
+                        path.display()
+                    ))
+                }
+                _ => {
+                    return Err(format!(
+                        "{wanted} is ambiguous: {} holds {} boards of that name ({listed}); \
+                         give the board's folder too, as the project lists it",
+                        path.display(),
+                        matches.len()
+                    ))
+                }
+            }
+        }
+    };
+    let link = project.boards.get(index).ok_or("no such board")?;
+    if let Some(why) = altium_pcbdoc::project::link_problem(link) {
+        return Err(format!(
+            "the project's link to {link} {why}, so it is not followed; to read that board, pass \
+             it as the file and add --project {}",
+            path.display()
+        ));
+    }
+    let relative = link.replace('\\', "/");
+    let folder = path.parent().unwrap_or(Path::new("."));
+    let board_path = folder.join(&relative);
+    let cannot = |e: &dyn std::fmt::Display| {
+        format!(
+            "the project's board {relative} cannot be read ({e}); it must sit where the project \
+             says, relative to the project's folder"
+        )
+    };
+    // A link inside the folder can still lead out of it through a symbolic link (or a
+    // junction); the board is read only when its real place is inside the project's folder.
+    let real_folder = folder.canonicalize().map_err(|e| cannot(&e))?;
+    let real_board = board_path.canonicalize().map_err(|e| cannot(&e))?;
+    if !real_board.starts_with(&real_folder) {
+        return Err(format!(
+            "the project's link to {link} leads out of the project's folder through a symbolic \
+             link, so it is not followed; to read that board, pass it as the file and add \
+             --project {}",
+            path.display()
+        ));
+    }
+    let bytes = read_input(&real_board).map_err(|e| cannot(&e))?;
+    Ok(Input {
+        path: board_path,
+        bytes,
+        parameters: project.parameters,
+    })
+}
+
+/// True when `wanted` names the board a project links to as `link`: the whole link (with `\`
+/// or `/`), the file name, or the file name without `.PcbDoc`, in any case.
+#[cfg(feature = "altium")]
+fn names_board(link: &str, wanted: &str) -> bool {
+    let same = |a: &str, b: &str| {
+        a.replace('\\', "/")
+            .eq_ignore_ascii_case(&b.replace('\\', "/"))
+    };
+    let file = link.rsplit(['\\', '/']).next().unwrap_or(link);
+    same(link, wanted)
+        || same(file, wanted)
+        || file
+            .rsplit_once('.')
+            .is_some_and(|(stem, _)| stem.eq_ignore_ascii_case(wanted))
+}
+
+#[cfg(not(feature = "altium"))]
+fn project_board(path: &Path, _: &[u8], _: Option<&str>) -> Result<Input, String> {
+    Err(format!(
+        "{}: this build does not read Altium projects",
+        path.display()
+    ))
+}
+
 /// Builds the package for a board file's bytes. `path` gives the extension and, when the file
-/// names no board, the board's name.
-pub fn build(path: &Path, bytes: &[u8]) -> Result<Package, String> {
+/// names no board, the board's name. An Altium board's texts that refer to one of `parameters`
+/// (name, value) or to Altium's special strings get their value.
+pub fn build(
+    path: &Path,
+    bytes: &[u8],
+    parameters: &[(String, String)],
+) -> Result<Package, String> {
     let extension = path.extension().and_then(|e| e.to_str());
     let head = bytes.get(..bytes.len().min(4096)).unwrap_or_default();
     let format = crate::detect(head, extension)
         .ok_or_else(|| "not a board file this module reads".to_string())?;
-    let outcome = format.read(bytes).map_err(|e| e.to_string())?;
+    let mut outcome = format.read(bytes).map_err(|e| e.to_string())?;
+    #[cfg(feature = "altium")]
+    if format.id() == board_model::InputFormat::id(&altium_pcbdoc::Altium) {
+        let notes = altium_pcbdoc::special_strings::resolve_texts(&mut outcome.board, parameters);
+        outcome.notes.extend(notes);
+    }
+    #[cfg(not(feature = "altium"))]
+    let _ = parameters;
     let board = outcome.board;
     // When there is no outline to make a board from, the reader's own words say why (an older
     // KiCad file, an outline that does not close), so the first Dropped note comes with the
@@ -634,6 +849,7 @@ mod tests {
                 rotation_deg: [0.0; 3],
                 color: None,
             }),
+            comment: String::new(),
         }
     }
 
@@ -841,7 +1057,7 @@ mod tests {
             env!("CARGO_MANIFEST_DIR")
         );
         let bytes = std::fs::read(&path).unwrap();
-        build(Path::new(&path), &bytes).unwrap()
+        build(Path::new(&path), &bytes, &[]).unwrap()
     }
 
     /// Equal to the 0.001 mm the boards' README.txt gives.
@@ -1032,7 +1248,7 @@ mod tests {
                 continue;
             }
             let bytes = std::fs::read(&path).unwrap();
-            let package = build(&path, &bytes).unwrap();
+            let package = build(&path, &bytes, &[]).unwrap();
             // The board's thickness T: the top face of its STEP solid.
             let (_, step) = package
                 .files
@@ -1700,7 +1916,7 @@ mod tests {
     #[test]
     fn the_one_resistor_board_gives_r1_as_a_part() {
         let bytes = include_bytes!("../../altium-pcbdoc/tests/boards/one-resistor.PcbDoc");
-        let package = build(Path::new("one-resistor.PcbDoc"), bytes).unwrap();
+        let package = build(Path::new("one-resistor.PcbDoc"), bytes, &[]).unwrap();
         let m = &package.manifest;
         let names: Vec<&str> = m["parts"]
             .as_array()
@@ -1728,7 +1944,7 @@ mod tests {
         // one-offset-extruded-resistor), 0.45 high.
         let bytes =
             include_bytes!("../../altium-pcbdoc/tests/boards/one-bottom-extruded-resistor.PcbDoc");
-        let package = build(Path::new("one-bottom-extruded-resistor.PcbDoc"), bytes).unwrap();
+        let package = build(Path::new("one-bottom-extruded-resistor.PcbDoc"), bytes, &[]).unwrap();
         let t = &package.manifest["parts"][1]["transform"];
         let on_board = [
             ([1.6, -0.4, 0.0], [23.8, 14.6, 0.0]),
@@ -1749,7 +1965,7 @@ mod tests {
     #[test]
     fn the_one_bottom_resistor_board_hangs_r1_below_the_board() {
         let bytes = include_bytes!("../../altium-pcbdoc/tests/boards/one-bottom-resistor.PcbDoc");
-        let package = build(Path::new("one-bottom-resistor.PcbDoc"), bytes).unwrap();
+        let package = build(Path::new("one-bottom-resistor.PcbDoc"), bytes, &[]).unwrap();
         let r1 = &package.manifest["parts"][1];
         assert_eq!(r1["name"], "R1");
         // The README: the box spans x 24.2 to 25.8, y 14.6 to 15.4, 0.45 below the bottom face.
@@ -1843,6 +2059,6 @@ mod tests {
 
     #[test]
     fn a_file_that_is_not_a_board_is_an_error() {
-        assert!(build(Path::new("notes.txt"), b"hello").is_err());
+        assert!(build(Path::new("notes.txt"), b"hello", &[]).is_err());
     }
 }

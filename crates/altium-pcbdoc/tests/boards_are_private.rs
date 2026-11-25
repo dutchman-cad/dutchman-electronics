@@ -1,23 +1,28 @@
-//! Every test board in the repository must be free of paths, e-mail addresses and computer
-//! names. Personal words (names, companies) are checked locally with
+//! Every test board and test project in the repository must be free of paths, e-mail
+//! addresses and computer names (and a project of printer names and links out of its folder). Personal words (names, companies) are checked locally with
 //! `dutchman-electronics privacy-check --watch`, never written into the repository.
 
 use std::path::Path;
 
-use altium_pcbdoc::privacy::{check, Options};
+use altium_pcbdoc::privacy::{check, check_project, Options};
 
 #[test]
 fn committed_boards_carry_no_identifying_text() -> Result<(), Box<dyn std::error::Error>> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/boards");
     let mut leaks = Vec::new();
     for entry in walk(&dir)? {
-        let is_board = entry
+        let extension = entry
             .extension()
-            .is_some_and(|e| e.eq_ignore_ascii_case("pcbdoc"));
-        if !is_board {
+            .and_then(|e| e.to_str())
+            .unwrap_or_default();
+        let bytes = std::fs::read(&entry)?;
+        let report = if extension.eq_ignore_ascii_case("pcbdoc") {
+            check(&bytes, &Options::default())?
+        } else if extension.eq_ignore_ascii_case("prjpcb") {
+            check_project(&bytes, &Options::default())?
+        } else {
             continue;
-        }
-        let report = check(&std::fs::read(&entry)?, &Options::default())?;
+        };
         for f in report.findings {
             leaks.push(format!(
                 "{}: {} at {}: {:?} {}",

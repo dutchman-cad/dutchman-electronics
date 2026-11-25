@@ -55,6 +55,15 @@ const FONT_NAME: std::ops::Range<usize> = 46..110;
 /// Rotations beyond this many degrees (either way) are refused as not real.
 const MAX_ROTATION_DEG: f64 = 360.0;
 
+/// The texts of `/Texts6/Data`, and each placed component's comment.
+pub(crate) struct Texts {
+    /// The visible texts on copper and overlay layers.
+    pub texts: Vec<Text>,
+    /// (index into the placements, comment): the string of each component's comment text, also
+    /// when the component hides it (`COMMENTON=FALSE`), for `.Comment` (`special_strings.rs`).
+    pub comments: Vec<(usize, String)>,
+}
+
 /// Reads the visible texts of `/Texts6/Data` on copper and overlay layers. A text that cannot be
 /// read, or sits on another layer, is left out with a note.
 pub(crate) fn read(
@@ -63,8 +72,9 @@ pub(crate) fn read(
     components: &Components,
     layers: &mut CopperLayers,
     notes: &mut Vec<Note>,
-) -> Result<Vec<Text>, String> {
+) -> Result<Texts, String> {
     let mut texts = Vec::new();
+    let mut comments = Vec::new();
     let mut other_layers: BTreeMap<String, usize> = BTreeMap::new();
     let mut unreadable = 0usize;
     let mut at = 0usize;
@@ -98,6 +108,24 @@ pub(crate) fn read(
             .ok_or("/Texts6/Data: text out of range")?;
         at = text_end;
 
+        let content = read_u32(body, WIDE_STRING_AT)
+            .and_then(|i| wide.get(&i))
+            .cloned()
+            .or_else(|| short_string(block));
+        let component = read_u16(body, COMPONENT_AT)
+            .filter(|&c| c != NO_COMPONENT)
+            .and_then(|c| {
+                components
+                    .placement_of
+                    .get(usize::from(c))
+                    .copied()
+                    .flatten()
+            });
+        if body.get(COMMENT_FLAG_AT) == Some(&1) {
+            if let (Some(p), Some(c)) = (component, &content) {
+                comments.push((p, c.clone()));
+            }
+        }
         if !visible(body, components) {
             continue;
         }
@@ -111,10 +139,6 @@ pub(crate) fn read(
                 .or_default() += 1;
             continue;
         };
-        let content = read_u32(body, WIDE_STRING_AT)
-            .and_then(|i| wide.get(&i))
-            .cloned()
-            .or_else(|| short_string(block));
         match (content, geometry(body)) {
             (Some(content), Some((at_point, height, rotation_deg, mirrored, stroke_width))) => {
                 let font = if body.get(FONT_TYPE_AT) == Some(&TRUETYPE) {
@@ -136,6 +160,7 @@ pub(crate) fn read(
                     rotation_deg,
                     mirrored,
                     font,
+                    component,
                 });
             }
             _ => unreadable += 1,
@@ -153,7 +178,7 @@ pub(crate) fn read(
             message: format!("{unreadable} text(s) could not be read"),
         });
     }
-    Ok(texts)
+    Ok(Texts { texts, comments })
 }
 
 /// False for a component's designator or comment text that its component hides.
@@ -237,12 +262,13 @@ mod tests {
         let mut short = vec![TEXT_RECORD, 1, 0, 0, 0, 33];
         short.extend_from_slice(&0u32.to_le_bytes());
         let texts = read(&short, &wide, &none, &mut layers, &mut notes).unwrap();
-        assert!(texts.is_empty());
+        assert!(texts.texts.is_empty());
         assert!(notes
             .iter()
             .any(|n| n.message.contains("could not be read")));
         assert!(read(&[0x42], &wide, &none, &mut layers, &mut notes)
             .unwrap()
+            .texts
             .is_empty());
     }
 }

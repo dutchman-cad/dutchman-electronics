@@ -337,3 +337,231 @@ fn an_unrelated_dropped_note_is_not_added_to_another_failure(
     assert!(!v.to_string().contains("dimension"), "{v}");
     Ok(())
 }
+
+/// The test project in the Altium reader's folder (CC0, see its README.txt).
+#[cfg(feature = "altium")]
+fn test_project() -> std::path::PathBuf {
+    test_board("param-project/param-project.PrjPcb")
+}
+
+#[cfg(feature = "altium")]
+#[test]
+fn read_opens_a_projects_board_with_its_parameters() -> Result<(), Box<dyn std::error::Error>> {
+    let out = std::env::temp_dir().join(format!("de-read-prj-{}", std::process::id()));
+    let result = run(&[
+        "read",
+        &test_project().to_string_lossy(),
+        "--out",
+        &out.to_string_lossy(),
+        "--json",
+        "--board",
+        "PARAM-BOARD-2",
+        "--param",
+        "BoardRevision=C",
+    ]);
+    std::fs::remove_dir_all(&out).ok();
+    let (ok, v) = result?;
+    assert!(ok, "{v}");
+    assert_eq!(v["source"]["format"], "altium_pcbdoc");
+    let notes: Vec<&str> = v["notes"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|n| n["message"].as_str())
+        .collect();
+    assert!(
+        notes.contains(
+            &"2 text(s) refer to a project parameter or to .Designator, .Comment or .Layer_Name \
+              and show its value, as Altium does"
+        ),
+        "{notes:?}"
+    );
+    Ok(())
+}
+
+#[cfg(feature = "altium")]
+#[test]
+fn a_project_with_two_boards_asks_which_one() -> Result<(), Box<dyn std::error::Error>> {
+    let out = std::env::temp_dir().join(format!("de-read-prj2-{}", std::process::id()));
+    let (ok, v) = run(&[
+        "read",
+        &test_project().to_string_lossy(),
+        "--out",
+        &out.to_string_lossy(),
+        "--json",
+    ])?;
+    assert!(!ok);
+    assert_eq!(v["ok"], false);
+    let error = v["error"].as_str().unwrap_or_default();
+    assert!(
+        error.contains("holds 2 boards (param-board.PcbDoc, param-board-2.PcbDoc)"),
+        "{error}"
+    );
+    assert!(!out.exists());
+    Ok(())
+}
+
+/// A project in a new temporary folder `name` holding `a\b.PcbDoc` and `c\b.PcbDoc`, both
+/// copies of the test project's first board, with the project's own parameters.
+#[cfg(feature = "altium")]
+fn same_named_boards(name: &str) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
+    let dir = std::env::temp_dir().join(format!("{name}-{}", std::process::id()));
+    let board = std::fs::read(test_board("param-project/param-board.PcbDoc"))?;
+    for sub in ["a", "c"] {
+        std::fs::create_dir_all(dir.join(sub))?;
+        std::fs::write(dir.join(sub).join("b.PcbDoc"), &board)?;
+    }
+    std::fs::write(
+        dir.join("p.PrjPcb"),
+        "[Design]\r\nVersion=1.0\r\n\r\n[Document1]\r\nDocumentPath=a\\b.PcbDoc\r\n\r\n\
+         [Document2]\r\nDocumentPath=c\\b.PcbDoc\r\n",
+    )?;
+    Ok(dir)
+}
+
+#[cfg(feature = "altium")]
+#[test]
+fn two_boards_of_one_name_are_told_apart_by_their_folder() -> Result<(), Box<dyn std::error::Error>>
+{
+    let dir = same_named_boards("de-prj-same")?;
+    let project = dir.join("p.PrjPcb");
+    let out = dir.join("out");
+    let read = |board: &str| {
+        run(&[
+            "read",
+            &project.to_string_lossy(),
+            "--out",
+            &out.to_string_lossy(),
+            "--json",
+            "--board",
+            board,
+        ])
+    };
+    let by_name = read("b");
+    let by_link = read("C/B.PcbDoc");
+    let by_backslash = read("a\\b.PcbDoc");
+    std::fs::remove_dir_all(&dir).ok();
+    let (ok, v) = by_name?;
+    assert!(!ok);
+    let error = v["error"].as_str().unwrap_or_default();
+    assert!(
+        error.contains("b is ambiguous") && error.contains("(a\\b.PcbDoc, c\\b.PcbDoc)"),
+        "{error}"
+    );
+    for (ok, v) in [by_link?, by_backslash?] {
+        assert!(ok, "{v}");
+    }
+    Ok(())
+}
+
+/// A symbolic link inside the project's folder that leads out of it is not followed.
+#[cfg(all(feature = "altium", unix))]
+#[test]
+fn a_project_board_behind_a_symbolic_link_out_of_the_folder_is_not_read(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let dir = std::env::temp_dir().join(format!("de-prj-symlink-{}", std::process::id()));
+    let inside = dir.join("project");
+    std::fs::create_dir_all(&inside)?;
+    let outside = dir.join("outside.PcbDoc");
+    std::fs::copy(test_board("param-project/param-board.PcbDoc"), &outside)?;
+    std::os::unix::fs::symlink(&outside, inside.join("b.PcbDoc"))?;
+    let project = inside.join("p.PrjPcb");
+    std::fs::write(
+        &project,
+        "[Design]\r\nVersion=1.0\r\n\r\n[Document1]\r\nDocumentPath=b.PcbDoc\r\n",
+    )?;
+    let out = dir.join("out");
+    let result = run(&[
+        "read",
+        &project.to_string_lossy(),
+        "--out",
+        &out.to_string_lossy(),
+        "--json",
+    ]);
+    std::fs::remove_dir_all(&dir).ok();
+    let (ok, v) = result?;
+    assert!(!ok);
+    let error = v["error"].as_str().unwrap_or_default();
+    assert!(error.contains("through a symbolic link"), "{error}");
+    Ok(())
+}
+
+/// Notes of a read manifest, as text.
+#[cfg(feature = "altium")]
+fn messages(v: &serde_json::Value) -> Vec<String> {
+    v["notes"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|n| n["message"].as_str().map(str::to_string))
+        .collect()
+}
+
+#[cfg(feature = "altium")]
+#[test]
+fn a_board_passed_on_its_own_can_use_a_projects_parameters(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let out = std::env::temp_dir().join(format!("de-read-own-{}", std::process::id()));
+    let board = test_board("param-project/param-board-2.PcbDoc");
+    let result = run(&[
+        "read",
+        &board.to_string_lossy(),
+        "--out",
+        &out.to_string_lossy(),
+        "--json",
+        "--project",
+        &test_project().to_string_lossy(),
+    ]);
+    std::fs::remove_dir_all(&out).ok();
+    let (ok, v) = result?;
+    assert!(ok, "{v}");
+    let notes = messages(&v);
+    assert!(
+        notes
+            .iter()
+            .any(|m| m.starts_with("2 text(s) refer to a project parameter")),
+        "{notes:?}"
+    );
+    Ok(())
+}
+
+#[cfg(feature = "altium")]
+#[test]
+fn a_project_link_out_of_its_folder_is_not_followed() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = std::env::temp_dir().join(format!("de-prj-link-{}", std::process::id()));
+    std::fs::create_dir_all(&dir)?;
+    let project = dir.join("p.PrjPcb");
+    std::fs::write(
+        &project,
+        "[Design]\r\nVersion=1.0\r\n\r\n[Document1]\r\nDocumentPath=..\\outside.PcbDoc\r\n",
+    )?;
+    let out = dir.join("out");
+    let result = run(&[
+        "read",
+        &project.to_string_lossy(),
+        "--out",
+        &out.to_string_lossy(),
+        "--json",
+    ]);
+    std::fs::remove_dir_all(&dir).ok();
+    let (ok, v) = result?;
+    assert!(!ok);
+    let error = v["error"].as_str().unwrap_or_default();
+    assert!(
+        error.contains("leaves the project's folder, so it is not followed"),
+        "{error}"
+    );
+    Ok(())
+}
+
+#[cfg(feature = "altium")]
+#[test]
+fn privacy_check_reads_a_project_file() -> Result<(), Box<dyn std::error::Error>> {
+    let out = Command::new(env!("CARGO_BIN_EXE_dutchman-electronics"))
+        .args(["privacy-check", &test_project().to_string_lossy()])
+        .output()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{text}");
+    assert!(text.starts_with("clean"), "{text}");
+    Ok(())
+}

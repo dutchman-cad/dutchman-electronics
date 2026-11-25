@@ -652,6 +652,36 @@ file carries them in its own name table, which Altium keeps unchanged, and LICEN
 in this folder holds the same text. Everything else in these three boards is CC0 like the
 others.
 
+special-strings: Altium's own special strings
+---------------------------------------------
+Made on 2026-11-25 by my own script, from a file copy of one-resistor.PcbDoc (R1, comment "10k",
+comment hidden), with no project open. Each text is in the stroke font, height 1.500, stroke
+0.150, rotation 0; read back and logged with the string Altium 26.12.2 shows for it and the box
+Altium reports around that string. "Owner" R1 means the text was added to component R1 (it
+belongs to R1, like a text drawn in its footprint); "-" is a free text.
+
+    Stored text      Owner Layer           At        Mir. Altium shows    Box (x, y to x, y)
+    .Designator      R1    Top Overlay     30, 25    no   R1              29.850, 24.850 to 32.149, 26.650
+    .Comment         R1    Top Overlay     30, 21.5  no   10k             29.850, 21.350 to 33.649, 23.150
+    R: .Designator   R1    Top Overlay     30, 18    no   R: R1           29.850, 17.850 to 36.398, 19.650
+    .designator      R1    Top Overlay     30, 8.5   no   R1              29.850, 8.350 to 32.149, 10.150
+    .Layer_Name      R1    Top Overlay     30, 5     no   Top Overlay     29.850, 4.350 to 45.895, 6.650
+    .Designator      -     Top Overlay     2, 25     no   .Designator     1.850, 24.350 to 17.145, 26.650
+    .Comment         -     Top Overlay     2, 21.5   no   .Comment        1.850, 21.350 to 12.897, 23.150
+    .Layer_Name      -     Top Layer       2, 18     no   Top Layer       1.850, 17.350 to 14.896, 19.650
+    L: .Layer_Name   -     Top Overlay     2, 14.5   no   L: Top Overlay  1.850, 13.850 to 22.144, 16.150
+    .layer_name      -     Top Overlay     2, 11     no   Top Overlay     1.850, 10.350 to 17.895, 12.650
+    .Print_Date      -     Top Overlay     2, 7.5    no   the day's date  1.850, 7.350 to 15.646, 9.150
+    .NoSuchString    -     Top Overlay     2, 4      no   .NoSuchString   1.850, 3.350 to 20.394, 5.650
+    .Layer_Name      -     Bottom Overlay  48, 1.5   yes  Bottom Overlay  28.106, 0.850 to 48.150, 3.150
+
+So .Designator and .Comment show the designator and comment of the component the text belongs to,
+and stay as written on a free text; .Layer_Name shows the name of the text's own layer.
+.Print_Date showed the date the script ran (25.11.2026), so it changes from day to day; the reader
+leaves it as written. They follow the same rule as project parameters (see
+param-project/README.txt): "R: .Designator" and "L: .Layer_Name" keep what comes before the dot,
+and the name matches in any case. R1's own designator text "R1" is on the board as before.
+
 Paths inside the files
 ----------------------
 Altium writes a few paths from the PC that saved a board into the file. After the last save, I

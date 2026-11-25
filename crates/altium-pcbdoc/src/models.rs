@@ -529,6 +529,7 @@ mod tests {
                 rotation_deg: [0.0; 3],
                 color: None,
             }),
+            comment: String::new(),
         }
     }
 

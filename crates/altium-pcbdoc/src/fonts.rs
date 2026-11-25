@@ -336,6 +336,7 @@ mod tests {
                 bold,
                 italic,
             },
+            component: None,
         }
     }
 
