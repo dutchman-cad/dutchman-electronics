@@ -1,9 +1,9 @@
 //! `dutchman-electronics`: the command Dutchman's launcher finds on the PATH.
 //! Module interface for Dutchman: `info --json`, `detect <file> --json` and
 //! `read <file> --out <dir> --json`. `read` also takes `--param NAME=VALUE` (repeatable) for
-//! the texts that refer to project parameters, `--board NAME` to choose the board of an Altium
-//! project (`.PrjPcb`) that holds several, and `--project FILE` to use a project's parameters for
-//! a board passed on its own.
+//! the texts that refer to project parameters, `--board NAME` (or the link the project lists)
+//! to choose the board of an Altium project (`.PrjPcb`) that holds several, and
+//! `--project FILE` to use a project's parameters for a board passed on its own.
 //! For people: `formats`, `streams <file>` and
 //! `privacy-check <file> [--watch WORD]... [--all-text]`.
 
@@ -205,6 +205,14 @@ fn read_args(words: &[&str]) -> Result<ReadArgs, String> {
                     .split_once('=')
                     .filter(|(n, _)| !n.trim().is_empty())
                     .ok_or_else(|| format!("--param {given}: expected NAME=VALUE"))?;
+                let most = dutchman_electronics::package::MAX_PARAMETER_VALUE;
+                if value.len() > most {
+                    return Err(format!(
+                        "--param {}: the value is {} bytes long; the most read is {most}",
+                        name.trim(),
+                        value.len()
+                    ));
+                }
                 args.parameters
                     .push((name.trim().to_string(), value.to_string()));
             }
@@ -343,11 +351,16 @@ mod tests {
 
     #[test]
     fn read_refuses_what_it_does_not_understand() {
+        let over_cap = format!(
+            "P={}",
+            "x".repeat(dutchman_electronics::package::MAX_PARAMETER_VALUE + 1)
+        );
         for words in [
             &["b.PcbDoc"][..],
             &["--out", "d"],
             &["b.PcbDoc", "--out", "d", "--param", "novalue"],
             &["b.PcbDoc", "--out", "d", "--param", "=x"],
+            &["b.PcbDoc", "--out", "d", "--param", over_cap.as_str()],
             &["b.PcbDoc", "--out", "d", "--frob"],
             &["b.PcbDoc", "c.PcbDoc", "--out", "d"],
             &["b.PcbDoc", "--out"],

@@ -65,12 +65,13 @@ pub fn info() -> Value {
     })
 }
 
-/// How sure a file is an Altium project: its name, and a first section `[Design]`.
+/// How sure a file is an Altium project: its name, and a first section `[Design]` (after any
+/// white space, as the project reader accepts it).
 #[cfg(feature = "altium")]
 fn project(head: &[u8], extension: Option<&str>) -> Detection {
     let named = extension.is_some_and(|e| e.eq_ignore_ascii_case(PROJECT.2));
     let text = head.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(head);
-    match (named, text.starts_with(b"[Design]")) {
+    match (named, text.trim_ascii_start().starts_with(b"[Design]")) {
         (true, true) => Detection::Yes,
         (true, false) => Detection::MaybeByName,
         (false, _) => Detection::No,
@@ -198,6 +199,8 @@ mod tests {
         let maybe = detect(b"something else", Some("prjpcb"));
         assert_eq!(maybe["detection"], "maybe_by_name");
         assert_eq!(detect(b"[Design]", Some("txt"))["detection"], "no");
+        let indented = detect(b"\xEF\xBB\xBF\r\n  [Design]\r\n", Some("PrjPcb"));
+        assert_eq!(indented["detection"], "yes");
     }
 
     #[test]

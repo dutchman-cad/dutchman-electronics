@@ -90,9 +90,11 @@ cargo run -- read path/to/project.PrjPcb --out out --board main --param BoardRev
 
 A text such as `.PCBNumber` refers to a project parameter, and `.Designator`, `.Comment` and `.Layer_Name` to the
 component or layer the text belongs to; they are shown with their value, as Altium shows them. Reading a `.PrjPcb`
-reads its board and uses the project's parameters; `--board` picks the board when a project holds several, and only
-links inside the project's folder are followed. A `.PcbDoc` on its own can take a project's parameters with
-`--project file.PrjPcb`, and `--param NAME=VALUE` gives one by hand, winning over the project's.
+reads its board and uses the project's parameters; `--board` picks the board when a project holds several, by its
+name or, when two share a name, by the link the project lists (`a\Main.PcbDoc`). Only boards inside the project's
+folder are read, also when a symbolic link would lead elsewhere. A `.PcbDoc` on its own can take a project's
+parameters with `--project file.PrjPcb`, and `--param NAME=VALUE` gives one by hand, winning over the project's. A
+parameter value may be up to 64 KiB long.
 
 New here? Read [CONTRIBUTING.md](CONTRIBUTING.md). Working with an AI? Point it at [AGENTS.md](AGENTS.md) first.
 

@@ -179,8 +179,9 @@ pub fn check_project(bytes: &[u8], options: &Options) -> Result<Report, ReadErro
     let mut offset = 0usize;
     for line in bytes.split(|&b| b == b'\n') {
         let text = String::from_utf8_lossy(line);
-        let text = text.trim_end_matches('\r');
-        if let Some(link) = text.strip_prefix("DocumentPath=") {
+        // Trimmed as the project reader trims, so an indented link is not missed.
+        let text = text.trim();
+        if let Some(link) = value_of(text, "DocumentPath") {
             if let Some(why) = crate::project::link_problem(link) {
                 report.push(Finding {
                     stream: PROJECT_STREAM.to_string(),
@@ -189,7 +190,7 @@ pub fn check_project(bytes: &[u8], options: &Options) -> Result<Report, ReadErro
                     text: shorten(&format!("a document link that {why}: {link}")),
                 });
             }
-        } else if let Some(printer) = text.strip_prefix("TargetPrinter=") {
+        } else if let Some(printer) = value_of(text, "TargetPrinter") {
             if !printer.trim().is_empty() {
                 report.push(Finding {
                     stream: PROJECT_STREAM.to_string(),
@@ -202,6 +203,11 @@ pub fn check_project(bytes: &[u8], options: &Options) -> Result<Report, ReadErro
         offset = offset.saturating_add(line.len()).saturating_add(1);
     }
     Ok(report)
+}
+
+/// What follows `key =` on a project file's line (spaces allowed around the `=`).
+fn value_of<'a>(line: &'a str, key: &str) -> Option<&'a str> {
+    line.strip_prefix(key)?.trim_start().strip_prefix('=')
 }
 
 /// The stream that holds embedded font files, packed.
@@ -1208,6 +1214,18 @@ mod tests {
                 ),
                 (&Kind::Printer, "TargetPrinter=Office Printer 3"),
             ]
+        );
+        // Indented lines, as the project reader accepts them, are checked too.
+        let indented = "[Design]\r\n  DocumentPath=C:\\Users\\x\\b.PcbDoc\r\n\
+            \tTargetPrinter = Office Printer 3\r\n";
+        let report = check_project(indented.as_bytes(), &Options::default())?;
+        let texts: Vec<&str> = report.findings.iter().map(|f| f.text.as_str()).collect();
+        assert!(
+            texts
+                .iter()
+                .any(|t| t.starts_with("a document link that is absolute"))
+                && texts.contains(&"TargetPrinter = Office Printer 3"),
+            "{texts:?}"
         );
         let clean = "[Design]\r\n[Document1]\r\nDocumentPath=a.PcbDoc\r\nTargetPrinter=\r\n";
         assert!(check_project(clean.as_bytes(), &Options::default())?.is_clean());

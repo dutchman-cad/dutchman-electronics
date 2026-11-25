@@ -11,6 +11,11 @@
 //!   (the project's parameters; `param-project` holds them in the other order from how they
 //!   were entered).
 //!
+//! Lines may be indented; a key is read without the spaces around it, and a value exactly as
+//! written after the `=` (whether or not Altium keeps spaces at a value's end, keeping what the
+//! file holds is right). A parameter value longer than [`MAX_PARAMETER_VALUE`] is refused, since
+//! every text that refers to the parameter gets its own copy.
+//!
 //! Everything else in the file (output settings, printer settings, variants) is not read.
 //! Like a board, the bytes are handed in; this never opens a file.
 
@@ -18,6 +23,10 @@ use board_model::{ReadError, MAX_INPUT_BYTES};
 
 /// The most sections read before the file is treated as hostile.
 const MAX_SECTIONS: usize = 100_000;
+
+/// The longest parameter value read, in bytes. Altium's own are a few words; every text that
+/// refers to a parameter gets its own copy of the value, so a huge one would multiply.
+pub const MAX_PARAMETER_VALUE: usize = 64 * 1024;
 
 /// What a project says about its boards and parameters.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -66,8 +75,8 @@ pub fn read(bytes: &[u8]) -> Result<Project, ReadError> {
     };
     let mut boards = Vec::new();
     for line in text.lines() {
-        let line = line.trim();
-        if let Some(rest) = line.strip_prefix('[') {
+        let line = line.trim_start();
+        if let Some(rest) = line.trim_end().strip_prefix('[') {
             finish(&section, &mut name, &mut value);
             sections = sections.saturating_add(1);
             if sections > MAX_SECTIONS {
@@ -81,11 +90,19 @@ pub fn read(bytes: &[u8]) -> Result<Project, ReadError> {
         let Some((key, val)) = line.split_once('=') else {
             continue;
         };
-        if is_numbered(&section, "Document") && key == "DocumentPath" && is_board(val) {
-            boards.push(val.to_string());
+        let key = key.trim_end();
+        if is_numbered(&section, "Document") && key == "DocumentPath" && is_board(val.trim_end()) {
+            boards.push(val.trim_end().to_string());
         } else if is_numbered(&section, "Parameter") {
             match key {
-                "Name" => name = Some(val.to_string()),
+                "Name" => name = Some(val.trim().to_string()),
+                "Value" if val.len() > MAX_PARAMETER_VALUE => {
+                    return Err(ReadError::Invalid(format!(
+                        "the value in [{section}] is {} bytes long; the most read is \
+                         {MAX_PARAMETER_VALUE}",
+                        val.len()
+                    )));
+                }
                 "Value" => value = Some(val.to_string()),
                 _ => {}
             }
@@ -146,6 +163,30 @@ mod tests {
                 ("Empty".to_string(), String::new())
             ]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn reads_indented_lines_and_keeps_a_value_as_written() -> Result<(), ReadError> {
+        let text = "[Design]\r\n  [Document1]  \r\n\tDocumentPath=a.PcbDoc \r\n\
+            [Parameter1]\r\n  Name = Rev\r\n  Value= B \r\n";
+        let p = read(text.as_bytes())?;
+        assert_eq!(p.boards, ["a.PcbDoc"]);
+        assert_eq!(p.parameters, [("Rev".to_string(), " B ".to_string())]);
+        Ok(())
+    }
+
+    #[test]
+    fn refuses_a_parameter_value_over_the_cap() -> Result<(), ReadError> {
+        let at_cap = "x".repeat(MAX_PARAMETER_VALUE);
+        let text = format!("[Design]\r\n[Parameter1]\r\nName=Big\r\nValue={at_cap}\r\n");
+        let read_back = read(text.as_bytes())?;
+        assert_eq!(
+            read_back.parameters.first().map(|(_, v)| v.len()),
+            Some(MAX_PARAMETER_VALUE)
+        );
+        let over = format!("[Design]\r\n[Parameter1]\r\nName=Big\r\nValue={at_cap}y\r\n");
+        assert!(matches!(read(over.as_bytes()), Err(ReadError::Invalid(_))));
         Ok(())
     }
 

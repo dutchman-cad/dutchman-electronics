@@ -401,6 +401,91 @@ fn a_project_with_two_boards_asks_which_one() -> Result<(), Box<dyn std::error::
     Ok(())
 }
 
+/// A project in a new temporary folder `name` holding `a\b.PcbDoc` and `c\b.PcbDoc`, both
+/// copies of the test project's first board, with the project's own parameters.
+#[cfg(feature = "altium")]
+fn same_named_boards(name: &str) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
+    let dir = std::env::temp_dir().join(format!("{name}-{}", std::process::id()));
+    let board = std::fs::read(test_board("param-project/param-board.PcbDoc"))?;
+    for sub in ["a", "c"] {
+        std::fs::create_dir_all(dir.join(sub))?;
+        std::fs::write(dir.join(sub).join("b.PcbDoc"), &board)?;
+    }
+    std::fs::write(
+        dir.join("p.PrjPcb"),
+        "[Design]\r\nVersion=1.0\r\n\r\n[Document1]\r\nDocumentPath=a\\b.PcbDoc\r\n\r\n\
+         [Document2]\r\nDocumentPath=c\\b.PcbDoc\r\n",
+    )?;
+    Ok(dir)
+}
+
+#[cfg(feature = "altium")]
+#[test]
+fn two_boards_of_one_name_are_told_apart_by_their_folder() -> Result<(), Box<dyn std::error::Error>>
+{
+    let dir = same_named_boards("de-prj-same")?;
+    let project = dir.join("p.PrjPcb");
+    let out = dir.join("out");
+    let read = |board: &str| {
+        run(&[
+            "read",
+            &project.to_string_lossy(),
+            "--out",
+            &out.to_string_lossy(),
+            "--json",
+            "--board",
+            board,
+        ])
+    };
+    let by_name = read("b");
+    let by_link = read("C/B.PcbDoc");
+    let by_backslash = read("a\\b.PcbDoc");
+    std::fs::remove_dir_all(&dir).ok();
+    let (ok, v) = by_name?;
+    assert!(!ok);
+    let error = v["error"].as_str().unwrap_or_default();
+    assert!(
+        error.contains("b is ambiguous") && error.contains("(a\\b.PcbDoc, c\\b.PcbDoc)"),
+        "{error}"
+    );
+    for (ok, v) in [by_link?, by_backslash?] {
+        assert!(ok, "{v}");
+    }
+    Ok(())
+}
+
+/// A symbolic link inside the project's folder that leads out of it is not followed.
+#[cfg(all(feature = "altium", unix))]
+#[test]
+fn a_project_board_behind_a_symbolic_link_out_of_the_folder_is_not_read(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let dir = std::env::temp_dir().join(format!("de-prj-symlink-{}", std::process::id()));
+    let inside = dir.join("project");
+    std::fs::create_dir_all(&inside)?;
+    let outside = dir.join("outside.PcbDoc");
+    std::fs::copy(test_board("param-project/param-board.PcbDoc"), &outside)?;
+    std::os::unix::fs::symlink(&outside, inside.join("b.PcbDoc"))?;
+    let project = inside.join("p.PrjPcb");
+    std::fs::write(
+        &project,
+        "[Design]\r\nVersion=1.0\r\n\r\n[Document1]\r\nDocumentPath=b.PcbDoc\r\n",
+    )?;
+    let out = dir.join("out");
+    let result = run(&[
+        "read",
+        &project.to_string_lossy(),
+        "--out",
+        &out.to_string_lossy(),
+        "--json",
+    ]);
+    std::fs::remove_dir_all(&dir).ok();
+    let (ok, v) = result?;
+    assert!(!ok);
+    let error = v["error"].as_str().unwrap_or_default();
+    assert!(error.contains("through a symbolic link"), "{error}");
+    Ok(())
+}
+
 /// Notes of a read manifest, as text.
 #[cfg(feature = "altium")]
 fn messages(v: &serde_json::Value) -> Vec<String> {

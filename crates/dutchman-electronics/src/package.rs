@@ -28,6 +28,13 @@ use crate::colors::{hex, pad_look, BOARD_COLOR, BOARD_FINISH, BODY_FINISH};
 
 /// Schema of the package manifest.
 pub const PARTS_SCHEMA: &str = "dutchman.parts/1";
+/// The longest parameter value taken, in bytes, from `--param` and from a project: every text
+/// that refers to a parameter gets its own copy of the value.
+#[cfg(feature = "altium")]
+pub use altium_pcbdoc::project::MAX_PARAMETER_VALUE;
+/// The longest parameter value taken, in bytes, from `--param`.
+#[cfg(not(feature = "altium"))]
+pub const MAX_PARAMETER_VALUE: usize = 64 * 1024;
 /// The board's own part name, stable across conversions.
 pub const BOARD_PART: &str = "Board";
 /// The board's model id and file.
@@ -170,32 +177,42 @@ fn is_project(path: &Path) -> bool {
 fn project_board(path: &Path, bytes: &[u8], choice: Option<&str>) -> Result<Input, String> {
     let project =
         altium_pcbdoc::project::read(bytes).map_err(|e| format!("{}: {e}", path.display()))?;
-    let file_name = |p: &str| -> String { p.rsplit(['\\', '/']).next().unwrap_or(p).to_string() };
-    let names: Vec<String> = project.boards.iter().map(|b| file_name(b)).collect();
-    let index = match (choice, names.len()) {
+    let listed = project.boards.join(", ");
+    let index = match (choice, project.boards.len()) {
         (_, 0) => return Err(format!("{} holds no board (.PcbDoc)", path.display())),
         (None, 1) => 0,
         (None, n) => {
             return Err(format!(
-                "{} holds {n} boards ({}); choose one with --board NAME",
-                path.display(),
-                names.join(", ")
+                "{} holds {n} boards ({listed}); choose one with --board NAME",
+                path.display()
             ))
         }
-        (Some(wanted), _) => names
-            .iter()
-            .position(|n| {
-                n.eq_ignore_ascii_case(wanted)
-                    || n.rsplit_once('.')
-                        .is_some_and(|(stem, _)| stem.eq_ignore_ascii_case(wanted))
-            })
-            .ok_or_else(|| {
-                format!(
-                    "{} holds no board named {wanted} (it holds {})",
-                    path.display(),
-                    names.join(", ")
-                )
-            })?,
+        (Some(wanted), _) => {
+            let matches: Vec<usize> = project
+                .boards
+                .iter()
+                .enumerate()
+                .filter(|(_, link)| names_board(link, wanted))
+                .map(|(i, _)| i)
+                .collect();
+            match matches.as_slice() {
+                [one] => *one,
+                [] => {
+                    return Err(format!(
+                        "{} holds no board named {wanted} (it holds {listed})",
+                        path.display()
+                    ))
+                }
+                _ => {
+                    return Err(format!(
+                        "{wanted} is ambiguous: {} holds {} boards of that name ({listed}); \
+                         give the board's folder too, as the project lists it",
+                        path.display(),
+                        matches.len()
+                    ))
+                }
+            }
+        }
     };
     let link = project.boards.get(index).ok_or("no such board")?;
     if let Some(why) = altium_pcbdoc::project::link_problem(link) {
@@ -208,17 +225,46 @@ fn project_board(path: &Path, bytes: &[u8], choice: Option<&str>) -> Result<Inpu
     let relative = link.replace('\\', "/");
     let folder = path.parent().unwrap_or(Path::new("."));
     let board_path = folder.join(&relative);
-    let bytes = read_input(&board_path).map_err(|e| {
+    let cannot = |e: &dyn std::fmt::Display| {
         format!(
             "the project's board {relative} cannot be read ({e}); it must sit where the project \
              says, relative to the project's folder"
         )
-    })?;
+    };
+    // A link inside the folder can still lead out of it through a symbolic link (or a
+    // junction); the board is read only when its real place is inside the project's folder.
+    let real_folder = folder.canonicalize().map_err(|e| cannot(&e))?;
+    let real_board = board_path.canonicalize().map_err(|e| cannot(&e))?;
+    if !real_board.starts_with(&real_folder) {
+        return Err(format!(
+            "the project's link to {link} leads out of the project's folder through a symbolic \
+             link, so it is not followed; to read that board, pass it as the file and add \
+             --project {}",
+            path.display()
+        ));
+    }
+    let bytes = read_input(&real_board).map_err(|e| cannot(&e))?;
     Ok(Input {
         path: board_path,
         bytes,
         parameters: project.parameters,
     })
+}
+
+/// True when `wanted` names the board a project links to as `link`: the whole link (with `\`
+/// or `/`), the file name, or the file name without `.PcbDoc`, in any case.
+#[cfg(feature = "altium")]
+fn names_board(link: &str, wanted: &str) -> bool {
+    let same = |a: &str, b: &str| {
+        a.replace('\\', "/")
+            .eq_ignore_ascii_case(&b.replace('\\', "/"))
+    };
+    let file = link.rsplit(['\\', '/']).next().unwrap_or(link);
+    same(link, wanted)
+        || same(file, wanted)
+        || file
+            .rsplit_once('.')
+            .is_some_and(|(stem, _)| stem.eq_ignore_ascii_case(wanted))
 }
 
 #[cfg(not(feature = "altium"))]
