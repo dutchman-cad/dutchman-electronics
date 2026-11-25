@@ -1765,11 +1765,7 @@ fn a_polygon_pad_is_the_union_of_its_pieces_with_its_hole_and_a_grown_opening() 
     let (list, _) = overlays(&b, 1.6, "Board");
     let pads = named(&list, "Copper top pads");
     let hole = PI * 0.2 * 0.2;
-    assert!(
-        (area(pads) - (3.75 - hole)).abs() < 0.01,
-        "{}",
-        area(pads)
-    );
+    assert!((area(pads) - (3.75 - hole)).abs() < 0.01, "{}", area(pads));
     assert!(covers(pads, 11.5, 4.5) && covers(pads, 10.5, 3.5) && !covers(pads, 11.5, 3.5));
     assert!(!covers(pads, 10.0, 5.0), "copper over the hole");
     // The mask opens 0.25 wider than the copper all round: open 0.2 outside the L's end, shut

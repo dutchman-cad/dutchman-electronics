@@ -826,10 +826,7 @@ fn overlays_within(
                     drill,
                     ..
                 } => {
-                    opened = outlines
-                        .iter()
-                        .flat_map(|c| grown(c, expansion))
-                        .collect();
+                    opened = outlines.iter().flat_map(|c| grown(c, expansion)).collect();
                     (
                         *layer,
                         outlines.iter().filter_map(contour).collect(),
