@@ -1097,9 +1097,11 @@ mod tests {
         };
         // The outline is 50 x 30 = 1500 mm2 (README.txt, empty-outline).
         assert!((mask("empty-outline", "top") - 1500.0).abs() < 1e-3);
-        // one-resistor: two bare SMD pads of 0.8 x 1.0 = 0.8 mm2 each on the top. The top mask is
-        // 1500 - 2 * 0.8 = 1498.4; the bottom has no pads, so it stays 1500.
-        assert!((mask("one-resistor", "top") - 1498.4).abs() < 1e-3);
+        // one-resistor: two bare SMD pads of 0.8 x 1.0 on the top, each opened by the default
+        // mask expansion of 0.1016 mm a side: (0.8 + 0.2032) * (1.0 + 0.2032) = 1.0032 * 1.2032 =
+        // 1.20705 mm2. The top mask is 1500 - 2 * 1.20705 = 1497.58590; the bottom has no pads,
+        // so it stays 1500.
+        assert!((mask("one-resistor", "top") - 1497.5859).abs() < 1e-3);
         assert!((mask("one-resistor", "bottom") - 1500.0).abs() < 1e-3);
         // one-via: the mask stops at the via's copper (1.0 mm across, under the mask) and covers
         // no drill, so a whole 1.0 mm circle is open: 1500 - pi * 0.5^2 = 1499.21460. It is drawn
@@ -1108,26 +1110,28 @@ mod tests {
         let open_via = 1500.0 - std::f64::consts::PI * 0.25;
         assert!((mask("one-via", "top") - open_via).abs() < 0.01);
         assert!((mask("one-via", "bottom") - open_via).abs() < 0.01);
-        // one-plated-pad: a round 2.0 mm pad on all layers with a 1.0 mm hole. Its bare copper
-        // and its drill together open the whole pad, on both faces: 1500 - pi * 1^2 = 1496.85841,
-        // less a little for the 32-sided polygon (16 * sin(11.25 deg) = 3.12145 mm2 against
-        // 3.14159), so the tolerance is 0.03.
-        let open = 1500.0 - std::f64::consts::PI;
-        assert!((mask("one-plated-pad", "top") - open).abs() < 0.03);
-        assert!((mask("one-plated-pad", "bottom") - open).abs() < 0.03);
+        // one-plated-pad: a round 2.0 mm pad on all layers with a 1.0 mm hole. Its opening is the
+        // pad grown by the default mask expansion of 0.1016 mm to a radius of 1.1016, on both
+        // faces: 1500 - pi * 1.1016^2 = 1496.18761, less a little for the 32-sided polygon
+        // (16 * 1.1016^2 * sin(11.25 deg) = 3.78794 mm2 against 3.81239), so the tolerance is
+        // 0.04.
+        let open = 1500.0 - std::f64::consts::PI * 1.1016 * 1.1016;
+        assert!((mask("one-plated-pad", "top") - open).abs() < 0.04);
+        assert!((mask("one-plated-pad", "bottom") - open).abs() < 0.04);
     }
 
     #[cfg(feature = "altium")]
     #[test]
     fn the_mask_cuts_the_boards_cutout_and_hole() {
         // outline-with-hole: a 10 x 10 cutout and a 3.0 mm unplated hole. The hole's pad is bare
-        // copper (a ring of no width), so the hole is open all the same: 1500 - 100 - pi * 1.5^2
-        // = 1392.93141. The hole is a 32-sided polygon, a little under the circle (16 * 1.5^2 *
-        // sin(11.25 deg) = 7.0235 mm2 against 7.0686), so the tolerance is 0.08.
+        // copper (a ring of no width), so the hole is open all the same, and the opening grows by
+        // the default mask expansion of 0.1016 mm to a radius of 1.6016: 1500 - 100 - pi * 1.6016^2
+        // = 1391.94143. The opening is a 32-sided polygon, a little under the circle (16 *
+        // 1.6016^2 * sin(11.25 deg) = 8.0069 mm2 against 8.0586), so the tolerance is 0.08.
         let package = package_of("outline-with-hole");
         let top = overlay_named(&package.manifest, "outline-with-hole", "Solder mask top");
         let area = overlay_area(top);
-        let want = 1400.0 - std::f64::consts::PI * 2.25;
+        let want = 1400.0 - std::f64::consts::PI * 1.6016 * 1.6016;
         assert!((area - want).abs() < 0.08, "{area}");
     }
 

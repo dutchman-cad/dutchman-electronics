@@ -132,9 +132,11 @@ fn square(x0: f64, y0: f64, x1: f64, y1: f64) -> board_model::Contour {
 #[test]
 fn the_mask_is_the_outline_less_cutouts_pads_copper_and_drills() {
     // A 20 x 10 board (200 mm2) with a 2 x 2 cutout (4 mm2) and, on the top, a bare 1 x 1 SMD
-    // pad (1 mm2) and a via of 1 mm across with a 0.5 mm drill. The mask stays off the via's
-    // copper ring and its drill, so a 1 mm circle (drawn as a 32-sided polygon of 0.78036 mm2)
-    // is open on both faces. Top mask: 200 - 4 - 1 - 0.78036 = 194.21964. Bottom: no pad, so
+    // pad and a via of 1 mm across with a 0.5 mm drill. The mask stays off the via's copper ring
+    // and its drill, so a 1 mm circle (drawn as a 32-sided polygon of 0.78036 mm2) is open on
+    // both faces; the via is tented, so its opening is not expanded. The pad's opening is grown
+    // by the default mask expansion of 0.1016 mm on each side: (1 + 2 * 0.1016)^2 = 1.2032^2 =
+    // 1.44769 mm2. Top mask: 200 - 4 - 1.44769 - 0.78036 = 193.77195. Bottom: no pad, so
     // 200 - 4 - 0.78036 = 195.21964.
     let mut b = board(
         vec![
@@ -170,7 +172,7 @@ fn the_mask_is_the_outline_less_cutouts_pads_copper_and_drills() {
     assert_eq!(top["color"], "#1f5f3a");
     // Bottom mask z = 0 - 0: 0.
     assert_eq!(bottom["z"], 0.0);
-    assert!((area(top) - 194.21964).abs() < 1e-3, "{}", area(top));
+    assert!((area(top) - 193.77195).abs() < 1e-3, "{}", area(top));
     assert!((area(bottom) - 195.21964).abs() < 1e-3, "{}", area(bottom));
     // Three holes in the top mask: the cutout, the pad and the drill.
     assert_eq!(top["areas"][0]["holes"].as_array().unwrap().len(), 3);
@@ -178,8 +180,9 @@ fn the_mask_is_the_outline_less_cutouts_pads_copper_and_drills() {
 
 #[test]
 fn pads_on_the_bottom_only_open_the_bottom_mask() {
-    // A 20 x 10 board (200 mm2) and one bare 1 x 1 SMD pad (1 mm2) on Bottom Layer: the top
-    // mask is whole (200), the bottom mask has the pad's opening (199).
+    // A 20 x 10 board (200 mm2) and one bare 1 x 1 SMD pad on Bottom Layer: the top mask is
+    // whole (200), the bottom mask has the pad's opening, grown by the default mask expansion of
+    // 0.1016 mm a side: 1.2032^2 = 1.44769 mm2, so 200 - 1.44769 = 198.55231.
     let mut b = board(
         vec![CopperItem::Pad {
             layer: 1,
@@ -201,7 +204,7 @@ fn pads_on_the_bottom_only_open_the_bottom_mask() {
     let bottom = named(&list, "Solder mask bottom");
     assert!((area(top) - 200.0).abs() < 1e-6, "{}", area(top));
     assert!(top["areas"][0]["holes"].as_array().unwrap().is_empty());
-    assert!((area(bottom) - 199.0).abs() < 1e-6, "{}", area(bottom));
+    assert!((area(bottom) - 198.55231).abs() < 1e-5, "{}", area(bottom));
     assert_eq!(bottom["areas"][0]["holes"].as_array().unwrap().len(), 1);
 }
 
@@ -672,6 +675,134 @@ fn silkscreen_is_not_printed_over_holes_or_pads() {
     let o = named(&list, "Silkscreen top");
     assert!(!covers(o, 5.0, 0.0), "the drill is open");
     assert!(covers(o, 1.0, 0.0));
+}
+
+/// A bare 1 x 1 SMD pad at (5, 0) on `layer`.
+fn square_pad(layer: usize) -> CopperItem {
+    CopperItem::Pad {
+        layer,
+        at: p(5.0, 0.0),
+        shape: PadShape::Rectangle,
+        size_x: 1.0,
+        size_y: 1.0,
+        rotation_deg: 0.0,
+        drill: None,
+        plated: false,
+        owner: None,
+    }
+}
+
+#[test]
+fn the_mask_opening_is_the_pad_grown_by_the_boards_expansion() {
+    // A 20 x 10 board (200 mm2) and a bare 2 x 1 pad. With an expansion of 0.25 mm the opening
+    // grows 0.25 on each side: (2 + 0.5) * (1 + 0.5) = 3.75 mm2, so the mask is 200 - 3.75 =
+    // 196.25. With an expansion of 0 it is the pad itself: 200 - 2 = 198.
+    let mut b = board(
+        vec![CopperItem::Pad {
+            layer: 0,
+            at: p(5.0, 5.0),
+            shape: PadShape::Rectangle,
+            size_x: 2.0,
+            size_y: 1.0,
+            rotation_deg: 0.0,
+            drill: None,
+            plated: false,
+            owner: None,
+        }],
+        vec![],
+    );
+    b.outline.outer = square(0.0, 0.0, 20.0, 10.0);
+    b.solder_mask_expansion = Some(0.25);
+    let (list, _) = overlays(&b, 1.6, "Board");
+    let top = area(named(&list, "Solder mask top"));
+    assert!((top - 196.25).abs() < 1e-5, "{top}");
+    // The copper itself is not grown.
+    let pads = area(named(&list, "Copper top pads"));
+    assert!((pads - 2.0).abs() < 1e-5, "{pads}");
+    b.solder_mask_expansion = Some(0.0);
+    let (list, _) = overlays(&b, 1.6, "Board");
+    let top = area(named(&list, "Solder mask top"));
+    assert!((top - 198.0).abs() < 1e-5, "{top}");
+}
+
+#[test]
+fn a_tented_via_gets_no_mask_expansion() {
+    // A 20 x 10 board and a via 1 mm across. The via's copper disc is a 32-gon of
+    // 16 * 0.5^2 * sin(11.25 deg) = 0.78036 mm2 and the mask stops there however large the
+    // expansion: 200 - 0.78036 = 199.21964.
+    let mut b = board(
+        vec![CopperItem::Via {
+            at: p(5.0, 5.0),
+            diameter: 1.0,
+            drill: 0.5,
+        }],
+        vec![],
+    );
+    b.outline.outer = square(0.0, 0.0, 20.0, 10.0);
+    b.solder_mask_expansion = Some(0.5);
+    let (list, _) = overlays(&b, 1.6, "Board");
+    let top = area(named(&list, "Solder mask top"));
+    assert!((top - 199.21964).abs() < 1e-3, "{top}");
+}
+
+#[test]
+fn silkscreen_is_clipped_from_the_expanded_mask_openings() {
+    // A silkscreen line 10 mm long and 0.2 mm wide along y = 0, and a bare 1 x 1 pad at (5, 0)
+    // with a mask expansion of 0.25 mm. The opening spans x from 4.25 to 5.75, so 1.5 mm of
+    // the line, 0.2 mm wide, is cut away: 1.5 * 0.2 = 0.3 mm2 less than the line alone. The
+    // line is clear of the ring of laminate round the pad, not just of the copper.
+    let line = Graphic::Line {
+        layer: 3,
+        from: p(0.0, 0.0),
+        to: p(10.0, 0.0),
+        width: 0.2,
+        owner: None,
+    };
+    let mut alone = board(vec![], vec![line.clone()]);
+    alone.solder_mask_expansion = Some(0.25);
+    let mut padded = board(vec![square_pad(0)], vec![line]);
+    padded.solder_mask_expansion = Some(0.25);
+    let (list, _) = overlays(&alone, 1.6, "Board");
+    let whole = area(named(&list, "Silkscreen top"));
+    let (list, _) = overlays(&padded, 1.6, "Board");
+    let o = named(&list, "Silkscreen top");
+    assert!((whole - area(o) - 0.3).abs() < 1e-5, "{whole} {}", area(o));
+    assert!(!covers(o, 5.0, 0.0), "the pad is clear");
+    assert!(!covers(o, 5.6, 0.0), "the ring round the pad is clear");
+    assert!(!covers(o, 4.4, 0.0), "the ring round the pad is clear");
+    assert!(covers(o, 5.9, 0.0));
+    assert!(covers(o, 4.1, 0.0));
+}
+
+#[test]
+fn the_bottom_side_is_expanded_and_clipped_the_same_way() {
+    // The same line and pad on the bottom face (layers 6 and 1), default expansion 0.1016 mm:
+    // the opening spans 5 +- (0.5 + 0.1016), so the silkscreen is clear at x = 5.55 and present
+    // at x = 5.7; the bottom mask loses 1.2032^2 = 1.44769 mm2 from 200.
+    let mut b = board(
+        vec![square_pad(1)],
+        vec![Graphic::Line {
+            layer: 6,
+            from: p(0.0, 0.0),
+            to: p(10.0, 0.0),
+            width: 0.2,
+            owner: None,
+        }],
+    );
+    b.layers.push(Layer {
+        name: "Bottom Overlay".into(),
+        kind: LayerKind::Silkscreen,
+        side: Some(Side::Bottom),
+    });
+    b.outline.outer = square(0.0, -5.0, 20.0, 5.0);
+    let (list, _) = overlays(&b, 1.6, "Board");
+    let silk = named(&list, "Silkscreen bottom");
+    assert!(!covers(silk, 5.55, 0.0));
+    assert!(covers(silk, 5.7, 0.0));
+    let mask = area(named(&list, "Solder mask bottom"));
+    assert!((mask - 198.55231).abs() < 1e-5, "{mask}");
+    let top = area(named(&list, "Solder mask top"));
+    assert!((top - 200.0).abs() < 1e-5, "{top}");
 }
 
 #[test]

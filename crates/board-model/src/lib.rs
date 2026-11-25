@@ -325,7 +325,15 @@ pub struct Board {
     pub components: Vec<Placement>,
     /// Solder mask and silkscreen colours.
     pub appearance: Appearance,
+    /// How far the solder mask opens past the edge of each bare pad, in mm, when the file says.
+    /// `None` means the file does not say; readers of the board then use
+    /// [`DEFAULT_SOLDER_MASK_EXPANSION`]. Per-pad overrides are not read yet.
+    pub solder_mask_expansion: Option<f64>,
 }
+
+/// The mask expansion used when a board file does not give one: 0.1016 mm (4 mil), the default of
+/// the Altium rule.
+pub const DEFAULT_SOLDER_MASK_EXPANSION: f64 = 0.1016;
 
 // ---------------------------------------------------------------------------------------------
 // The input-format trait
