@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# Opens every CC0 test board's STEP with the readers people will use: SolidCraft's STEP import
-# and cadmpeg. For each board under crates/altium-pcbdoc/tests/boards it builds the parts
-# package, then requires: cadmpeg `check` OK, and SolidCraft, both on importing the STEP and on
-# reopening the design it saved from it, sees one closed body whose box is 50 x 30 mm (every test
-# board shares that outline, see its README.txt) by the board's thickness (1.6 mm, 1.8122 mm for
-# four-layer) to 0.001 mm, with no feature error.
+# Opens every test board's STEP with the readers people will use: SolidCraft's STEP import and
+# cadmpeg. The boards are the Altium ones (crates/altium-pcbdoc/tests/boards/*.PcbDoc), the KiCad
+# CC0 ones (crates/kicad-pcb/tests/boards/*.kicad_pcb) and the open-hardware KiCad boards by others
+# (crates/kicad-pcb/tests/open-hardware/*/*.kicad_pcb). For each it builds the parts package, then
+# requires: cadmpeg `check` OK, and SolidCraft, both on importing the STEP and on reopening the
+# design it saved from it, sees one closed body whose box is the board's outline size by its
+# thickness to 0.001 mm, with no feature error. The CC0 boards of both formats share a 50 x 30 mm
+# outline (see their README.txt) of 1.6 mm thickness (four-layer: Altium 1.8122 mm, KiCad 1.2 mm);
+# the open-hardware boards have the sizes KiCad gives, in their README.txt.
 # Each component model the package writes (model-*.step) must pass cadmpeg `check` and, on import
 # and on reopening its saved design, be one closed body with a volume.
 #   usage: scripts/check-board-step.sh <dutchman-electronics> <solidcraft-cli> <cadmpeg>
@@ -12,13 +15,29 @@ set -euo pipefail
 module="$1"; solidcraft="$2"; cadmpeg="$3"
 work=$(mktemp -d)
 failed=0
-for board in crates/altium-pcbdoc/tests/boards/*.PcbDoc; do
-  name=$(basename "$board" .PcbDoc)
+boards=(crates/altium-pcbdoc/tests/boards/*.PcbDoc crates/kicad-pcb/tests/boards/*.kicad_pcb
+        crates/kicad-pcb/tests/open-hardware/*/*.kicad_pcb)
+# Fail loudly if a pattern matched nothing (an unmatched glob stays as its own text).
+for board in "${boards[@]}"; do
+  [ -e "$board" ] || { echo "::error::no test board at $board"; exit 1; }
+done
+for board in "${boards[@]}"; do
+  stem=$(basename "${board%.*}")
+  case "$board" in
+    *.PcbDoc) name="altium-$stem" ;;
+    */open-hardware/*) name="open-$stem" ;;
+    *) name="kicad-$stem" ;;
+  esac
   dir="$work/$name"
   echo "== $name"
+  # The outline's width and height, and the thickness, in mm.
   case "$name" in
-    four-layer) thickness=1.8122 ;;
-    *) thickness=1.6 ;;
+    altium-four-layer) width=50; height=30; thickness=1.8122 ;;
+    kicad-four-layer|kicad-k10-four-layer) width=50; height=30; thickness=1.2 ;;
+    open-GB-CARTPP-XC) width=80; height=55; thickness=1.0 ;;
+    open-Franzininho-DIY) width=51.0675; height=30.03; thickness=1.6 ;;
+    open-*) echo "::error::no expected size for $name"; failed=1; continue ;;
+    *) width=50; height=30; thickness=1.6 ;;
   esac
   "$module" read "$board" --out "$dir" --json > "$work/$name.manifest.json"
   if "$cadmpeg" check --json "$dir/board.step" > "$work/$name.check.json" 2> "$work/$name.check.log" \
@@ -32,9 +51,10 @@ for board in crates/altium-pcbdoc/tests/boards/*.PcbDoc; do
   "$solidcraft" run --in "$dir/board.step" --save "$dir/board.sc" --quiet
   "$solidcraft" eval --in "$dir/board.sc" --json-out "$work/$name.reopened.json"
   for report in "$work/$name.solidcraft.json" "$work/$name.reopened.json"; do
-  if ! python3 - "$report" "$name" "$thickness" <<'PY'
+  if ! python3 - "$report" "$name" "$width" "$height" "$thickness" <<'PY'
 import json, sys
-report, name, thickness = json.load(open(sys.argv[1])), sys.argv[2], float(sys.argv[3])
+report, name = json.load(open(sys.argv[1])), sys.argv[2]
+width, height, thickness = (float(v) for v in sys.argv[3:6])
 errors = [t.get("error") for t in report.get("timeline", []) if t.get("error")]
 bodies = report.get("bodies", [])
 problems = [f"feature error: {e}" for e in errors]
@@ -44,7 +64,7 @@ for b in bodies:
     if not b.get("closed"):
         problems.append("the body is not closed")
     lo, hi = b["bbox"]["min"], b["bbox"]["max"]
-    for axis, want in zip("xyz", (50.0, 30.0, thickness)):
+    for axis, want in zip("xyz", (width, height, thickness)):
         i = "xyz".index(axis)
         size = hi[i] - lo[i]
         if abs(size - want) > 0.001:
@@ -97,10 +117,10 @@ PY
   done
   # The plating (plating.step, when the board has plated holes) holds one tube per hole: cadmpeg
   # check OK, and SolidCraft sees as many bodies as the file has solids, each closed with a volume.
-  # one-via and one-plated-pad each have one plated hole, so they must have the file, with 1 tube.
+  # altium-one-via and altium-one-plated-pad each have one plated hole, so they must have the file, with 1 tube.
   plating="$dir/plating.step"
   case "$name" in
-    one-via|one-plated-pad)
+    altium-one-via|altium-one-plated-pad)
       if [ ! -e "$plating" ]; then
         echo "::error::$name has a plated hole but no plating.step"; failed=1
       elif [ "$(grep -c 'MANIFOLD_SOLID_BREP' "$plating" || true)" != 1 ]; then

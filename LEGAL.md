@@ -9,7 +9,7 @@ This is a working policy written by engineers, not legal advice.
 We ask for two different statements, for two different things:
 
 1. **Provenance of reader code and format specs** (this page). Every pull request that adds or changes a format reader or a format description carries the provenance sentence below.
-2. **Test boards** (CONTRIBUTING.md). Every committed test board carries the CC0 declaration line in its README.txt. A test enforces it.
+2. **Test boards** (CONTRIBUTING.md). Every committed test board carries the CC0 declaration line in its README.txt. The one exception is the open-hardware boards made by others (`crates/kicad-pcb/tests/open-hardware`): each keeps its own accepted Creative Commons licence (CC0, CC-BY 4.0 or CC-BY-SA 4.0), named in its README.txt with its source and attribution. A test enforces both.
 
 ## Allowed sources
 

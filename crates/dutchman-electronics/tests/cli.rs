@@ -565,3 +565,111 @@ fn privacy_check_reads_a_project_file() -> Result<(), Box<dyn std::error::Error>
     assert!(text.starts_with("clean"), "{text}");
     Ok(())
 }
+
+/// The open-hardware boards by others, as files under `../kicad-pcb/tests/open-hardware` (each
+/// folder's README.txt gives the numbers KiCad itself reports).
+#[cfg(feature = "kicad")]
+const OPEN_BOARDS: [&str; 2] = [
+    "gb-cartpp-xc/GB-CARTPP-XC.kicad_pcb",
+    "franzininho-diy/Franzininho-DIY.kicad_pcb",
+];
+
+/// Reads an open-hardware board and returns its manifest and the files of its package.
+#[cfg(feature = "kicad")]
+fn read_open_board(
+    tag: &str,
+    file: &str,
+) -> Result<(serde_json::Value, std::path::PathBuf), Box<dyn std::error::Error>> {
+    let board = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../kicad-pcb/tests/open-hardware")
+        .join(file);
+    let out = std::env::temp_dir().join(format!(
+        "de-open-{}-{tag}-{}",
+        std::process::id(),
+        board.file_stem().and_then(|s| s.to_str()).unwrap_or("x")
+    ));
+    let (ok, v) = run(&[
+        "read",
+        &board.to_string_lossy(),
+        "--out",
+        &out.to_string_lossy(),
+        "--json",
+    ])?;
+    assert!(ok, "{file}: {v}");
+    Ok((v, out))
+}
+
+#[cfg(feature = "kicad")]
+#[test]
+fn every_open_hardware_board_gives_a_package_with_a_board_solid_and_a_board_part(
+) -> Result<(), Box<dyn std::error::Error>> {
+    for file in OPEN_BOARDS {
+        let (v, out) = read_open_board("package", file)?;
+        let step = std::fs::read_to_string(out.join("board.step"));
+        let manifest = std::fs::read_to_string(out.join("manifest.json"));
+        let _ = std::fs::remove_dir_all(&out);
+        assert!(step?.contains("MANIFOLD_SOLID_BREP"), "{file}");
+        assert!(!manifest?.is_empty());
+        assert_eq!(v["schema"], "dutchman.parts/1", "{file}");
+        assert_eq!(v["source"]["format"], "kicad_pcb", "{file}");
+        let first = &v["parts"][0];
+        assert_eq!(first["name"], "Board", "{file}");
+        assert_eq!(first["model"], "board", "{file}");
+    }
+    Ok(())
+}
+
+#[cfg(feature = "kicad")]
+#[test]
+fn the_open_hardware_board_packages_are_named_after_their_boards_and_keep_their_notes_honest(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (v, out) = read_open_board("gb", "gb-cartpp-xc/GB-CARTPP-XC.kicad_pcb")?;
+    let _ = std::fs::remove_dir_all(&out);
+    assert_eq!(v["name"], "GB-CARTPP-XC");
+    // No 3D model is named by this board, so no part but the board and the plating.
+    let names: Vec<&str> = v["parts"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|p| p["name"].as_str()).collect())
+        .unwrap_or_default();
+    assert_eq!(names, ["Board", "Plating"], "{names:?}");
+    // The board names 3D models from KiCad's own library: said, not guessed.
+    assert!(
+        v["notes"].to_string().contains("3D model file"),
+        "{}",
+        v["notes"]
+    );
+
+    let (v, out) = read_open_board("fz", "franzininho-diy/Franzininho-DIY.kicad_pcb")?;
+    let _ = std::fs::remove_dir_all(&out);
+    assert_eq!(v["name"], "Franzininho-DIY");
+    // The one external 3D model it names is said to be missing, not guessed.
+    assert!(
+        v["notes"].to_string().contains("3D model file"),
+        "{}",
+        v["notes"]
+    );
+    Ok(())
+}
+
+/// The same privacy check the Altium boards get (`privacy-check`), run over the text of each
+/// open-hardware board: no path, e-mail address or computer name. (The command itself reads only
+/// Altium files, so this test feeds it the KiCad file's text.)
+#[cfg(all(feature = "altium", feature = "kicad"))]
+#[test]
+fn the_open_hardware_boards_pass_the_privacy_check() -> Result<(), Box<dyn std::error::Error>> {
+    use dutchman_electronics::altium_pcbdoc::privacy::{check_stream, Options, Report};
+    for file in OPEN_BOARDS {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../kicad-pcb/tests/open-hardware")
+            .join(file);
+        let mut report = Report::default();
+        check_stream(
+            "board",
+            &std::fs::read(&path)?,
+            &Options::default(),
+            &mut report,
+        );
+        assert!(report.is_clean(), "{file}: {:?}", report.findings);
+    }
+    Ok(())
+}

@@ -46,7 +46,8 @@ jobs:
       - run: cargo test --workspace
 
   # The board STEP must open in the readers people will use: SolidCraft (the current release
-  # most people have, and the newest one) and cadmpeg.
+  # most people have, and the newest one) and cadmpeg. Every test board is opened: the Altium
+  # ones, the KiCad CC0 ones and the open-hardware KiCad boards by others.
   board-step-readers:
     runs-on: ubuntu-latest
     env:
@@ -80,7 +81,7 @@ jobs:
           gh release download "v${CADMPEG_VERSION}" -R cadmpeg/cadmpeg -p "$cm" -p "$cm.sha256"
           echo "$(cut -d' ' -f1 "$cm.sha256")  $cm" | sha256sum -c -
           tar -xf "$cm" && rm "$cm"
-      - name: Open every test board in each SolidCraft and in cadmpeg
+      - name: Open every test board (Altium and KiCad) in each SolidCraft and in cadmpeg
         run: |
           set -euo pipefail
           for v in $SOLIDCRAFT_VERSIONS; do
