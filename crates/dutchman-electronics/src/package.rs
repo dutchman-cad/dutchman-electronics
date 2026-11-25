@@ -565,6 +565,7 @@ mod tests {
                 },
                 offset: [0.0; 3],
                 rotation_deg: [0.0; 3],
+                color: None,
             }),
         }
     }

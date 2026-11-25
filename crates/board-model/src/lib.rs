@@ -278,6 +278,9 @@ pub struct ModelRef {
     pub offset: [f64; 3],
     /// Model rotation about X, Y, Z in degrees.
     pub rotation_deg: [f64; 3],
+    /// What an [`ModelSource::Extruded`] body is drawn in, when the file says. `None` for a model
+    /// file, which brings its own colours.
+    pub color: Option<Color>,
 }
 
 /// A component placed on the board.
