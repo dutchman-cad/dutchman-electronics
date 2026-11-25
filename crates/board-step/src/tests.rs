@@ -759,3 +759,47 @@ fn arc_ends_sit_on_their_circle_when_the_input_is_one_altium_step_off() {
     let out = write(&board(outer, vec![], vec![]), "slot").unwrap();
     check_topology(&out.text);
 }
+
+#[test]
+fn two_arcs_of_different_circles_meet_on_both_circles() {
+    // Two circles of radius 5 centred at (0, 0) and (6, 0) cross at (3, 4). The second is
+    // written one Altium step off its place, so the joint cannot be on both as given.
+    let step = 2.54e-6;
+    let a = 4f64.atan2(3.0).to_degrees();
+    let b = 4f64.atan2(-3.0).to_degrees();
+    let outer = Contour {
+        segments: vec![
+            Segment::Arc {
+                center: p(0.0, 0.0),
+                radius: 5.0,
+                start_deg: 90.0,
+                end_deg: a,
+                clockwise: true,
+            },
+            Segment::Arc {
+                center: p(6.0 + step, 0.0),
+                radius: 5.0,
+                start_deg: b,
+                end_deg: 90.0,
+                clockwise: true,
+            },
+            Segment::Line {
+                from: p(6.0, 5.0),
+                to: p(0.0, 5.0),
+            },
+        ],
+    };
+    let edges = contour_edges(&outer).unwrap();
+    for e in &edges {
+        if let Kind2::Arc { center, radius, .. } = e.kind {
+            for v in [e.start, e.end] {
+                let off = (distance(center, v) - radius).abs();
+                assert!(off < 1e-9, "{off}");
+            }
+        }
+    }
+    for i in 0..edges.len() {
+        let prev = edges[(i + edges.len() - 1) % edges.len()];
+        assert_eq!(prev.end, edges[i].start);
+    }
+}

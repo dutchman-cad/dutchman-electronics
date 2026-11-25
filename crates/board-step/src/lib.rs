@@ -128,6 +128,36 @@ fn project_on_circle(center: Point, radius: f64, p: Point) -> Point {
     }
 }
 
+/// Where two circles cross, the crossing nearest `near`, when it is within a hair of it.
+fn circle_crossing_near(c0: Point, r0: f64, c1: Point, r1: f64, near: Point) -> Option<Point> {
+    let d = distance(c0, c1);
+    if d == 0.0 {
+        return None;
+    }
+    let a = (r0 * r0 - r1 * r1 + d * d) / (2.0 * d);
+    let h2 = r0 * r0 - a * a;
+    if h2 < 0.0 {
+        return None;
+    }
+    let h = h2.sqrt();
+    let (ux, uy) = ((c1.x - c0.x) / d, (c1.y - c0.y) / d);
+    let (mx, my) = (c0.x + a * ux, c0.y + a * uy);
+    let one = Point {
+        x: mx - h * uy,
+        y: my + h * ux,
+    };
+    let two = Point {
+        x: mx + h * uy,
+        y: my - h * ux,
+    };
+    let best = if distance(one, near) <= distance(two, near) {
+        one
+    } else {
+        two
+    };
+    (distance(best, near) < 1e-3).then_some(best)
+}
+
 fn on_circle(center: Point, radius: f64, angle: f64) -> Point {
     Point {
         x: center.x + radius * angle.cos(),
@@ -368,8 +398,27 @@ fn contour_edges(contour: &Contour) -> Result<Vec<Edge2>, String> {
             ));
         }
         let joint = match (prev.kind, edge.kind) {
-            // The previous arc's end is already on its circle.
-            (Kind2::Arc { .. }, _) | (Kind2::Line, Kind2::Line) => prev.end,
+            (Kind2::Line, Kind2::Line) => prev.end,
+            // Two arcs: a point on both circles when they cross near the joint.
+            (
+                Kind2::Arc {
+                    center: c0,
+                    radius: r0,
+                    ..
+                },
+                Kind2::Arc {
+                    center: c1,
+                    radius: r1,
+                    ..
+                },
+            ) => {
+                if c0 == c1 && r0 == r1 {
+                    prev.end
+                } else {
+                    circle_crossing_near(c0, r0, c1, r1, prev.end).unwrap_or(prev.end)
+                }
+            }
+            (Kind2::Arc { .. }, Kind2::Line) => prev.end,
             (Kind2::Line, Kind2::Arc { center, radius, .. }) => {
                 project_on_circle(center, radius, prev.end)
             }
