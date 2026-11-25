@@ -8,7 +8,7 @@ Reads circuit boards into [SolidCraft](https://github.com/tangency-labs/solidcra
 |---|---|
 | Altium (`.PcbDoc`) | In progress |
 | tscircuit | In progress |
-| KiCad | TBD; scope depends on the SolidCraft maintainers' answer on [tangency-labs/solidcraft#21320](https://github.com/tangency-labs/solidcraft/issues/21320) |
+| KiCad (`.kicad_pcb`, KiCad 9 and 10) | In progress: reader in `crates/kicad-pcb` (scope: issue 75); more scope depends on the SolidCraft maintainers' answer on [tangency-labs/solidcraft#21320](https://github.com/tangency-labs/solidcraft/issues/21320) |
 | Fusion Electronics | TBD |
 
 It is an optional add-on. Dutchman works without it, and installing Dutchman does not install it. It is not part of cadmpeg: cadmpeg reads mechanical CAD, this reads electronics.
@@ -45,6 +45,7 @@ The "neutral board model" is plain Rust types in `crates/board-model`: outline, 
 | `crates/board-model` | The neutral board model and the `InputFormat` trait |
 | `crates/board-step` | Writes the board substrate (outline, cutouts, drilled holes, thickness) as an exact STEP solid, and the tubes of plated holes |
 | `crates/altium-pcbdoc` | Reads `.PcbDoc` into the board model. No Dutchman dependencies |
+| `crates/kicad-pcb` | Reads KiCad `.kicad_pcb` into the board model. No Dutchman dependencies |
 | `crates/dutchman-electronics` | The `dutchman-electronics` command; gathers the formats |
 
 Each further format is one new crate that fills the same model.
