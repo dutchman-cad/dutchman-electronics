@@ -97,9 +97,9 @@ impl Node {
     /// True when `(name yes)` is among the arguments, or the bare word `name` is.
     pub fn is_yes(&self, name: &str) -> bool {
         self.has_flag(name)
-            || self
-                .child(name)
-                .is_some_and(|n| matches!(n.str_at(0), Some("yes") | Some("true")) || n.args().is_empty())
+            || self.child(name).is_some_and(|n| {
+                matches!(n.str_at(0), Some("yes") | Some("true")) || n.args().is_empty()
+            })
     }
 }
 

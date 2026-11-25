@@ -16,9 +16,7 @@ mod outline;
 mod reader;
 pub mod sexpr;
 
-use board_model::{
-    Detection, InputFormat, ReadError, ReadOutcome, MAX_INPUT_BYTES,
-};
+use board_model::{Detection, InputFormat, ReadError, ReadOutcome, MAX_INPUT_BYTES};
 
 /// The KiCad `.kicad_pcb` format.
 #[derive(Clone, Copy, Debug, Default)]
@@ -88,7 +86,10 @@ mod tests {
         assert_eq!(k.detect(b"(kicad_pcb (version 1)", None), Detection::Yes);
         assert_eq!(k.detect(b"\n  (kicad_pcb\n", Some("txt")), Detection::Yes);
         assert_eq!(k.detect(b"(kicad_pcbx", Some("txt")), Detection::No);
-        assert_eq!(k.detect(b"(kicad_sch", Some("KiCad_PCB")), Detection::MaybeByName);
+        assert_eq!(
+            k.detect(b"(kicad_sch", Some("KiCad_PCB")),
+            Detection::MaybeByName
+        );
         assert_eq!(k.detect(b"hello", Some("pcbdoc")), Detection::No);
         assert_eq!(k.detect(b"", None), Detection::No);
     }

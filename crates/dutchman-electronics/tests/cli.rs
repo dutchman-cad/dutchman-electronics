@@ -232,8 +232,8 @@ fn read_says_why_an_older_kicad_file_is_refused() -> Result<(), Box<dyn std::err
 
 #[cfg(feature = "kicad")]
 #[test]
-fn every_kicad_test_board_gives_a_package_with_a_board_solid() -> Result<(), Box<dyn std::error::Error>>
-{
+fn every_kicad_test_board_gives_a_package_with_a_board_solid(
+) -> Result<(), Box<dyn std::error::Error>> {
     let dir = kicad_board("");
     let mut count = 0;
     for entry in std::fs::read_dir(&dir)? {

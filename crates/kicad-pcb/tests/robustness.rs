@@ -71,5 +71,8 @@ fn a_huge_outline_is_joined_in_bounded_time() {
     let start = std::time::Instant::now();
     let o = KiCad.read(text.as_bytes()).unwrap();
     assert!(start.elapsed().as_secs() < 30);
-    assert!(o.notes.iter().any(|n| n.message.contains("beyond the limit")));
+    assert!(o
+        .notes
+        .iter()
+        .any(|n| n.message.contains("beyond the limit")));
 }

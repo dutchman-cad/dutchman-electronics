@@ -73,9 +73,8 @@ pub fn join(open: Vec<Segment>, closed: Vec<Contour>) -> Joined {
             out.open_chains += 1;
         }
     }
-    let area = |c: &Contour| {
-        contour_bounds(c).map_or(0.0, |(x0, y0, x1, y1)| (x1 - x0) * (y1 - y0))
-    };
+    let area =
+        |c: &Contour| contour_bounds(c).map_or(0.0, |(x0, y0, x1, y1)| (x1 - x0) * (y1 - y0));
     let Some(biggest) = contours
         .iter()
         .enumerate()

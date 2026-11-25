@@ -157,7 +157,11 @@ impl Reader {
         let net = node.child("net")?;
         let arg = net.args().first()?;
         match arg.number() {
-            Some(n) => self.nets.get(&(n as i64)).cloned().filter(|s| !s.is_empty()),
+            Some(n) => self
+                .nets
+                .get(&(n as i64))
+                .cloned()
+                .filter(|s| !s.is_empty()),
             None => arg.text().map(str::to_string).filter(|s| !s.is_empty()),
         }
     }
@@ -181,8 +185,10 @@ impl Reader {
                 match arc_through(s, m, e) {
                     Some(a) => Some(Shape::Arc(a)),
                     None => {
-                        self.tally
-                            .add(Severity::Warning, "arc(s) with all three points on one line were read as lines");
+                        self.tally.add(
+                            Severity::Warning,
+                            "arc(s) with all three points on one line were read as lines",
+                        );
                         Some(Shape::Line(s, e))
                     }
                 }
@@ -196,8 +202,8 @@ impl Reader {
             "rect" => {
                 let a = n.child("start")?.pair()?;
                 let b = n.child("end")?.pair()?;
-                let corners = [(a.0, a.1), (b.0, a.1), (b.0, b.1), (a.0, b.1)]
-                    .map(|(x, y)| f.point(x, y));
+                let corners =
+                    [(a.0, a.1), (b.0, a.1), (b.0, b.1), (a.0, b.1)].map(|(x, y)| f.point(x, y));
                 Some(Shape::Poly(outline::polygon(&corners)))
             }
             "poly" => Some(Shape::Poly(pts_contour(f, n.child("pts")?)?)),
@@ -245,13 +251,17 @@ impl Reader {
             return;
         }
         let Some(layer) = self.layer_index(layer_name) else {
-            self.tally
-                .add(Severity::Dropped, "drawing item(s) on a layer the board does not list");
+            self.tally.add(
+                Severity::Dropped,
+                "drawing item(s) on a layer the board does not list",
+            );
             return;
         };
         let kind_of = self.layers.get(layer).map(|l| l.kind);
         let width = Self::stroke_width(n);
-        let filled = n.child("fill").is_some_and(|x| matches!(x.str_at(0), Some("yes") | Some("solid")))
+        let filled = n
+            .child("fill")
+            .is_some_and(|x| matches!(x.str_at(0), Some("yes") | Some("solid")))
             || n.is_yes("fill");
         match kind_of {
             Some(LayerKind::Silkscreen) => {
@@ -404,8 +414,10 @@ impl Reader {
             return;
         };
         let Some(layer) = self.layer_index(layer_name) else {
-            self.tally
-                .add(Severity::Dropped, "text(s) on a layer the board does not list");
+            self.tally.add(
+                Severity::Dropped,
+                "text(s) on a layer the board does not list",
+            );
             return;
         };
         if !matches!(
@@ -414,7 +426,9 @@ impl Reader {
         ) {
             self.tally.add(
                 Severity::Dropped,
-                format!("text(s) on layer {layer_name} (only silkscreen and copper texts are read)"),
+                format!(
+                    "text(s) on layer {layer_name} (only silkscreen and copper texts are read)"
+                ),
             );
             return;
         }
@@ -511,8 +525,10 @@ impl Reader {
             return;
         };
         let Some(layer) = self.layer_index(layer_name) else {
-            self.tally
-                .add(Severity::Dropped, "track(s) on a layer the board does not list");
+            self.tally.add(
+                Severity::Dropped,
+                "track(s) on a layer the board does not list",
+            );
             return;
         };
         let f = Frame::IDENTITY;
@@ -595,10 +611,8 @@ impl Reader {
 
     fn zone(&mut self, n: &Node) {
         if n.child("keepout").is_some() {
-            self.tally.add(
-                Severity::Dropped,
-                "keep-out zone(s) (they hold no copper)",
-            );
+            self.tally
+                .add(Severity::Dropped, "keep-out zone(s) (they hold no copper)");
             return;
         }
         let mut filled = 0usize;
@@ -613,10 +627,14 @@ impl Reader {
                 );
                 continue;
             };
-            let Some(contour) = fp.child("pts").and_then(|p| pts_contour(&Frame::IDENTITY, p))
+            let Some(contour) = fp
+                .child("pts")
+                .and_then(|p| pts_contour(&Frame::IDENTITY, p))
             else {
-                self.tally
-                    .add(Severity::Dropped, "zone fill piece(s) with unreadable points");
+                self.tally.add(
+                    Severity::Dropped,
+                    "zone fill piece(s) with unreadable points",
+                );
                 continue;
             };
             filled += 1;
@@ -641,8 +659,10 @@ impl Reader {
     fn footprint(&mut self, fp: &Node) {
         let at = fp.child("at");
         let (Some(x), Some(y)) = (at.and_then(|a| a.num(0)), at.and_then(|a| a.num(1))) else {
-            self.tally
-                .add(Severity::Dropped, "footprint(s) without a readable position");
+            self.tally.add(
+                Severity::Dropped,
+                "footprint(s) without a readable position",
+            );
             return;
         };
         let angle = at.and_then(|a| a.num(2)).unwrap_or(0.0);
@@ -676,12 +696,7 @@ impl Reader {
                 "property" => {
                     if let (Some(spot), Some(text)) = (Self::text_spot(item), item.str_at(1)) {
                         if matches!(item.str_at(0), Some("Reference") | Some("Value")) {
-                            self.text(
-                                &expand(text, &designator, &value),
-                                item,
-                                spot,
-                                &frame,
-                            );
+                            self.text(&expand(text, &designator, &value), item, spot, &frame);
                         }
                     }
                 }
@@ -693,16 +708,14 @@ impl Reader {
                 h if h.starts_with("fp_") => {
                     let kind = h.trim_start_matches("fp_");
                     if kind == "text_box" {
-                        self.tally
-                            .add(Severity::Dropped, "text box(es) (not read)");
+                        self.tally.add(Severity::Dropped, "text box(es) (not read)");
                     } else {
                         self.graphic_item(kind, item, &frame, owner);
                     }
                 }
-                "zone" => self.tally.add(
-                    Severity::Dropped,
-                    "zone(s) inside footprints (not read)",
-                ),
+                "zone" => self
+                    .tally
+                    .add(Severity::Dropped, "zone(s) inside footprints (not read)"),
                 _ => {}
             }
         }
@@ -739,11 +752,7 @@ impl Reader {
 
     fn model(&mut self, m: &Node) -> Option<ModelRef> {
         let file = m.args().first()?.text()?.to_string();
-        let name = file
-            .rsplit(['/', '\\'])
-            .next()
-            .unwrap_or(&file)
-            .to_string();
+        let name = file.rsplit(['/', '\\']).next().unwrap_or(&file).to_string();
         let offset = m
             .child("offset")
             .or_else(|| m.child("at"))
@@ -926,9 +935,8 @@ fn read_thickness(root: &Node, tally: &mut Tally) -> Option<f64> {
     let mut any = false;
     for layer in stackup.map(|s| s.children("layer")).into_iter().flatten() {
         let name = layer.str_at(0).unwrap_or("");
-        let counts = name.ends_with(".Cu")
-            || name.ends_with(".Mask")
-            || name.starts_with("dielectric");
+        let counts =
+            name.ends_with(".Cu") || name.ends_with(".Mask") || name.starts_with("dielectric");
         if !counts {
             continue;
         }
@@ -1063,19 +1071,28 @@ pub fn read(root: &Node) -> ReadOutcome {
     }
     if joined.open_chains > 0 {
         r.tally.counts.insert(
-            (0, "chain(s) of Edge.Cuts lines that do not close were left out of the outline".into()),
+            (
+                0,
+                "chain(s) of Edge.Cuts lines that do not close were left out of the outline".into(),
+            ),
             joined.open_chains,
         );
     }
     if joined.outside > 0 {
         r.tally.counts.insert(
-            (0, "closed Edge.Cuts shape(s) outside the outline were left out".into()),
+            (
+                0,
+                "closed Edge.Cuts shape(s) outside the outline were left out".into(),
+            ),
             joined.outside,
         );
     }
     if joined.over_limit > 0 {
         r.tally.counts.insert(
-            (0, "Edge.Cuts piece(s) beyond the limit were not joined".into()),
+            (
+                0,
+                "Edge.Cuts piece(s) beyond the limit were not joined".into(),
+            ),
             joined.over_limit,
         );
     }

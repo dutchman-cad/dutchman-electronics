@@ -17,7 +17,10 @@ use board_model::{
 use kicad_pcb::KiCad;
 
 fn board(name: &str) -> ReadOutcome {
-    let path = format!("{}/tests/boards/{name}.kicad_pcb", env!("CARGO_MANIFEST_DIR"));
+    let path = format!(
+        "{}/tests/boards/{name}.kicad_pcb",
+        env!("CARGO_MANIFEST_DIR")
+    );
     let bytes = std::fs::read(&path).unwrap();
     KiCad.read(&bytes).unwrap()
 }
@@ -135,7 +138,10 @@ fn outline_shapes_join_lines_and_an_arc_and_find_every_cutout() {
             assert!(near(*radius, 4.0));
             // The corner is drawn from (46, 0) to (50, 4): in Y up that is 90 degrees down to 0.
             assert!(*clockwise);
-            assert!(same_angle(*start_deg, 90.0) && same_angle(*end_deg, 0.0), "{start_deg} {end_deg}");
+            assert!(
+                same_angle(*start_deg, 90.0) && same_angle(*end_deg, 0.0),
+                "{start_deg} {end_deg}"
+            );
         }
         _ => unreachable!(),
     }
@@ -228,12 +234,19 @@ fn tracks_arcs_and_vias_with_their_nets() {
                 assert!(at(*center, 30.0, 15.0) && near(*radius, 5.0));
                 // From (30, 10) to (35, 15) in KiCad is, in Y up, from 90 degrees round to 0 the
                 // clockwise way; as counter-clockwise it is 0 to 90.
-                assert!(same_angle(*start_deg, 0.0) && same_angle(*end_deg, 90.0), "{start_deg} {end_deg}");
+                assert!(
+                    same_angle(*start_deg, 0.0) && same_angle(*end_deg, 90.0),
+                    "{start_deg} {end_deg}"
+                );
                 assert!(near(*width, 0.3));
                 assert_eq!(net.as_deref(), Some("SIG"));
                 seen.2 = true;
             }
-            CopperItem::Via { at: p, diameter, drill } => {
+            CopperItem::Via {
+                at: p,
+                diameter,
+                drill,
+            } => {
                 assert!(at(*p, 40.0, 20.0));
                 assert!(near(*diameter, 0.8) && near(*drill, 0.4));
                 seen.3 = true;
@@ -267,11 +280,24 @@ fn a_top_resistor_with_a_model_reference() {
     assert!(matches!(&m.source, ModelSource::External { file } if file == "box-1608.step"));
     assert!(notes_contain(&o, "3D model file"));
     // The offset as written; the rotation turned the other way (KiCad's z of 30 is -30 here).
-    assert!(m.offset.iter().zip([0.5, 0.25, 0.1]).all(|(a, b)| near(*a, b)));
-    assert!(m.rotation_deg.iter().zip([0.0, 0.0, -30.0]).all(|(a, b)| near(*a, b)));
+    assert!(m
+        .offset
+        .iter()
+        .zip([0.5, 0.25, 0.1])
+        .all(|(a, b)| near(*a, b)));
+    assert!(m
+        .rotation_deg
+        .iter()
+        .zip([0.0, 0.0, -30.0])
+        .all(|(a, b)| near(*a, b)));
     let pads = pads(&o);
     assert_eq!(pads.len(), 2);
-    let top = o.board.layers.iter().position(|l| l.name == "F.Cu").unwrap();
+    let top = o
+        .board
+        .layers
+        .iter()
+        .position(|l| l.name == "F.Cu")
+        .unwrap();
     let mut xs = Vec::new();
     for p in pads {
         let CopperItem::Pad {
@@ -311,7 +337,12 @@ fn a_bottom_resistor_turned_90_degrees() {
     assert_eq!(p.side, Side::Bottom);
     assert!(near(p.rotation_deg, 90.0));
     assert!(at(p.at, 25.0, 15.0));
-    let bottom = o.board.layers.iter().position(|l| l.name == "B.Cu").unwrap();
+    let bottom = o
+        .board
+        .layers
+        .iter()
+        .position(|l| l.name == "B.Cu")
+        .unwrap();
     let mut ys = Vec::new();
     for item in pads(&o) {
         let CopperItem::Pad {
@@ -338,7 +369,12 @@ fn a_bottom_resistor_turned_90_degrees() {
 #[test]
 fn through_hole_pads_have_their_holes_and_plating() {
     let o = board("one-thru-hole-pads");
-    let all = o.board.layers.iter().position(|l| l.name == "*.Cu").unwrap();
+    let all = o
+        .board
+        .layers
+        .iter()
+        .position(|l| l.name == "*.Cu")
+        .unwrap();
     assert_eq!(o.board.layers[all].kind, LayerKind::Copper);
     assert_eq!(o.board.layers[all].side, None);
     let mut found = Vec::new();
@@ -357,7 +393,14 @@ fn through_hole_pads_have_their_holes_and_plating() {
             unreachable!()
         };
         assert_eq!(*layer, all);
-        found.push((pos.x.round() as i64, *shape, *size_x, *size_y, *drill, *plated));
+        found.push((
+            pos.x.round() as i64,
+            *shape,
+            *size_x,
+            *size_y,
+            *drill,
+            *plated,
+        ));
     }
     found.sort_by_key(|f| f.0);
     assert_eq!(found.len(), 3);
@@ -380,7 +423,11 @@ fn silkscreen_lines_arcs_circles_polygons_and_text() {
     for g in &b.graphics {
         match g {
             Graphic::Line {
-                layer, from, to, width, ..
+                layer,
+                from,
+                to,
+                width,
+                ..
             } => {
                 assert_eq!(*layer, silk);
                 lines.push((*from, *to, *width));
@@ -409,7 +456,10 @@ fn silkscreen_lines_arcs_circles_polygons_and_text() {
     let quarter = arcs.iter().find(|a| a.2 != a.3).unwrap();
     assert!(at(quarter.0, 20.0, 8.0) && (quarter.1 - 3.0).abs() < 0.001 && near(quarter.4, 0.2));
     // (20,5) to (23,8) in Y down is 90 degrees to 0 in Y up, clockwise: 0 to 90 counter-clockwise.
-    assert!(same_angle(quarter.2, 0.0) && same_angle(quarter.3, 90.0), "{quarter:?}");
+    assert!(
+        same_angle(quarter.2, 0.0) && same_angle(quarter.3, 90.0),
+        "{quarter:?}"
+    );
     let circle = arcs.iter().find(|a| a.2 == a.3).unwrap();
     assert!(at(circle.0, 35.0, 8.0) && near(circle.1, 2.0) && near(circle.4, 0.15));
     // The text: "HELLO" centred on (30, 22). The model anchors a text at its baseline's left
@@ -420,14 +470,23 @@ fn silkscreen_lines_arcs_circles_polygons_and_text() {
     assert_eq!(t.content, "HELLO");
     assert!(near(t.height, 1.5) && near(t.rotation_deg, 0.0) && !t.mirrored);
     assert!(matches!(t.font, board_model::TextFont::Stroke { width } if near(width, 0.2)));
-    assert!(near(t.at.x, 130.0 - 2.25) && near(t.at.y, -122.0 - 0.75), "{:?}", t.at);
+    assert!(
+        near(t.at.x, 130.0 - 2.25) && near(t.at.y, -122.0 - 0.75),
+        "{:?}",
+        t.at
+    );
     assert!(notes_contain(&o, "estimate"));
 }
 
 #[test]
 fn a_filled_zone_comes_as_copper_with_its_gap_around_the_via() {
     let o = board("one-zone");
-    let top = o.board.layers.iter().position(|l| l.name == "F.Cu").unwrap();
+    let top = o
+        .board
+        .layers
+        .iter()
+        .position(|l| l.name == "F.Cu")
+        .unwrap();
     let regions: Vec<_> = o
         .board
         .copper
@@ -474,7 +533,10 @@ fn every_board_is_detected_by_content_and_by_name() {
             continue;
         }
         let bytes = std::fs::read(&path).unwrap();
-        assert_eq!(KiCad.detect(&bytes[..bytes.len().min(512)], None), Detection::Yes);
+        assert_eq!(
+            KiCad.detect(&bytes[..bytes.len().min(512)], None),
+            Detection::Yes
+        );
         assert_eq!(KiCad.detect(b"", Some("KiCad_PCB")), Detection::MaybeByName);
         n += 1;
     }

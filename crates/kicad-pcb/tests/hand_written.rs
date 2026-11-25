@@ -34,7 +34,10 @@ fn the_stackup_gives_the_thickness() {
     );
     let o = read(&text).unwrap();
     assert!((o.board.thickness.unwrap() - 1.6).abs() < 1e-9);
-    assert!(!o.notes.iter().any(|n| n.message.contains("stack-up adds up")));
+    assert!(!o
+        .notes
+        .iter()
+        .any(|n| n.message.contains("stack-up adds up")));
 }
 
 #[test]
@@ -47,16 +50,16 @@ fn a_stackup_that_disagrees_with_the_general_thickness_wins_with_a_warning() {
     );
     let o = read(&text).unwrap();
     assert!((o.board.thickness.unwrap() - 0.57).abs() < 1e-9);
-    assert!(o
-        .notes
-        .iter()
-        .any(|n| n.severity == Severity::Warning && n.message.contains("stack-up adds up to 0.570")));
+    assert!(o.notes.iter().any(
+        |n| n.severity == Severity::Warning && n.message.contains("stack-up adds up to 0.570")
+    ));
 }
 
 #[test]
 fn an_older_file_gets_a_note_and_no_board() {
-    let o = read("(kicad_pcb (version 20240108) (generator \"pcbnew\") (layers (0 \"F.Cu\" signal)))")
-        .unwrap();
+    let o =
+        read("(kicad_pcb (version 20240108) (generator \"pcbnew\") (layers (0 \"F.Cu\" signal)))")
+            .unwrap();
     assert!(o.board.outline.outer.segments.is_empty());
     assert!(o.board.layers.is_empty());
     assert_eq!(o.notes.len(), 1);
@@ -95,7 +98,12 @@ fn what_is_not_read_is_named() {
     assert!(has("layer Dwgs.User"), "{dropped:?}");
     assert!(has("no filled copper"), "{dropped:?}");
     assert!(has("keep-out"), "{dropped:?}");
-    assert!(has("no closed outline") || o.notes.iter().any(|n| n.message.contains("no closed outline")));
+    assert!(
+        has("no closed outline")
+            || o.notes
+                .iter()
+                .any(|n| n.message.contains("no closed outline"))
+    );
 }
 
 #[test]
@@ -123,7 +131,10 @@ fn net_names_given_as_strings_are_read() {
 
 #[test]
 fn text_that_is_not_a_board_is_an_error() {
-    assert!(matches!(read("(kicad_sch (version 1))"), Err(ReadError::Invalid(_))));
+    assert!(matches!(
+        read("(kicad_sch (version 1))"),
+        Err(ReadError::Invalid(_))
+    ));
     assert!(matches!(read("hello"), Err(ReadError::Invalid(_))));
     assert!(matches!(read(""), Err(ReadError::Invalid(_))));
 }
