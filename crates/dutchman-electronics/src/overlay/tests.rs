@@ -773,14 +773,7 @@ fn texts_past_the_segment_budget_are_counted_not_drawn() {
         let at = p(10.0, 10.0 + f64::from(i) * 5.0);
         b.texts.push(text_on(3, "HHHH", 2.0, at));
     }
-    let (list, notes) = overlays_within(
-        &b,
-        1.6,
-        "Board",
-        20,
-        MAX_HOLE_VERTICES,
-        MAX_SOLID_FACES,
-    );
+    let (list, notes) = overlays_within(&b, 1.6, "Board", 20, MAX_HOLE_VERTICES, MAX_SOLID_FACES);
     assert!(area(named(&list, "Silkscreen top")) > 0.0);
     let m = messages(&notes);
     assert!(
