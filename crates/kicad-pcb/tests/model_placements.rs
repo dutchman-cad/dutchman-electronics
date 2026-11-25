@@ -198,6 +198,13 @@ fn kicad_10_models_land_where_kicad_puts_them() {
     check("k10-model-placements");
 }
 
+/// Items in a comparable order: KiCad 9 and 10 write the footprints in a different order.
+fn sorted<T: std::fmt::Debug>(items: &[T]) -> Vec<String> {
+    let mut v: Vec<String> = items.iter().map(|i| format!("{i:?}")).collect();
+    v.sort();
+    v
+}
+
 #[test]
 fn kicad_10_boards_read_like_kicad_9_boards() {
     for name in [
@@ -219,9 +226,9 @@ fn kicad_10_boards_read_like_kicad_9_boards() {
         assert_eq!(a.layers.len(), b.layers.len(), "{name}");
         assert_eq!(a.thickness, b.thickness, "{name}");
         assert_eq!(a.outline, b.outline, "{name}");
-        assert_eq!(a.copper, b.copper, "{name}");
+        assert_eq!(sorted(&a.copper), sorted(&b.copper), "{name}");
         assert_eq!(a.graphics, b.graphics, "{name}");
-        assert_eq!(a.components, b.components, "{name}");
+        assert_eq!(sorted(&a.components), sorted(&b.components), "{name}");
         // KiCad 10 writes its default pen as 0.1524 where KiCad 9 writes 0.15, so the pen width
         // is left out; everything else about a text is the same.
         let plain = |b: &board_model::Board| {
@@ -238,6 +245,6 @@ fn kicad_10_boards_read_like_kicad_9_boards() {
                 })
                 .collect::<Vec<_>>()
         };
-        assert_eq!(plain(&a), plain(&b), "{name}");
+        assert_eq!(sorted(&plain(&a)), sorted(&plain(&b)), "{name}");
     }
 }
