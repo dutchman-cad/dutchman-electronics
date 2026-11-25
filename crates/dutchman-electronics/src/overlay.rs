@@ -263,7 +263,7 @@ fn pad(at: Point, shape: PadShape, size_x: f64, size_y: f64, rotation_deg: f64) 
         ),
         PadShape::RoundedRectangle { radius_ratio } => {
             let r = radius_ratio.clamp(0.0, 0.5) * size_x.min(size_y);
-            if !(r > CHORD / 10.0) {
+            if r.is_nan() || r <= CHORD / 10.0 {
                 return pad(at, PadShape::Rectangle, size_x, size_y, rotation_deg);
             }
             // The four corner arcs, counter-clockwise from the bottom left; the ring closes with
