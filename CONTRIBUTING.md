@@ -89,9 +89,44 @@ KiCad boards go in `crates/kicad-pcb/tests/boards/`, each `<name>.kicad_pcb` wit
 `<name>.README.txt` that starts with the same CC0 line and lists every number. A KiCad file is
 text, so a test (`boards_are_ours.rs`) also refuses a board that names a path, an e-mail address
 or a computer. The board scripts are in `fixtures/kicad`; `fixtures/kicad/run.sh` rebuilds all
-boards with KiCad 9 in a container (needs podman). Boards made by others under an open licence
-are not in this folder yet; when the first one is added, this section and its test gain a rule
-that names its licence and source.
+boards with KiCad 9 in a container (needs podman).
+
+### Open-hardware boards made by others (KiCad)
+
+Larger real-world boards from other people's open-hardware projects go in
+`crates/kicad-pcb/tests/open-hardware/<board>/`, one folder per board. These are the only boards
+that may carry a licence line other than the CC0 one, and only with one of these licences:
+
+| Licence line id | What it asks of us |
+|---|---|
+| `CC0-1.0` | nothing |
+| `CC-BY-4.0` | name the creator, the licence and the source, and say it was changed |
+| `CC-BY-SA-4.0` | the same, and the board file (and any changed copy of it) stays under CC BY-SA 4.0 |
+
+We accept only version 4.0 of the two attribution licences, and no `-NC` (non-commercial) or
+`-ND` (no changes) variant, because we must be free to re-save a board and to ship the repository
+commercially. Reading a board with our code does not make our code a copy of it, so the
+Apache-2.0 licence of the rest of the repository stays as it is; the board folder keeps its own
+licence. CERN-OHL, TAPR, GPL-family and other hardware licences are not accepted for now: ask first.
+
+Rules for such a folder (the test `boards_are_ours.rs` enforces them):
+
+- The board is saved by KiCad 9 or later. If the project published an older file, re-save it with
+  KiCad 9 (`kicad/kicad:9.0`) and say so in the README.txt. Change nothing else, and strip nothing
+  silently: if a board names a person, a company, an e-mail address or a path on someone's computer
+  that is not the project's own public attribution, choose another board.
+- The board comes from the project's own published repository or release, never from KiCad's
+  source repositories (they are GPL: see [LEGAL.md](LEGAL.md)). The download goes in its own empty
+  directory and nothing in it is run.
+- `README.txt` starts with this line, with the id and URL of one accepted licence:
+  `Openly licensed board by others, not CC0. Licence: CC-BY-4.0, https://creativecommons.org/licenses/by/4.0/`
+- The README.txt then names the source URL (`Source: https://...`), the exact commit or tag, the
+  attribution the licence asks for (`Attribution ...`, not needed for CC0), how the file was
+  re-saved, and the key numbers as KiCad itself reports them (`- Outline`, `- Thickness`,
+  `- Copper layers`, `- Footprints`), never numbers from our own reader.
+- The licence text as the project published it is in `LICENSE-<id>.txt` beside the board.
+- The board is privacy-scanned before it is committed (paths, e-mail addresses, computer names:
+  the checks `privacy-check` runs, repeated on the KiCad text by a test in `crates/dutchman-electronics`).
 
 ## Make a change, step by step
 

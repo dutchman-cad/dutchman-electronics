@@ -78,6 +78,10 @@ layer) the behaviour comes from those boards and from KiCad's own exports of the
 same. `model-placements` pins where a model lands on a top and a bottom part against KiCad's own
 VRML export. `fixtures/kicad/run.sh` rebuilds them (needs podman). `tests/hand_written.rs`
 covers what no KiCad-made board holds yet from text written by hand from the documentation: the
-stack-up table, older and newer version numbers and net names written as strings. Real
-KiCad-made boards with a saved stack-up, and larger open-hardware boards, are still wanted (see
-issue 75).
+stack-up table, older and newer version numbers and net names written as strings.
+
+`tests/open-hardware/<board>/` holds larger real-world boards made by others under an open
+Creative Commons licence (CC0, CC-BY 4.0 or CC-BY-SA 4.0), each with its licence text and a
+`README.txt` naming the source, commit, attribution and the numbers KiCad itself gives for the
+board; `tests/open_hardware.rs` checks the reader against those numbers. The rules are in
+CONTRIBUTING.md. A real KiCad-made board with a saved stack-up is still wanted (see issue 75).
