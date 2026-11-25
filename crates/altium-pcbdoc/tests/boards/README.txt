@@ -161,6 +161,18 @@ one-bottom-text.PcbDoc
     text "BOT", layer Bottom Overlay, position (40.000, 10.000), rotation 0, mirrored (so it
     reads correctly when the board is seen from below)
 
+The bounding rectangle Altium reports for each text (read back on 2026-11-25 by my own script,
+which opened a copy of each board and closed it without saving; Altium gives more digits, these
+are rounded to 0.001):
+    one-text          x  9.800 to 17.531, y  9.800 to 12.199
+    one-rotated-text  x 22.801 to 25.200, y 14.800 to 20.532
+    one-bottom-text   x 34.468 to 40.200, y  9.800 to 12.199
+Unrounded, as Altium gives them: one-text 9.8, 9.8 to 17.53097, 12.19936; one-rotated-text
+22.80065, 14.8 to 25.2, 20.53162; one-bottom-text 34.46838, 9.8 to 40.2, 12.19936. Seen in each
+text's own direction, the rectangle reaches 0.200 (the stroke width) behind the reference point
+and 0.200 below it: the rotated text runs up (+y) from its reference point with its top towards
+-x, and the mirrored text runs to the left (-x).
+
 Scripted board with a STEP model: one-step-resistor
 ----------------------------------------------------
 Made on 2026-11-24 by my own script, from a file copy of one-resistor.PcbDoc: R1 keeps its
