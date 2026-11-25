@@ -1,51 +1,65 @@
-//! The test project `param-project`: its project file, and texts that refer to its parameters.
-//! Checked against tests/boards/param-project/README.txt.
+//! The test project `param-project` (its project file, and texts that refer to its parameters)
+//! and the test board `special-strings` (Altium's own special strings). Checked against
+//! tests/boards/param-project/README.txt and tests/boards/README.txt.
 
+use altium_pcbdoc::special_strings::resolve_texts;
 use altium_pcbdoc::{project, Altium};
-use board_model::{InputFormat, ReadOptions, ReadOutcome, Severity};
+use board_model::{InputFormat, Note, ReadOutcome, Severity};
 
-fn folder() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/boards/param-project")
+fn boards() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/boards")
 }
 
 fn the_project() -> Result<project::Project, Box<dyn std::error::Error>> {
     Ok(project::read(&std::fs::read(
-        folder().join("param-project.PrjPcb"),
+        boards().join("param-project/param-project.PrjPcb"),
     )?)?)
 }
 
-fn read(board: &str, options: &ReadOptions) -> Result<ReadOutcome, Box<dyn std::error::Error>> {
-    Ok(Altium.read_with(&std::fs::read(folder().join(board))?, options)?)
+/// Reads a board and resolves its texts with `parameters`, as the command does.
+fn read(
+    board: &str,
+    parameters: &[(String, String)],
+) -> Result<(ReadOutcome, Vec<Note>), Box<dyn std::error::Error>> {
+    let mut out = Altium.read(&std::fs::read(boards().join(board))?)?;
+    let notes = resolve_texts(&mut out.board, parameters);
+    Ok((out, notes))
 }
 
-/// (stored text, what Altium shows), from README.txt; Altium's own `.Layer_Name` is left out.
-const PARAM_BOARD: [(&str, &str); 17] = [
-    (".PCBNumber", "DN-0042"),
-    (".BoardRevision", "B"),
-    ("Rev .BoardRevision", "Rev B"),
-    (".pcbnumber", "DN-0042"),
-    (".NoSuchParameter", ".NoSuchParameter"),
-    ("X.PCBNumber", "XDN-0042"),
-    (".PCBNumber/.BoardRevision", ".PCBNumber/.BoardRevision"),
-    (".PCBNumberX", ".PCBNumberX"),
-    ("=PCBNumber", "=PCBNumber"),
-    (".BoardRevision.", ".BoardRevision."),
-    ("..PCBNumber", "..PCBNumber"),
-    (".PCBNumber", "DN-0042"),
-    (".PCBNumber rev", ".PCBNumber rev"),
-    ("a.b.PCBNumber", "a.bDN-0042"),
-    ("a/.PCBNumber", "a/DN-0042"),
-    ("x..PCBNumber", "x.DN-0042"),
-    (".x.PCBNumber", ".x.PCBNumber"),
+/// What Altium shows for each text of param-board (README.txt).
+const PARAM_BOARD: [&str; 18] = [
+    ".BoardRevision.",
+    ".NoSuchParameter",
+    ".PCBNumber rev",
+    ".PCBNumber/.BoardRevision",
+    ".PCBNumberX",
+    ".x.PCBNumber",
+    "..PCBNumber",
+    "=PCBNumber",
+    "B",
+    "DN-0042",
+    "DN-0042",
+    "DN-0042",
+    "Rev B",
+    "Top Overlay",
+    "XDN-0042",
+    "a.bDN-0042",
+    "a/DN-0042",
+    "x.DN-0042",
 ];
 
-fn sorted(mut v: Vec<String>) -> Vec<String> {
+fn contents(out: &ReadOutcome) -> Vec<String> {
+    let mut v: Vec<String> = out.board.texts.iter().map(|t| t.content.clone()).collect();
     v.sort();
     v
 }
 
-fn contents(out: &ReadOutcome) -> Vec<String> {
-    sorted(out.board.texts.iter().map(|t| t.content.clone()).collect())
+fn warnings(notes: &[Note]) -> Vec<&str> {
+    notes
+        .iter()
+        .filter(|n| n.severity == Severity::Warning)
+        .map(|n| n.message.as_str())
+        .collect()
 }
 
 #[test]
@@ -59,74 +73,48 @@ fn the_project_lists_its_two_boards_and_two_parameters() -> Result<(), Box<dyn s
             ("PCBNumber".to_string(), "DN-0042".to_string())
         ]
     );
+    for link in &p.boards {
+        assert_eq!(project::link_problem(link), None, "{link}");
+    }
     Ok(())
 }
 
 #[test]
 fn with_the_projects_parameters_the_texts_show_what_altium_shows(
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let options = ReadOptions {
-        parameters: the_project()?.parameters,
-    };
-    let out = read("param-board.PcbDoc", &options)?;
-    let mut want: Vec<String> = PARAM_BOARD.iter().map(|(_, s)| s.to_string()).collect();
-    want.push(".Layer_Name".into());
-    assert_eq!(contents(&out), sorted(want));
-    let info: Vec<_> = out
-        .notes
-        .iter()
-        .filter(|n| n.message.contains("refer to a project parameter and show"))
-        .map(|n| (n.severity, n.message.as_str()))
-        .collect();
+    let parameters = the_project()?.parameters;
+    let (out, notes) = read("param-project/param-board.PcbDoc", &parameters)?;
+    let mut want = PARAM_BOARD.to_vec();
+    want.sort_unstable();
+    assert_eq!(contents(&out), want);
+    // 9 parameters and .Layer_Name; the 7 texts left that start with "." each get a note.
     assert_eq!(
-        info,
-        [(
-            Severity::Info,
-            "9 text(s) refer to a project parameter and show its value, as Altium does"
-        )]
+        notes.first().map(|n| n.message.as_str()),
+        Some(
+            "10 text(s) refer to a project parameter or to .Designator, .Comment or .Layer_Name \
+             and show its value, as Altium does"
+        )
     );
-    // The eight texts that start with "." and stay as they are, in one note.
-    let left: Vec<_> = out
-        .notes
-        .iter()
-        .filter(|n| n.severity == Severity::Warning)
-        .collect();
-    assert_eq!(left.len(), 1, "{left:?}");
-    assert!(left.iter().all(|n| n.message.contains("and 3 more")));
+    assert_eq!(warnings(&notes).len(), 7, "{notes:?}");
 
-    let second = read("param-board-2.PcbDoc", &options)?;
-    assert_eq!(
-        contents(&second),
-        sorted(vec!["Board 2 rev B".into(), "DN-0042".into()])
-    );
-    assert!(second.notes.iter().all(|n| n.severity == Severity::Info));
+    let (second, notes) = read("param-project/param-board-2.PcbDoc", &parameters)?;
+    assert_eq!(contents(&second), ["Board 2 rev B", "DN-0042"]);
+    assert!(warnings(&notes).is_empty(), "{notes:?}");
     Ok(())
 }
 
 #[test]
-fn without_parameters_the_texts_stay_as_stored_with_a_warning(
+fn without_parameters_the_texts_stay_as_stored_with_a_note(
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let out = Altium.read(&std::fs::read(folder().join("param-board-2.PcbDoc"))?)?;
-    assert_eq!(
-        contents(&out),
-        sorted(vec![
-            "Board 2 rev .BoardRevision".into(),
-            ".PCBNumber".into()
-        ])
-    );
-    let warnings: Vec<_> = out
-        .notes
-        .iter()
-        .filter(|n| n.severity == Severity::Warning)
-        .map(|n| n.message.as_str())
-        .collect();
+    let (out, notes) = read("param-project/param-board-2.PcbDoc", &[])?;
+    assert_eq!(contents(&out), [".PCBNumber", "Board 2 rev .BoardRevision"]);
     // Only a text that starts with "." is named; "Board 2 rev .BoardRevision" could be plain
     // text with a dot in it.
     assert_eq!(
-        warnings,
+        warnings(&notes),
         [
-            "text(s) \".PCBNumber\" may be Altium special strings that refer to a project \
-          parameter or to the board; no value was given for them, so they are drawn as written"
+            "1 text(s) read \".PCBNumber\", which names no parameter given and no special string \
+          read here; drawn as written"
         ]
     );
     Ok(())
@@ -135,13 +123,58 @@ fn without_parameters_the_texts_stay_as_stored_with_a_warning(
 #[test]
 fn a_parameter_given_by_hand_works_like_a_project_parameter(
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let options = ReadOptions {
-        parameters: vec![("boardrevision".into(), "C".into())],
-    };
-    let out = read("param-board-2.PcbDoc", &options)?;
+    let (out, _) = read(
+        "param-project/param-board-2.PcbDoc",
+        &[("boardrevision".into(), "C".into())],
+    )?;
+    assert_eq!(contents(&out), [".PCBNumber", "Board 2 rev C"]);
+    Ok(())
+}
+
+#[test]
+fn special_strings_show_what_altium_shows() -> Result<(), Box<dyn std::error::Error>> {
+    let (out, notes) = read("special-strings.PcbDoc", &[])?;
+    // R1's comment comes from its (hidden) comment text.
+    let r1 = out.board.components.first().ok_or("no R1")?;
+    assert_eq!((r1.designator.as_str(), r1.comment.as_str()), ("R1", "10k"));
+    // (shown, belongs to R1), from README.txt; R1's own designator text "R1" is one of them.
+    let mut got: Vec<(String, bool)> = out
+        .board
+        .texts
+        .iter()
+        .map(|t| (t.content.clone(), t.component == Some(0)))
+        .collect();
+    got.sort();
+    let mut want: Vec<(String, bool)> = [
+        ("R1", true),
+        ("R1", true),
+        ("R1", true),
+        ("10k", true),
+        ("R: R1", true),
+        ("Top Overlay", true),
+        (".Designator", false),
+        (".Comment", false),
+        ("Top Layer", false),
+        ("L: Top Overlay", false),
+        ("Top Overlay", false),
+        (".Print_Date", false),
+        (".NoSuchString", false),
+        ("Bottom Overlay", false),
+    ]
+    .iter()
+    .map(|(s, owned)| (s.to_string(), *owned))
+    .collect();
+    want.sort();
+    assert_eq!(got, want);
     assert_eq!(
-        contents(&out),
-        sorted(vec!["Board 2 rev C".into(), ".PCBNumber".into()])
+        warnings(&notes),
+        [
+            "1 text(s) read \".NoSuchString\", which names no parameter given and no special \
+             string read here; drawn as written",
+            "1 text(s) read \".Print_Date\", which Altium fills in with a date or time when it \
+             draws the board; drawn as written, since a conversion should not stamp a date onto \
+             a board",
+        ]
     );
     Ok(())
 }

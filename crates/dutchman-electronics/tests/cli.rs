@@ -370,8 +370,10 @@ fn read_opens_a_projects_board_with_its_parameters() -> Result<(), Box<dyn std::
         .filter_map(|n| n["message"].as_str())
         .collect();
     assert!(
-        notes
-            .contains(&"2 text(s) refer to a project parameter and show its value, as Altium does"),
+        notes.contains(
+            &"2 text(s) refer to a project parameter or to .Designator, .Comment or .Layer_Name \
+              and show its value, as Altium does"
+        ),
         "{notes:?}"
     );
     Ok(())
@@ -396,5 +398,85 @@ fn a_project_with_two_boards_asks_which_one() -> Result<(), Box<dyn std::error::
         "{error}"
     );
     assert!(!out.exists());
+    Ok(())
+}
+
+/// Notes of a read manifest, as text.
+#[cfg(feature = "altium")]
+fn messages(v: &serde_json::Value) -> Vec<String> {
+    v["notes"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|n| n["message"].as_str().map(str::to_string))
+        .collect()
+}
+
+#[cfg(feature = "altium")]
+#[test]
+fn a_board_passed_on_its_own_can_use_a_projects_parameters(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let out = std::env::temp_dir().join(format!("de-read-own-{}", std::process::id()));
+    let board = test_board("param-project/param-board-2.PcbDoc");
+    let result = run(&[
+        "read",
+        &board.to_string_lossy(),
+        "--out",
+        &out.to_string_lossy(),
+        "--json",
+        "--project",
+        &test_project().to_string_lossy(),
+    ]);
+    std::fs::remove_dir_all(&out).ok();
+    let (ok, v) = result?;
+    assert!(ok, "{v}");
+    let notes = messages(&v);
+    assert!(
+        notes
+            .iter()
+            .any(|m| m.starts_with("2 text(s) refer to a project parameter")),
+        "{notes:?}"
+    );
+    Ok(())
+}
+
+#[cfg(feature = "altium")]
+#[test]
+fn a_project_link_out_of_its_folder_is_not_followed() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = std::env::temp_dir().join(format!("de-prj-link-{}", std::process::id()));
+    std::fs::create_dir_all(&dir)?;
+    let project = dir.join("p.PrjPcb");
+    std::fs::write(
+        &project,
+        "[Design]\r\nVersion=1.0\r\n\r\n[Document1]\r\nDocumentPath=..\\outside.PcbDoc\r\n",
+    )?;
+    let out = dir.join("out");
+    let result = run(&[
+        "read",
+        &project.to_string_lossy(),
+        "--out",
+        &out.to_string_lossy(),
+        "--json",
+    ]);
+    std::fs::remove_dir_all(&dir).ok();
+    let (ok, v) = result?;
+    assert!(!ok);
+    let error = v["error"].as_str().unwrap_or_default();
+    assert!(
+        error.contains("leaves the project's folder, so it is not followed"),
+        "{error}"
+    );
+    Ok(())
+}
+
+#[cfg(feature = "altium")]
+#[test]
+fn privacy_check_reads_a_project_file() -> Result<(), Box<dyn std::error::Error>> {
+    let out = Command::new(env!("CARGO_BIN_EXE_dutchman-electronics"))
+        .args(["privacy-check", &test_project().to_string_lossy()])
+        .output()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{text}");
+    assert!(text.starts_with("clean"), "{text}");
     Ok(())
 }

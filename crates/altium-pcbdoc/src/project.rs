@@ -96,6 +96,21 @@ pub fn read(bytes: &[u8]) -> Result<Project, ReadError> {
     Ok(project)
 }
 
+/// What is wrong with a link from a project to one of its documents, or `None` for one that
+/// stays inside the project's folder: an absolute path (`C:\...`, `\\server\...`, `/...`) or
+/// one that climbs out with `..`. The test project's links are plain file names.
+pub fn link_problem(link: &str) -> Option<&'static str> {
+    let bytes = link.as_bytes();
+    let drive = bytes.get(1) == Some(&b':') && bytes.first().is_some_and(u8::is_ascii_alphabetic);
+    if drive || link.starts_with(['\\', '/']) {
+        return Some("is absolute");
+    }
+    if link.split(['\\', '/']).any(|part| part == "..") {
+        return Some("leaves the project's folder");
+    }
+    None
+}
+
 /// True for `Document7` when `word` is "Document": the word and then only digits.
 fn is_numbered(section: &str, word: &str) -> bool {
     section
@@ -139,6 +154,23 @@ mod tests {
         assert!(read(b"\xff\xfe binary").is_err());
         assert!(read(b"[Other]\r\nx=1\r\n").is_err());
         assert!(read(b"").is_err());
+    }
+
+    #[test]
+    fn links_must_stay_in_the_project_folder() {
+        assert_eq!(link_problem("param-board.PcbDoc"), None);
+        assert_eq!(link_problem(r"boards\main.PcbDoc"), None);
+        assert_eq!(link_problem(r"C:\Users\x\b.PcbDoc"), Some("is absolute"));
+        assert_eq!(link_problem(r"\\server\b.PcbDoc"), Some("is absolute"));
+        assert_eq!(link_problem("/home/x/b.PcbDoc"), Some("is absolute"));
+        assert_eq!(
+            link_problem(r"..\other\b.PcbDoc"),
+            Some("leaves the project's folder")
+        );
+        assert_eq!(
+            link_problem("a/../../b.PcbDoc"),
+            Some("leaves the project's folder")
+        );
     }
 
     #[test]

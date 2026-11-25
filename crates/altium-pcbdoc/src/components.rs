@@ -159,6 +159,7 @@ fn placement(record: &Properties, designator: String) -> Result<Placement, Strin
         rotation_deg,
         side,
         model: None,
+        comment: String::new(),
     })
 }
 

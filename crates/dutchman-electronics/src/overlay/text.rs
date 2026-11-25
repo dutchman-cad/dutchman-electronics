@@ -681,6 +681,7 @@ mod tests {
             rotation_deg,
             mirrored,
             font: TextFont::Stroke { width: 0.2 },
+            component: None,
         }
     }
 

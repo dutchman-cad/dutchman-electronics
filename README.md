@@ -88,9 +88,11 @@ cargo run -- streams path/to/board.PcbDoc
 cargo run -- read path/to/project.PrjPcb --out out --board main --param BoardRevision=C
 ```
 
-A text such as `.PCBNumber` refers to a project parameter. Reading a `.PrjPcb` fills in the project's
-parameters; `--param NAME=VALUE` gives one by hand (also for a `.PcbDoc` on its own) and wins over the
-project's. `--board` picks the board when a project holds several.
+A text such as `.PCBNumber` refers to a project parameter, and `.Designator`, `.Comment` and `.Layer_Name` to the
+component or layer the text belongs to; they are shown with their value, as Altium shows them. Reading a `.PrjPcb`
+reads its board and uses the project's parameters; `--board` picks the board when a project holds several, and only
+links inside the project's folder are followed. A `.PcbDoc` on its own can take a project's parameters with
+`--project file.PrjPcb`, and `--param NAME=VALUE` gives one by hand, winning over the project's.
 
 New here? Read [CONTRIBUTING.md](CONTRIBUTING.md). Working with an AI? Point it at [AGENTS.md](AGENTS.md) first.
 

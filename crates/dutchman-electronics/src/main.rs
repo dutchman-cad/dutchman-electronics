@@ -1,8 +1,9 @@
 //! `dutchman-electronics`: the command Dutchman's launcher finds on the PATH.
 //! Module interface for Dutchman: `info --json`, `detect <file> --json` and
 //! `read <file> --out <dir> --json`. `read` also takes `--param NAME=VALUE` (repeatable) for
-//! the texts that refer to project parameters, and `--board NAME` to choose the board of an
-//! Altium project (`.PrjPcb`) that holds several.
+//! the texts that refer to project parameters, `--board NAME` to choose the board of an Altium
+//! project (`.PrjPcb`) that holds several, and `--project FILE` to use a project's parameters for
+//! a board passed on its own.
 //! For people: `formats`, `streams <file>` and
 //! `privacy-check <file> [--watch WORD]... [--all-text]`.
 
@@ -26,16 +27,17 @@ fn read_board_file(path: &str) -> Result<Vec<u8>, String> {
 const USAGE: &str = "usage: dutchman-electronics info [--json]
        dutchman-electronics detect <file> [--json]
        dutchman-electronics read <board.PcbDoc|project.PrjPcb> --out <dir> [--json]
-                                [--param NAME=VALUE]... [--board NAME]
+                                [--param NAME=VALUE]... [--board NAME] [--project FILE]
        dutchman-electronics formats
        dutchman-electronics streams <board.PcbDoc>
-       dutchman-electronics privacy-check <board.PcbDoc> [--watch WORD]... [--all-text]";
+       dutchman-electronics privacy-check <board.PcbDoc|project.PrjPcb> [--watch WORD]... [--all-text]";
 
-/// Looks for paths, e-mail addresses, computer names and the given words in a board file.
+/// Looks for paths, e-mail addresses, computer names and the given words in a board file, or in
+/// an Altium project file (also for links that leave its folder and for printer names).
 /// Exit code 0 when clean, 1 when something was found, 2 for a usage mistake.
 #[cfg(feature = "altium")]
 fn privacy_check(path: &str, rest: &[&str]) -> ExitCode {
-    use dutchman_electronics::altium_pcbdoc::privacy::{check, Kind, Options};
+    use dutchman_electronics::altium_pcbdoc::privacy::{check, check_project, Kind, Options};
     let mut options = Options::default();
     let mut words = rest.iter();
     while let Some(word) = words.next() {
@@ -51,14 +53,25 @@ fn privacy_check(path: &str, rest: &[&str]) -> ExitCode {
             }
         }
     }
-    let report =
-        match read_board_file(path).and_then(|b| check(&b, &options).map_err(|e| e.to_string())) {
-            Ok(report) => report,
-            Err(e) => {
-                eprintln!("{e}");
-                return ExitCode::FAILURE;
-            }
-        };
+    let project = std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("prjpcb"));
+    let checked = read_board_file(path).and_then(|b| {
+        if project {
+            check_project(&b, &options)
+        } else {
+            check(&b, &options)
+        }
+        .map_err(|e| e.to_string())
+    });
+    let report = match checked {
+        Ok(report) => report,
+        Err(e) => {
+            eprintln!("{e}");
+            return ExitCode::FAILURE;
+        }
+    };
     for f in &report.findings {
         let kind = match &f.kind {
             Kind::Path => "path".to_string(),
@@ -67,6 +80,7 @@ fn privacy_check(path: &str, rest: &[&str]) -> ExitCode {
             Kind::Watched(w) => format!("watched \"{w}\""),
             Kind::Text => "text".to_string(),
             Kind::Unreadable => "not checked".to_string(),
+            Kind::Printer => "printer".to_string(),
         };
         println!("{}  @{}  {kind}: {}", f.stream, f.offset, f.text);
     }
@@ -167,6 +181,7 @@ struct ReadArgs {
     json: bool,
     parameters: Vec<(String, String)>,
     board: Option<String>,
+    project: Option<String>,
 }
 
 /// Parses the words after `read`, or says what is wrong.
@@ -180,6 +195,9 @@ fn read_args(words: &[&str]) -> Result<ReadArgs, String> {
             "--out" => out = Some(rest.next().ok_or("--out needs a folder")?.to_string()),
             "--board" => {
                 args.board = Some(rest.next().ok_or("--board needs a name")?.to_string());
+            }
+            "--project" => {
+                args.project = Some(rest.next().ok_or("--project needs a file")?.to_string());
             }
             "--param" => {
                 let given = rest.next().ok_or("--param needs NAME=VALUE")?;
@@ -206,8 +224,13 @@ fn read(args: &ReadArgs) -> ExitCode {
     use dutchman_electronics::package;
     let (out, json) = (args.out.as_str(), args.json);
     let path = std::path::Path::new(&args.path);
-    let built = package::open(path, args.board.as_deref(), &args.parameters)
-        .and_then(|input| package::build(&input.path, &input.bytes, &input.options));
+    let with = package::Open {
+        board: args.board.as_deref(),
+        project: args.project.as_deref().map(std::path::Path::new),
+        parameters: &args.parameters,
+    };
+    let built = package::open(path, &with)
+        .and_then(|input| package::build(&input.path, &input.bytes, &input.parameters));
     let written = built.and_then(|p| package::write(std::path::Path::new(out), &p).map(|()| p));
     match (written, json) {
         (Ok(p), true) => {
@@ -298,6 +321,8 @@ mod tests {
             "b2",
             "--param",
             "Note=a=b",
+            "--project",
+            "q.PrjPcb",
         ])?;
         assert_eq!(
             args,
@@ -310,6 +335,7 @@ mod tests {
                     ("Note".into(), "a=b".into())
                 ],
                 board: Some("b2".into()),
+                project: Some("q.PrjPcb".into()),
             }
         );
         Ok(())
@@ -325,6 +351,7 @@ mod tests {
             &["b.PcbDoc", "--out", "d", "--frob"],
             &["b.PcbDoc", "c.PcbDoc", "--out", "d"],
             &["b.PcbDoc", "--out"],
+            &["b.PcbDoc", "--out", "d", "--project"],
         ] {
             assert!(read_args(words).is_err(), "{words:?}");
         }
