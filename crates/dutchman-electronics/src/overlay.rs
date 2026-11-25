@@ -24,7 +24,8 @@ use geo::{BooleanOps, Coord, LineString, MultiPolygon, Polygon};
 use serde_json::{json, Value};
 
 use crate::colors::{
-    COPPER_BARE_COLOR, COPPER_MASKED_COLOR, MASK_COLOR, MASK_OPACITY, SILKSCREEN_COLOR,
+    Finish, COPPER_BARE_COLOR, COPPER_MASKED_COLOR, GOLD_FINISH, MASK_COLOR, MASK_FINISH,
+    MASK_OPACITY, SILKSCREEN_COLOR, SILKSCREEN_FINISH,
 };
 
 /// The most an arc's polyline strays from the true arc, in mm.
@@ -499,6 +500,7 @@ struct Built {
     thickness: Option<f64>,
     shape: MultiPolygon,
     color: &'static str,
+    finish_look: Finish,
     opacity: Option<f64>,
 }
 
@@ -832,18 +834,27 @@ fn overlays_within(
                 .difference(&drilled)
                 .difference(&via_drilled)
                 .difference(&bare);
-            let plain = |name: String, kind, finish, lift, flat_lift, height, shape, color| Built {
-                name,
-                kind,
-                finish,
-                side,
-                z: at(lift),
-                flat_z: at(flat_lift),
-                thickness: Some(height),
-                shape,
-                color,
-                opacity: None,
-            };
+            let plain =
+                |name: String,
+                 kind,
+                 finish,
+                 lift,
+                 flat_lift,
+                 height,
+                 shape,
+                 (color, finish_look): (&'static str, Finish)| Built {
+                    name,
+                    kind,
+                    finish,
+                    side,
+                    z: at(lift),
+                    flat_z: at(flat_lift),
+                    thickness: Some(height),
+                    shape,
+                    color,
+                    finish_look,
+                    opacity: None,
+                };
             // The mask fills only between the copper: not over the bare pads, the masked copper
             // or the drills, so copper stands proud of it. One cut from the united shapes (the
             // copper before its drills are taken out), so no sliver is left where edges meet.
@@ -858,7 +869,7 @@ fn overlays_within(
                 FLAT_MASKED_COPPER_LIFT,
                 COPPER_THICKNESS,
                 masked,
-                COPPER_MASKED_COLOR,
+                (COPPER_MASKED_COLOR, MASK_FINISH),
             ));
             built.push(plain(
                 format!("Copper {side} pads"),
@@ -868,7 +879,7 @@ fn overlays_within(
                 FLAT_PADS_LIFT,
                 COPPER_THICKNESS,
                 bare,
-                COPPER_BARE_COLOR,
+                (COPPER_BARE_COLOR, GOLD_FINISH),
             ));
             built.push(plain(
                 format!("Silkscreen {side}"),
@@ -878,7 +889,7 @@ fn overlays_within(
                 FLAT_SILK_LIFT,
                 SILK_THICKNESS,
                 silk,
-                SILKSCREEN_COLOR,
+                (SILKSCREEN_COLOR, SILKSCREEN_FINISH),
             ));
             if let Some(mask) = mask {
                 built.push(Built {
@@ -891,7 +902,7 @@ fn overlays_within(
                         FLAT_MASK_LIFT,
                         MASK_THICKNESS,
                         mask,
-                        MASK_COLOR,
+                        (MASK_COLOR, MASK_FINISH),
                     )
                 });
             }
@@ -918,6 +929,8 @@ fn overlays_within(
                     "side": b.side,
                     "z": (b.z * 1e6).round() / 1e6,
                     "color": b.color,
+                    "metallic": b.finish_look.metallic,
+                    "roughness": b.finish_look.roughness,
                     "areas": areas(&b.shape),
                 });
                 if let Some(map) = o.as_object_mut() {

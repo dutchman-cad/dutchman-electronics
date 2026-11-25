@@ -19,7 +19,7 @@ use board_model::{
 };
 use serde_json::{json, Value};
 
-use crate::colors::{BOARD_COLOR, PLATING_COLOR};
+use crate::colors::{BOARD_COLOR, BOARD_FINISH, GOLD_FINISH, PLATING_COLOR};
 
 /// Schema of the package manifest.
 pub const PARTS_SCHEMA: &str = "dutchman.parts/1";
@@ -99,6 +99,8 @@ pub fn build(path: &Path, bytes: &[u8]) -> Result<Package, String> {
         "model": BOARD_MODEL,
         "transform": IDENTITY,
         "color": BOARD_COLOR,
+        "metallic": BOARD_FINISH.metallic,
+        "roughness": BOARD_FINISH.roughness,
         "notes": board_notes,
     })];
     let mut files = vec![(BOARD_FILE.to_string(), step.text.into_bytes())];
@@ -126,6 +128,8 @@ pub fn build(path: &Path, bytes: &[u8]) -> Result<Package, String> {
             "model": PLATING_MODEL,
             "transform": IDENTITY,
             "color": PLATING_COLOR,
+            "metallic": GOLD_FINISH.metallic,
+            "roughness": GOLD_FINISH.roughness,
             "notes": [],
         }));
         files.push((PLATING_FILE.to_string(), text.into_bytes()));
@@ -1104,8 +1108,18 @@ mod tests {
             assert_eq!(colour(&format!("Copper {side} pads")), "#d4af37");
         }
         assert_eq!(part_named(m, "Board")["color"], "#c8b27a");
+        assert_eq!(part_named(m, "Board")["metallic"], 0.0);
+        assert_eq!(part_named(m, "Board")["roughness"], 0.9);
+        assert_eq!(
+            overlay_named(m, "one-plated-pad", "Copper top pads")["roughness"],
+            0.45
+        );
         let mask = overlay_named(m, "one-plated-pad", "Solder mask top");
         assert_eq!(mask["opacity"], 0.85);
+        assert_eq!(
+            (&mask["metallic"], &mask["roughness"]),
+            (&json!(0.0), &json!(0.35))
+        );
         assert_eq!(mask["kind"], "mask");
         // The board is 1.6 mm thick (the file stores 1.600002 after its unit conversion).
         assert!((mask["z"].as_f64().unwrap() - 1.6).abs() < 1e-4);
