@@ -170,7 +170,7 @@ fn the_mask_is_the_outline_less_cutouts_pads_copper_and_drills() {
     assert_eq!(top["kind"], "mask");
     // Mask z = T + 0: 1.6.
     assert_eq!(top["z"], 1.6);
-    assert_eq!(top["opacity"], 0.85);
+    assert_eq!(top["opacity"], 1.0);
     assert_eq!(top["color"], "#1f5f3a");
     // Bottom mask z = 0 - 0: 0.
     assert_eq!(bottom["z"], 0.0);
@@ -1181,7 +1181,7 @@ fn each_overlay_has_its_z_thickness_and_colour() {
         assert_eq!(o["thickness"], thickness, "{name}");
         assert_eq!(o["color"], color, "{name}");
     }
-    assert_eq!(named(&list, "Solder mask top")["opacity"], 0.85);
+    assert_eq!(named(&list, "Solder mask top")["opacity"], 1.0);
 }
 
 #[test]

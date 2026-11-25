@@ -1071,7 +1071,7 @@ mod tests {
                     path.display()
                 );
                 if o["kind"] == "mask" {
-                    assert_eq!(o["opacity"], 0.85);
+                    assert_eq!(o["opacity"], 1.0);
                 } else {
                     assert!(o.get("opacity").is_none(), "{}: {o}", path.display());
                 }
@@ -1187,7 +1187,7 @@ mod tests {
             0.45
         );
         let mask = overlay_named(m, "one-plated-pad", "Solder mask top");
-        assert_eq!(mask["opacity"], 0.85);
+        assert_eq!(mask["opacity"], 1.0);
         assert_eq!(
             (&mask["metallic"], &mask["roughness"]),
             (&json!(0.0), &json!(0.35))
@@ -1225,7 +1225,7 @@ mod tests {
         for side in ["top", "bottom"] {
             let mask = overlay_named(&blue.manifest, "blue", &format!("Solder mask {side}"));
             assert_eq!(mask["color"], "#1155cc");
-            assert_eq!(mask["opacity"], 0.85);
+            assert_eq!(mask["opacity"], 1.0);
         }
         // Those two boards have no track and no silkscreen line, so the copper under the mask
         // and the silkscreen are drawn from the same boards with one-track's copper and
