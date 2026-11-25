@@ -274,14 +274,29 @@ mod tests {
     #[test]
     fn the_finish_process_picks_the_pad_look() {
         let cases: [(&[&str], &str, f64); 3] = [
-            (&["ENIG", "ENEPIG", "Immersion Gold", "enig"], "#d4af37", 0.45),
             (
-                &["HASL", "Lead-Free HASL", "LF HASL", "Immersion Tin", "Immersion Silver"],
+                &["ENIG", "ENEPIG", "Immersion Gold", "enig"],
+                "#d4af37",
+                0.45,
+            ),
+            (
+                &[
+                    "HASL",
+                    "Lead-Free HASL",
+                    "LF HASL",
+                    "Immersion Tin",
+                    "Immersion Silver",
+                ],
                 "#c9ccd1",
                 0.4,
             ),
             (
-                &["OSP", "Bare", "bare copper", "Organic Solderability Preservative"],
+                &[
+                    "OSP",
+                    "Bare",
+                    "bare copper",
+                    "Organic Solderability Preservative",
+                ],
                 "#b87333",
                 0.5,
             ),

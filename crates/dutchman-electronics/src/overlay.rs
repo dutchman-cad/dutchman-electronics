@@ -842,9 +842,7 @@ fn overlays_within(
             let copper_color = mask_file
                 .as_ref()
                 .map_or(COPPER_MASKED_COLOR.to_string(), masked_copper);
-            let silk_color = silk_file
-                .as_ref()
-                .map_or(SILKSCREEN_COLOR.to_string(), hex);
+            let silk_color = silk_file.as_ref().map_or(SILKSCREEN_COLOR.to_string(), hex);
             let (pads, _) = pad_look(finish_file.as_ref());
             let (bare_all, masked_all) = (f.bare.union(), f.masked.union());
             let bare = bare_all.difference(&drilled);
@@ -856,27 +854,26 @@ fn overlays_within(
                 .difference(&drilled)
                 .difference(&via_drilled)
                 .difference(&bare);
-            let plain =
-                |name: String,
-                 kind,
-                 finish,
-                 lift,
-                 flat_lift,
-                 height,
-                 shape,
-                 (color, finish_look): (String, Finish)| Built {
-                    name,
-                    kind,
-                    finish,
-                    side,
-                    z: at(lift),
-                    flat_z: at(flat_lift),
-                    thickness: Some(height),
-                    shape,
-                    color,
-                    finish_look,
-                    opacity: None,
-                };
+            let plain = |name: String,
+                         kind,
+                         finish,
+                         lift,
+                         flat_lift,
+                         height,
+                         shape,
+                         (color, finish_look): (String, Finish)| Built {
+                name,
+                kind,
+                finish,
+                side,
+                z: at(lift),
+                flat_z: at(flat_lift),
+                thickness: Some(height),
+                shape,
+                color,
+                finish_look,
+                opacity: None,
+            };
             // The mask fills only between the copper: not over the bare pads, the masked copper
             // or the drills, so copper stands proud of it. One cut from the united shapes (the
             // copper before its drills are taken out), so no sliver is left where edges meet.

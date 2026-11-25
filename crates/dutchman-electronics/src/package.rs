@@ -19,7 +19,7 @@ use board_model::{
 };
 use serde_json::{json, Value};
 
-use crate::colors::{hex, pad_look, BODY_FINISH, BOARD_COLOR, BOARD_FINISH};
+use crate::colors::{hex, pad_look, BOARD_COLOR, BOARD_FINISH, BODY_FINISH};
 
 /// Schema of the package manifest.
 pub const PARTS_SCHEMA: &str = "dutchman.parts/1";
@@ -1191,7 +1191,10 @@ mod tests {
         // An extruded body has the file's colour (Altium's default grey, 128, 128, 128, opaque).
         let resistor = package_of("one-resistor");
         let r1 = part_named(&resistor.manifest, "R1");
-        assert_eq!((&r1["color"], &r1["opacity"]), (&json!("#808080"), &json!(1.0)));
+        assert_eq!(
+            (&r1["color"], &r1["opacity"]),
+            (&json!("#808080"), &json!(1.0))
+        );
     }
 
     #[cfg(feature = "altium")]
