@@ -40,7 +40,7 @@ const FINISH_TYPE: &str = "b0827674-798c-4cf8-807c-8e6c2a11c145";
 /// The `TypeId` of a copper (signal) layer in the stack XML.
 const COPPER_TYPE: &str = "f4eccd87-2cfb-4f37-be50-4f3a272b4d01";
 /// The most bytes the stack XML may unpack to before it is treated as hostile.
-const MAX_STACK_XML: usize = 16 << 20;
+pub(crate) const MAX_STACK_XML: usize = 16 << 20;
 
 /// Reads the solder mask and silkscreen colours and the surface finishes from the `/Board6/Data`
 /// record. What is missing stays `None`; what cannot be read is `None` too, with a note.
@@ -66,10 +66,38 @@ pub(crate) fn read(board: &Properties, notes: &mut Vec<Note>) -> Appearance {
 
 /// The stack XML: `data` decoded from base64 and unpacked, or `None`.
 fn stack_xml(data: &str) -> Option<String> {
-    let packed = base64(data.trim())?;
-    let xml =
-        miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(&packed, MAX_STACK_XML).ok()?;
-    String::from_utf8(xml).ok()
+    String::from_utf8(unpack_stack(data.as_bytes(), MAX_STACK_XML).ok()?).ok()
+}
+
+/// Why a `V9_STACKCUSTOMDATA` value could not be unpacked in full, and the bytes unpacked before
+/// that (the readable start of a damaged or too large stack).
+#[derive(Debug, PartialEq)]
+pub(crate) struct Partial {
+    pub why: String,
+    pub bytes: Vec<u8>,
+}
+
+/// A `V9_STACKCUSTOMDATA` value decoded from base64 and unpacked to at most `limit` bytes (and
+/// never more than [`MAX_STACK_XML`]), for the privacy check too.
+pub(crate) fn unpack_stack(value: &[u8], limit: usize) -> Result<Vec<u8>, Partial> {
+    let fail = |why: &str| Partial {
+        why: why.to_string(),
+        bytes: Vec::new(),
+    };
+    let text = std::str::from_utf8(value).map_err(|_| fail("not text"))?;
+    let packed = base64(text.trim()).ok_or_else(|| fail("not base64"))?;
+    let limit = limit.min(MAX_STACK_XML);
+    miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(&packed, limit).map_err(|e| {
+        let why = if e.status == miniz_oxide::inflate::TINFLStatus::HasMoreOutput {
+            format!("it unpacks to more than {limit} bytes")
+        } else {
+            format!("not whole zlib data ({:?})", e.status)
+        };
+        Partial {
+            why,
+            bytes: e.output,
+        }
+    })
 }
 
 /// Standard base64 (`+`, `/`, `=` padding), or `None` for any other character.
