@@ -155,3 +155,58 @@ fn a_model_turns_the_other_way_about_each_axis_and_is_not_scaled_silently() {
     // A hidden reference is not drawn.
     assert!(o.board.texts.is_empty());
 }
+
+#[test]
+fn absurdly_big_numbers_drop_their_items_with_a_note() {
+    let text = format!(
+        "{HEAD}(gr_rect (start 0 0) (end 10 5) (layer \"Edge.Cuts\") (stroke (width 0.1) (type default)))\n\
+         (gr_rect (start 0 0) (end 1e300 5) (layer \"Edge.Cuts\") (stroke (width 0.1) (type default)))\n\
+         (via (at 1e300 1) (size 0.8) (drill 0.4) (layers \"F.Cu\" \"B.Cu\"))\n\
+         (via (at 1 1) (size 1e300) (drill 0.4) (layers \"F.Cu\" \"B.Cu\"))\n\
+         (segment (start 0 0) (end 1 1) (width 1e300) (layer \"F.Cu\"))\n\
+         (gr_text \"A\" (at 1 1) (layer \"F.Cu\") (effects (font (size 1e300 1e300))))\n)"
+    );
+    let o = read(&text).unwrap();
+    // Only the good rectangle is left; nothing infinite or huge reaches the board.
+    assert_eq!(o.board.outline.outer.segments.len(), 4);
+    assert!(o.board.outline.cutouts.is_empty());
+    assert!(o.board.copper.is_empty());
+    // The text keeps its default height, since its size was unreadable.
+    assert!(o.board.texts.iter().all(|t| t.height < 10.0));
+    assert!(o
+        .notes
+        .iter()
+        .any(|n| n.severity == Severity::Dropped && n.message.contains("beyond 100 m")));
+}
+
+#[test]
+fn a_slotted_hole_is_as_wide_as_its_narrow_side_and_an_offset_is_noted() {
+    let text = format!(
+        "{HEAD}(footprint \"lib:J\" (layer \"F.Cu\") (at 10 10)\n\
+           (property \"Reference\" \"J1\" (at 0 0 0) (layer \"F.SilkS\") (effects (font (size 1 1))))\n\
+           (pad \"1\" thru_hole oval (at 0 0) (size 3 2) (drill oval 1.2 0.8 (offset 0.3 0)) (layers \"*.Cu\")))\n)"
+    );
+    let o = read(&text).unwrap();
+    let drill = o.board.copper.iter().find_map(|c| match c {
+        board_model::CopperItem::Pad { drill, .. } => *drill,
+        _ => None,
+    });
+    assert_eq!(drill, Some(0.8));
+    assert!(o.notes.iter().any(|n| n.message.contains("narrow side")));
+    assert!(o
+        .notes
+        .iter()
+        .any(|n| n.severity == Severity::Warning && n.message.contains("off-centre")));
+}
+
+#[test]
+fn hidden_and_empty_texts_are_noted() {
+    let text = format!(
+        "{HEAD}(gr_text \"\" (at 1 1) (layer \"F.Cu\"))\n\
+         (gr_text \"X\" (at 1 1) (layer \"F.Cu\") (hide yes))\n)"
+    );
+    let o = read(&text).unwrap();
+    assert!(o.board.texts.is_empty());
+    assert!(o.notes.iter().any(|n| n.message.contains("hidden text")));
+    assert!(o.notes.iter().any(|n| n.message.contains("empty text")));
+}

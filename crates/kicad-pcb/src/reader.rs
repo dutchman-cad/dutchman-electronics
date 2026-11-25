@@ -211,13 +211,17 @@ impl Reader {
         }
     }
 
-    fn stroke_width(n: &Node) -> f64 {
-        n.child("stroke")
+    /// The line width of an item: 0 when it names none, `None` when it names one that cannot be
+    /// read (a number beyond the sane range, or negative), so the item is dropped.
+    fn stroke_width(n: &Node) -> Option<f64> {
+        match n
+            .child("stroke")
             .and_then(|s| s.child("width"))
             .or_else(|| n.child("width"))
-            .and_then(|w| w.num(0))
-            .filter(|w| *w >= 0.0)
-            .unwrap_or(0.0)
+        {
+            None => Some(0.0),
+            Some(w) => w.num(0).filter(|w| *w >= 0.0),
+        }
     }
 
     /// One `gr_*` / `fp_*` shape item.
@@ -258,7 +262,11 @@ impl Reader {
             return;
         };
         let kind_of = self.layers.get(layer).map(|l| l.kind);
-        let width = Self::stroke_width(n);
+        let Some(width) = Self::stroke_width(n) else {
+            self.tally
+                .add(Severity::Dropped, "drawing item(s) with unreadable numbers");
+            return;
+        };
         let filled = n
             .child("fill")
             .is_some_and(|x| matches!(x.str_at(0), Some("yes") | Some("solid")))
@@ -408,6 +416,13 @@ impl Reader {
 
     fn text(&mut self, content: &str, node: &Node, spot: TextSpot, frame: &Frame) {
         if node.has_flag("hide") || node.is_yes("hide") {
+            self.tally
+                .add(Severity::Info, "hidden text(s) were not drawn");
+            return;
+        }
+        if content.trim().is_empty() {
+            self.tally
+                .add(Severity::Info, "empty text(s) were not drawn");
             return;
         }
         let Some(layer_name) = node.child("layer").and_then(|l| l.str_at(0)) else {
@@ -432,9 +447,6 @@ impl Reader {
             );
             return;
         }
-        if content.is_empty() {
-            return;
-        }
         let effects = node.child("effects");
         let font = effects.and_then(|e| e.child("font"));
         let height = font
@@ -446,7 +458,9 @@ impl Reader {
             .and_then(|f| f.child("thickness"))
             .and_then(|t| t.num(0))
             .filter(|t| *t > 0.0)
-            .unwrap_or(height * 0.15);
+            // Our own estimate when the text sets none: KiCad's default pen of 0.15 mm on a
+            // 1.27 mm text (a board's explicit value) is 0.118 of the height.
+            .unwrap_or(height * 0.12);
         if let Some(face) = font.and_then(|f| f.child("face")).and_then(|f| f.str_at(0)) {
             if face != "KiCad Font" {
                 self.tally.add(
@@ -462,6 +476,7 @@ impl Reader {
         // left end of its baseline. Without glyph widths the shift is an estimate.
         let lines: Vec<&str> = content.split('\n').collect();
         let longest = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0) as f64;
+        // Our own estimate, not KiCad's metrics: 0.6 of the height per letter.
         let width = longest * height * 0.6;
         let mut dx = if has("left") {
             0.0
@@ -531,12 +546,17 @@ impl Reader {
             );
             return;
         };
+        let Some(width) = Self::stroke_width(n) else {
+            self.tally
+                .add(Severity::Dropped, "track(s) with unreadable numbers");
+            return;
+        };
         let f = Frame::IDENTITY;
         self.copper.push(CopperItem::Track {
             layer,
             from: f.point(a.0, a.1),
             to: f.point(b.0, b.1),
-            width: n.child("width").and_then(|w| w.num(0)).unwrap_or(0.0),
+            width,
             net: self.net_name(n),
         });
     }
@@ -561,7 +581,11 @@ impl Reader {
             );
             return;
         };
-        let width = n.child("width").and_then(|w| w.num(0)).unwrap_or(0.0);
+        let Some(width) = Self::stroke_width(n) else {
+            self.tally
+                .add(Severity::Dropped, "track arc(s) with unreadable numbers");
+            return;
+        };
         let net = self.net_name(n);
         match arc_through(s, m, e) {
             Some(a) => {
@@ -827,12 +851,18 @@ impl Reader {
             Some(Node::Atom(w)) if w == "oval" => {
                 self.tally.add(
                     Severity::Info,
-                    "slotted hole(s) were read as round holes of the slot's width",
+                    "slotted hole(s) were read as round holes as wide as the slot's narrow side",
                 );
-                d.num(1)
+                Some(d.num(1)?.min(d.num(2)?))
             }
             _ => d.num(0),
         });
+        if drill_node.is_some_and(|d| d.child("offset").is_some()) {
+            self.tally.add(
+                Severity::Warning,
+                "pad hole(s) set off-centre in their pad were drawn centred (the offset is not read)",
+            );
+        }
         let drill = drill.filter(|d| *d > 0.0);
         let plated = kind == "thru_hole" && drill.is_some();
         // The copper layers the pad has copper on.
@@ -967,8 +997,19 @@ fn read_thickness(root: &Node, tally: &mut Tally) -> Option<f64> {
 }
 
 /// Reads a parsed `.kicad_pcb`.
-pub fn read(root: &Node) -> ReadOutcome {
+pub fn read(mut root: Node) -> ReadOutcome {
+    let absurd = crate::sexpr::limit_numbers(&mut root);
+    let root = &root;
     let mut tally = Tally::default();
+    if absurd > 0 {
+        tally.counts.insert(
+            (
+                0,
+                "number(s) beyond 100 m for a position or 10 m for a size were treated as unreadable, and the items holding them dropped".into(),
+            ),
+            absurd,
+        );
+    }
     let version = root
         .child("version")
         .and_then(|v| v.num(0))

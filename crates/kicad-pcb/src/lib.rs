@@ -72,7 +72,7 @@ impl InputFormat for KiCad {
                 "the file does not start with (kicad_pcb".into(),
             ));
         }
-        Ok(reader::read(&root))
+        Ok(reader::read(root))
     }
 }
 

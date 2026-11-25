@@ -6,8 +6,9 @@
 
 /// The deepest nesting a file may have. Real boards go about 8 deep.
 pub const MAX_DEPTH: usize = 64;
-/// The most nodes (atoms, strings and lists) a file may have.
-pub const MAX_NODES: usize = 12_000_000;
+/// The most nodes (atoms, strings and lists) a file may have: about 100 bytes each once parsed,
+/// so a few hundred megabytes at most. A filled zone point is four nodes.
+pub const MAX_NODES: usize = 4_000_000;
 
 /// One element of the text.
 #[derive(Clone, Debug, PartialEq)]
@@ -101,6 +102,41 @@ impl Node {
                 matches!(n.str_at(0), Some("yes") | Some("true")) || n.args().is_empty()
             })
     }
+}
+
+/// The biggest position (millimetres) in either direction: 100 metres.
+pub const MAX_COORDINATE: f64 = 1e5;
+/// The biggest width, size, drill or thickness (millimetres): 10 metres.
+pub const MAX_SIZE: f64 = 1e4;
+
+/// Makes every number outside the sane ranges unreadable, so the reader drops the item that holds
+/// it with a note instead of building a board of absurd size. Returns how many numbers it
+/// replaced. Positions are the numbers of `at`, `start`, `end`, `mid`, `center`, `xy`, `offset`
+/// and `xyz`; sizes those of `width`, `size`, `drill` and `thickness`.
+pub fn limit_numbers(node: &mut Node) -> usize {
+    let Node::List(items) = node else { return 0 };
+    let bound = match items.first() {
+        Some(Node::Atom(h)) => match h.as_str() {
+            "at" | "start" | "end" | "mid" | "center" | "xy" | "offset" | "xyz" => MAX_COORDINATE,
+            "width" | "size" | "drill" | "thickness" => MAX_SIZE,
+            _ => f64::INFINITY,
+        },
+        _ => f64::INFINITY,
+    };
+    let mut changed = 0;
+    for item in items.iter_mut().skip(1) {
+        match item {
+            Node::Atom(s) => {
+                if s.parse::<f64>().is_ok_and(|v| v.abs() > bound) {
+                    *s = "nan".into();
+                    changed += 1;
+                }
+            }
+            Node::List(_) => changed += limit_numbers(item),
+            Node::Str(_) => {}
+        }
+    }
+    changed
 }
 
 fn is_space(c: char) -> bool {
@@ -217,6 +253,17 @@ mod tests {
         assert!(parse(&deep_closed).is_err());
         let ok = format!("{}{}", "(".repeat(MAX_DEPTH), ")".repeat(MAX_DEPTH));
         assert!(parse(&ok).is_ok());
+    }
+
+    #[test]
+    fn numbers_beyond_the_sane_ranges_become_unreadable() {
+        let mut n =
+            parse("(a (at 1e300 2) (xy 5 1e6) (width 1e5) (width 0.5) (other 1e300))").unwrap();
+        assert_eq!(limit_numbers(&mut n), 3);
+        assert_eq!(n.child("at").and_then(Node::pair), None);
+        assert_eq!(n.child("xy").and_then(Node::pair), None);
+        assert_eq!(n.children("width").filter_map(|w| w.num(0)).count(), 1);
+        assert_eq!(n.child("other").and_then(|o| o.num(0)), Some(1e300));
     }
 
     #[test]

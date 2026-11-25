@@ -6,6 +6,8 @@ use board_model::{Contour, Point, Segment};
 use crate::sexpr::Node;
 
 /// Two points closer than this (millimetres) are the same point when a contour is joined up.
+/// Our own choice, 5 micrometres: KiCad writes nanometres but arcs are given by three rounded
+/// points, which leave the ends about a micrometre off the circle.
 pub const JOIN_TOLERANCE: f64 = 0.005;
 
 /// Where a footprint sits: its origin in board coordinates (Y up) and its turn in degrees,
