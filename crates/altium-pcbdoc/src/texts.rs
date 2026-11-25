@@ -16,13 +16,15 @@
 //! - byte 35 is 1 when the text is mirrored (`one-bottom-text`) and 0 otherwise,
 //! - bytes 36..40 are the stroke width (0.200 on all three),
 //! - byte 43 is the font type: 0 for the stroke font, 1 for a TrueType font (`one-ttf-text`),
+//! - bytes 44 and 45 are 1 when the TrueType font is bold (`one-dejavu-bold-text`) or italic
+//!   (`one-dejavu-italic-text`), and 0 otherwise,
 //! - bytes 46..110 are the TrueType font's name in UTF-16, ending at the first 0 ("Arial" on
 //!   `one-ttf-text`; left-over bytes on the stroke boards, so only read when byte 43 is 1).
 //!
 //! A TrueType text keeps its position, height and rotation in the same bytes as a stroke text
 //! (`one-ttf-text`: (10, 10), 2.000, 0, as Altium shows them). Its letter shapes come from the
-//! font file, which Altium embeds in `/EmbeddedFonts6` and which this reader does not use (the
-//! test board has it removed, see its README.txt); a note names the fonts.
+//! font file, which Altium embeds in `/EmbeddedFonts6` (`fonts.rs`; `one-ttf-text` has it
+//! removed, see its README.txt).
 //!
 //! The content is the UTF-16 entry in `/WideStrings6/Data` that bytes 115..119 point to, or the
 //! 8-bit copy in the block after the body. A component's designator text is shown only when its
@@ -43,12 +45,12 @@ use crate::copper::{read_u16, read_u32, CopperLayers};
 const MM_PER_UNIT: f64 = 0.0254 / 10_000.0;
 /// The most records read from `/Texts6/Data` before the file is treated as hostile.
 const MAX_RECORDS: usize = 1_000_000;
-/// The most TrueType font names listed one by one in notes; the rest are counted in one note.
-const MAX_FONT_NOTES: usize = 20;
 const MIRROR_AT: usize = 35;
 const STROKE_WIDTH_AT: usize = 36;
 const FONT_TYPE_AT: usize = 43;
 const TRUETYPE: u8 = 1;
+const BOLD_AT: usize = 44;
+const ITALIC_AT: usize = 45;
 const FONT_NAME: std::ops::Range<usize> = 46..110;
 /// Rotations beyond this many degrees (either way) are refused as not real.
 const MAX_ROTATION_DEG: f64 = 360.0;
@@ -65,7 +67,6 @@ pub(crate) fn read(
     let mut texts = Vec::new();
     let mut other_layers: BTreeMap<String, usize> = BTreeMap::new();
     let mut unreadable = 0usize;
-    let mut truetype: BTreeMap<String, usize> = BTreeMap::new();
     let mut at = 0usize;
     let mut count = 0usize;
     while at < data.len() {
@@ -117,10 +118,11 @@ pub(crate) fn read(
         match (content, geometry(body)) {
             (Some(content), Some((at_point, height, rotation_deg, mirrored, stroke_width))) => {
                 let font = if body.get(FONT_TYPE_AT) == Some(&TRUETYPE) {
-                    let name = font_name(body);
-                    let n = truetype.entry(name.clone()).or_default();
-                    *n = n.saturating_add(1);
-                    TextFont::TrueType { name }
+                    TextFont::TrueType {
+                        name: font_name(body),
+                        bold: body.get(BOLD_AT) == Some(&1),
+                        italic: body.get(ITALIC_AT) == Some(&1),
+                    }
                 } else {
                     TextFont::Stroke {
                         width: stroke_width,
@@ -138,22 +140,6 @@ pub(crate) fn read(
             }
             _ => unreadable += 1,
         }
-    }
-    for (font, n) in truetype.iter().take(MAX_FONT_NOTES) {
-        notes.push(Note {
-            severity: Severity::Info,
-            message: format!(
-                "{n} text(s) use the TrueType font \"{font}\"; their position, height and \
-                 rotation are read, and the font file itself is not read yet"
-            ),
-        });
-    }
-    let more = truetype.len().saturating_sub(MAX_FONT_NOTES);
-    if more > 0 {
-        notes.push(Note {
-            severity: Severity::Info,
-            message: format!("and {more} more TrueType font(s) used by texts"),
-        });
     }
     for (layer, n) in other_layers {
         notes.push(Note {

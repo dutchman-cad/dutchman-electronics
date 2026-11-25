@@ -11,6 +11,14 @@
 //!   without regard to upper or lower case, in either text encoding.
 //!
 //! The watched words come from the person running the check and are never stored anywhere.
+//!
+//! One stream is read with knowledge of its layout: `/EmbeddedFonts6/Data` holds font files
+//! packed with zlib, whose bytes look like random text and would hide real text. It is checked
+//! as its font names plus each font file unpacked (see `fonts.rs`). A TrueType file's text is in
+//! its `name` table (the OpenType specification), so those strings are checked for paths,
+//! e-mail addresses and computer names, and the whole file for watched words; the rest of a
+//! font file is binary that would only give false alarms. A stream that cannot be split into
+//! fonts, or a font that is not a TrueType file, is checked byte for byte like any other stream.
 
 use std::io::{Cursor, Read};
 
@@ -119,14 +127,108 @@ pub fn check(bytes: &[u8], options: &Options) -> Result<Report, ReadError> {
             .open_stream(&path)
             .and_then(|s| s.take(MAX_INPUT_BYTES as u64).read_to_end(&mut data))
             .map_err(|e| ReadError::Invalid(format!("{name}: {e}")))?;
-        check_stream(&name, &data, options, &mut report);
+        if name == FONTS_STREAM {
+            check_fonts(&name, &data, options, &mut report);
+        } else {
+            check_stream(&name, &data, options, &mut report);
+        }
     }
     Ok(report)
 }
 
+/// The stream that holds embedded font files, packed.
+const FONTS_STREAM: &str = "/EmbeddedFonts6/Data";
+
+/// Checks each embedded font's names and its unpacked file, or the raw stream when it cannot be
+/// split into fonts or a font cannot be unpacked. A font is unpacked to at most the input limit.
+fn check_fonts(stream: &str, data: &[u8], options: &Options, report: &mut Report) {
+    let Ok(records) = crate::fonts::records(data) else {
+        check_stream(stream, data, options, report);
+        return;
+    };
+    let mut files = Vec::with_capacity(records.len());
+    for r in &records {
+        match crate::fonts::unpack(r, MAX_INPUT_BYTES) {
+            Ok(file) => files.push(file),
+            Err(_) => {
+                check_stream(stream, data, options, report);
+                return;
+            }
+        }
+    }
+    for (i, (r, file)) in records.iter().zip(&files).enumerate() {
+        check_stream(
+            &format!("{stream} font {i} names"),
+            r.names,
+            options,
+            report,
+        );
+        let name = format!("{stream} font {i} unpacked");
+        match truetype_names(file) {
+            Some(texts) => {
+                check_texts(&name, texts, options, report);
+                check_watched(&name, file, options, report);
+            }
+            None => check_stream(&name, file, options, report),
+        }
+    }
+}
+
+/// The strings of a TrueType file's `name` table, as (offset in the file, text), or `None` when
+/// the file is not a TrueType file with a readable `name` table. Windows and Unicode strings are
+/// UTF-16 with the high byte first; Macintosh ones are read one byte per character.
+fn truetype_names(file: &[u8]) -> Option<Vec<(usize, String)>> {
+    let u16_at = |at: usize| -> Option<usize> {
+        let b = file.get(at..at.checked_add(2)?)?;
+        Some(usize::from(u16::from_be_bytes(b.try_into().ok()?)))
+    };
+    let u32_at = |at: usize| -> Option<usize> {
+        let b = file.get(at..at.checked_add(4)?)?;
+        usize::try_from(u32::from_be_bytes(b.try_into().ok()?)).ok()
+    };
+    if !matches!(file.get(..4), Some([0, 1, 0, 0] | b"true" | b"OTTO")) {
+        return None;
+    }
+    let tables = u16_at(4)?;
+    let table = (0..tables).find_map(|i| {
+        let at = i.checked_mul(16)?.checked_add(12)?;
+        (file.get(at..at.checked_add(4)?)? == b"name").then_some(at)
+    })?;
+    let name_at = u32_at(table.checked_add(8)?)?;
+    let count = u16_at(name_at.checked_add(2)?)?;
+    let strings_at = name_at.checked_add(u16_at(name_at.checked_add(4)?)?)?;
+    let mut out = Vec::with_capacity(count);
+    for i in 0..count {
+        let rec = name_at.checked_add(6)?.checked_add(i.checked_mul(12)?)?;
+        let platform = u16_at(rec)?;
+        let len = u16_at(rec.checked_add(8)?)?;
+        let start = strings_at.checked_add(u16_at(rec.checked_add(10)?)?)?;
+        let bytes = file.get(start..start.checked_add(len)?)?;
+        let text = if platform == 1 {
+            bytes.iter().map(|&b| char::from(b)).collect()
+        } else {
+            let units: Vec<u16> = bytes
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|&pair| u16::from_be_bytes(pair))
+                .collect();
+            String::from_utf16_lossy(&units)
+        };
+        out.push((start, text));
+    }
+    Some(out)
+}
+
 /// Checks the bytes of one stream.
 pub fn check_stream(stream: &str, data: &[u8], options: &Options, report: &mut Report) {
-    for (offset, text) in text_runs(data) {
+    check_texts(stream, text_runs(data), options, report);
+    check_watched(stream, data, options, report);
+}
+
+/// Reports what each (offset, text) contains, and lists the text with [`Options::all_text`].
+fn check_texts(stream: &str, texts: Vec<(usize, String)>, options: &Options, report: &mut Report) {
+    for (offset, text) in texts {
         for kind in classify(&text) {
             report.push(Finding {
                 stream: stream.to_string(),
@@ -144,6 +246,10 @@ pub fn check_stream(stream: &str, data: &[u8], options: &Options, report: &mut R
             });
         }
     }
+}
+
+/// Reports every watched word in the bytes, in either text encoding.
+fn check_watched(stream: &str, data: &[u8], options: &Options, report: &mut Report) {
     if options.watch.is_empty() {
         return;
     }
@@ -452,5 +558,89 @@ mod tests {
         assert!(text_runs(&[0x41]).is_empty());
         let runs = text_runs(b"\x00ABCDE\x00");
         assert!(runs.contains(&(1, "ABCDE".to_string())));
+    }
+
+    /// A TrueType file with one Windows `name` string, followed by binary that looks like a
+    /// network path.
+    fn tiny_font(name: &str) -> Vec<u8> {
+        let text: Vec<u8> = name.encode_utf16().flat_map(u16::to_be_bytes).collect();
+        let len = u16::try_from(text.len()).unwrap_or(0);
+        let mut f = vec![0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0];
+        f.extend(b"name");
+        f.extend([0; 4]);
+        f.extend(28u32.to_be_bytes());
+        f.extend(u32::from(len).saturating_add(18).to_be_bytes());
+        f.extend([0, 0, 0, 1, 0, 18]);
+        f.extend([0, 3, 0, 1, 4, 9, 0, 0]);
+        f.extend(len.to_be_bytes());
+        f.extend([0, 0]);
+        f.extend(text);
+        f.extend(b"\x01\x02\\\\ab\\\\cd\x03");
+        f
+    }
+
+    /// `/EmbeddedFonts6/Data` holding `file`, packed.
+    fn fonts_stream(file: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        for s in ["Test Sans", "Test Sans", "Book"] {
+            let bytes: Vec<u8> = s
+                .encode_utf16()
+                .chain([0])
+                .flat_map(u16::to_le_bytes)
+                .collect();
+            out.extend(u32::try_from(bytes.len()).unwrap_or(0).to_le_bytes());
+            out.extend(bytes);
+        }
+        let packed = miniz_oxide::deflate::compress_to_vec_zlib(file, 6);
+        out.extend([0, 0, 1]);
+        out.extend(u32::try_from(packed.len()).unwrap_or(0).to_le_bytes());
+        out.extend(packed);
+        out
+    }
+
+    fn fonts_report(file: &[u8], watch: &[&str]) -> Report {
+        let options = Options {
+            watch: watch.iter().map(|w| w.to_string()).collect(),
+            ..Options::default()
+        };
+        let mut report = Report::default();
+        check_fonts(FONTS_STREAM, &fonts_stream(file), &options, &mut report);
+        report
+    }
+
+    #[test]
+    fn an_embedded_font_is_checked_by_its_name_strings() {
+        let clean = fonts_report(&tiny_font("Copyright Test Foundry"), &[]);
+        assert!(clean.is_clean(), "{:?}", clean.findings);
+        let leaky = fonts_report(&tiny_font("Made in C:\\Users\\someone"), &[]);
+        let kinds: Vec<_> = leaky.findings.iter().map(|f| &f.kind).collect();
+        assert_eq!(kinds, [&Kind::Path]);
+        assert!(leaky
+            .findings
+            .iter()
+            .all(|f| f.stream == "/EmbeddedFonts6/Data font 0 unpacked"));
+    }
+
+    #[test]
+    fn watched_words_are_found_anywhere_in_an_embedded_font() {
+        let mut file = tiny_font("Copyright Test Foundry");
+        file.extend(b"\x00\x00hidden-word\x00");
+        let report = fonts_report(&file, &["hidden-word"]);
+        let kinds: Vec<_> = report.findings.iter().map(|f| &f.kind).collect();
+        assert_eq!(kinds, [&Kind::Watched("hidden-word".into())]);
+    }
+
+    #[test]
+    fn a_font_that_is_not_truetype_is_checked_byte_for_byte() {
+        let report = fonts_report(b"not a font, C:\\Users\\someone", &[]);
+        assert!(report.findings.iter().any(|f| f.kind == Kind::Path));
+        let mut raw = Report::default();
+        check_fonts(
+            FONTS_STREAM,
+            b"\x05\x00\x00\x00C:\\x\\y",
+            &Options::default(),
+            &mut raw,
+        );
+        assert!(raw.findings.iter().any(|f| f.stream == FONTS_STREAM));
     }
 }

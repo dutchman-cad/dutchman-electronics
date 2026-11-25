@@ -1,7 +1,11 @@
 # Test boards
 
 Each board here is an original test board released under CC0. Each has a README.txt that starts with the declaration in
-CONTRIBUTING.md; a test refuses a board without it. Before adding one, run:
+CONTRIBUTING.md; a test refuses a board without it.
+
+One exception: the `one-dejavu-*` boards embed the font files of DejaVu Sans Mono, as Altium does with every TrueType
+font a board uses. Those font files keep their own licence (Bitstream Vera, with the DejaVu changes in the public
+domain), which allows passing them on with their notices; README.txt has the details. Before adding one, run:
 
 ```sh
 cargo run -- privacy-check path/to/board.PcbDoc --watch "Your Name" --watch "Your Company"

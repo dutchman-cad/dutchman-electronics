@@ -2,7 +2,7 @@
 //! Roadmap steps 1 and 2 are done: open the container and list its streams; read the board
 //! outline, its cutouts and the board thickness (`board.rs`). Step 3 has started: tracks, track
 //! arcs, pads, vias, fills and copper regions (`copper.rs`). Step 5 has started: component placements
-//! (`components.rs`) and their 3D models (`models.rs`). Step 4 has started: texts on overlay and copper layers (`texts.rs`). Everything else in the file is reported as a "not read yet"
+//! (`components.rs`) and their 3D models (`models.rs`). Step 4 has started: texts on overlay and copper layers (`texts.rs`) and their embedded fonts (`fonts.rs`). Everything else in the file is reported as a "not read yet"
 //! note.
 //!
 //! A `.PcbDoc` is an OLE / Compound File Binary container: a small file system inside one file,
@@ -16,6 +16,7 @@ mod appearance;
 mod board;
 mod components;
 mod copper;
+mod fonts;
 mod models;
 pub mod privacy;
 mod shape_based;
@@ -250,6 +251,8 @@ impl InputFormat for Altium {
                 .map_err(ReadError::Invalid)?,
             None => Vec::new(),
         };
+        let fonts6 = read_stream(&mut container, "/EmbeddedFonts6/Data")?;
+        let fonts = fonts::read(fonts6.as_deref(), &texts, &mut notes);
         for (path, what) in NOT_READ_YET {
             if let Some(s) = streams.iter().find(|s| s.path == *path && s.len > 0) {
                 notes.push(Note {
@@ -272,6 +275,7 @@ impl InputFormat for Altium {
             },
             notes,
             models: embedded,
+            fonts,
         })
     }
 }

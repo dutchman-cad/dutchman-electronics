@@ -243,8 +243,13 @@ pub struct Text {
 pub enum TextFont {
     /// The CAD program's own single-line font, drawn with a pen `width` mm wide.
     Stroke { width: f64 },
-    /// A TrueType font, by name; its outlines come from the font file.
-    TrueType { name: String },
+    /// A TrueType font, by family name and style; its outlines come from the font file, which
+    /// [`ReadOutcome::font`] finds when the board embeds it.
+    TrueType {
+        name: String,
+        bold: bool,
+        italic: bool,
+    },
 }
 
 /// Where a 3D model for a component comes from.
@@ -366,6 +371,35 @@ pub struct EmbeddedModel {
     pub step: Vec<u8>,
 }
 
+/// A TrueType font file stored inside the board file, unpacked, for [`TextFont::TrueType`].
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct EmbeddedFont {
+    /// The family, as [`TextFont::TrueType`] names it, e.g. "DejaVu Sans Mono".
+    pub family: String,
+    /// The face's full name, e.g. "DejaVu Sans Mono Bold".
+    pub full_name: String,
+    /// The style's name, e.g. "Book", "Bold" or "Oblique".
+    pub style: String,
+    pub bold: bool,
+    pub italic: bool,
+    /// The TrueType file itself. It keeps its own licence, which the file names.
+    pub data: Vec<u8>,
+}
+
+impl EmbeddedFont {
+    /// True when this is the file for `font`: the same family (in any case) and style.
+    pub fn serves(&self, font: &TextFont) -> bool {
+        match font {
+            TextFont::TrueType { name, bold, italic } => {
+                self.family.eq_ignore_ascii_case(name)
+                    && self.bold == *bold
+                    && self.italic == *italic
+            }
+            TextFont::Stroke { .. } => false,
+        }
+    }
+}
+
 /// What [`InputFormat::read`] returns.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ReadOutcome {
@@ -373,6 +407,15 @@ pub struct ReadOutcome {
     pub notes: Vec<Note>,
     /// The embedded 3D models the board's components use, each once.
     pub models: Vec<EmbeddedModel>,
+    /// The embedded font files the board's texts use, each once.
+    pub fonts: Vec<EmbeddedFont>,
+}
+
+impl ReadOutcome {
+    /// The embedded font file for a text's font, if the board has it.
+    pub fn font(&self, font: &TextFont) -> Option<&EmbeddedFont> {
+        self.fonts.iter().find(|f| f.serves(font))
+    }
 }
 
 /// Why a file could not be read.
@@ -425,6 +468,37 @@ mod tests {
     fn display_of_errors_is_plain_english() {
         let e = ReadError::NotYet("copper".into());
         assert_eq!(e.to_string(), "not supported yet: copper");
+    }
+
+    #[test]
+    fn a_text_finds_its_font_by_family_and_style() {
+        let face = |bold: bool, italic: bool| EmbeddedFont {
+            family: "DejaVu Sans Mono".into(),
+            bold,
+            italic,
+            ..EmbeddedFont::default()
+        };
+        let out = ReadOutcome {
+            fonts: vec![face(false, false), face(true, false)],
+            ..ReadOutcome::default()
+        };
+        let wants = |name: &str, bold: bool, italic: bool| TextFont::TrueType {
+            name: name.into(),
+            bold,
+            italic,
+        };
+        let found = |font: TextFont| out.font(&font).map(|f| (f.bold, f.italic));
+        assert_eq!(
+            found(wants("DejaVu Sans Mono", false, false)),
+            Some((false, false))
+        );
+        assert_eq!(
+            found(wants("dejavu sans mono", true, false)),
+            Some((true, false))
+        );
+        assert_eq!(found(wants("DejaVu Sans Mono", false, true)), None);
+        assert_eq!(found(wants("Arial", false, false)), None);
+        assert_eq!(found(TextFont::Stroke { width: 0.2 }), None);
     }
 }
 
