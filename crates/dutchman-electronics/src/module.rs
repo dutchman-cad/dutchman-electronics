@@ -111,11 +111,14 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "altium")]
+    #[cfg(all(feature = "altium", feature = "kicad"))]
     #[test]
-    fn info_lists_altium() {
+    fn info_lists_altium_and_kicad() {
         let v = info();
-        assert_eq!(v["extensions"], json!(["pcbdoc"]));
+        assert_eq!(v["extensions"], json!(["kicad_pcb", "pcbdoc"]));
+        assert_eq!(v["formats"][1]["id"], "kicad_pcb");
+        assert_eq!(v["formats"][1]["extension"], "kicad_pcb");
+        assert_eq!(v["formats"][1]["name"], "KiCad PCB (.kicad_pcb)");
         assert_eq!(v["formats"][0]["id"], "altium_pcbdoc");
         assert_eq!(v["formats"][0]["extension"], "pcbdoc");
         assert_eq!(v["formats"][0]["name"], "Altium PCB document (.PcbDoc)");
@@ -133,6 +136,19 @@ mod tests {
         let no = detect(b"text", Some("txt"));
         assert_eq!(no["detection"], "no");
         assert_eq!(no["format"], Value::Null);
+    }
+
+    #[cfg(feature = "kicad")]
+    #[test]
+    fn detect_kicad_by_contents_and_by_name() {
+        let yes = detect(b"(kicad_pcb (version 20241229)", Some("kicad_pcb"));
+        assert_eq!(yes["detection"], "yes");
+        assert_eq!(yes["format"], "kicad_pcb");
+        let by_content = detect(b"\n(kicad_pcb (version 20241229)", None);
+        assert_eq!(by_content["detection"], "yes");
+        let maybe = detect(b"text", Some("KiCad_PCB"));
+        assert_eq!(maybe["detection"], "maybe_by_name");
+        assert_eq!(maybe["format"], "kicad_pcb");
     }
 
     #[test]
