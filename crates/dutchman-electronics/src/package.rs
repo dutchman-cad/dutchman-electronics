@@ -1014,7 +1014,7 @@ mod tests {
 
     #[cfg(feature = "altium")]
     #[test]
-    fn the_solder_mask_is_the_board_less_pads_and_drills() {
+    fn the_solder_mask_is_the_board_less_pads_copper_and_drills() {
         let mask = |board: &str, side: &str| {
             let package = package_of(board);
             overlay_area(overlay_named(
@@ -1029,13 +1029,13 @@ mod tests {
         // 1500 - 2 * 0.8 = 1498.4; the bottom has no pads, so it stays 1500.
         assert!((mask("one-resistor", "top") - 1498.4).abs() < 1e-3);
         assert!((mask("one-resistor", "bottom") - 1500.0).abs() < 1e-3);
-        // one-via: the via's ring is tented (copper under the mask, not a bare pad), so only its
-        // 0.5 mm drill is open: 1500 - pi * 0.25^2 = 1499.80365. The drill is drawn as a 32-sided
-        // polygon, a little under the circle (16 * 0.25^2 * sin(11.25 deg) = 0.19509 mm2), so the
-        // tolerance is 0.003.
-        let tented = 1500.0 - std::f64::consts::PI * 0.0625;
-        assert!((mask("one-via", "top") - tented).abs() < 0.003);
-        assert!((mask("one-via", "bottom") - tented).abs() < 0.003);
+        // one-via: the mask stops at the via's copper (1.0 mm across, under the mask) and covers
+        // no drill, so a whole 1.0 mm circle is open: 1500 - pi * 0.5^2 = 1499.21460. It is drawn
+        // as a 32-sided polygon, a little under the circle (16 * 0.5^2 * sin(11.25 deg) =
+        // 0.78036 mm2 against 0.78540), so the tolerance is 0.01.
+        let open_via = 1500.0 - std::f64::consts::PI * 0.25;
+        assert!((mask("one-via", "top") - open_via).abs() < 0.01);
+        assert!((mask("one-via", "bottom") - open_via).abs() < 0.01);
         // one-plated-pad: a round 2.0 mm pad on all layers with a 1.0 mm hole. Its bare copper
         // and its drill together open the whole pad, on both faces: 1500 - pi * 1^2 = 1496.85841,
         // less a little for the 32-sided polygon (16 * sin(11.25 deg) = 3.12145 mm2 against
