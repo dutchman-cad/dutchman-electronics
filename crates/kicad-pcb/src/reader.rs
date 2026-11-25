@@ -1019,6 +1019,12 @@ pub fn read(root: &Node) -> ReadOutcome {
         }
     }
     let thickness = read_thickness(root, &mut tally);
+    // `pad_to_mask_clearance`: how far the solder mask opens past each pad's edge.
+    let mask_expansion = root
+        .child("setup")
+        .and_then(|s| s.child("pad_to_mask_clearance"))
+        .and_then(|c| c.num(0))
+        .filter(|c| *c >= 0.0);
     let mut r = Reader {
         layers,
         by_name,
@@ -1123,6 +1129,7 @@ pub fn read(root: &Node) -> ReadOutcome {
             texts: r.texts,
             components: r.components,
             appearance: Default::default(),
+            solder_mask_expansion: mask_expansion,
         },
         notes,
         models: Vec::new(),

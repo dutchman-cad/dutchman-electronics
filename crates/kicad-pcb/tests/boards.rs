@@ -61,6 +61,8 @@ fn empty_outline_is_a_50_by_30_rectangle_1_6_thick() {
     let o = board("empty-outline");
     let b = &o.board;
     assert!(near(b.thickness.unwrap(), 1.6));
+    // KiCad's pad-to-mask clearance, 0 on this board.
+    assert_eq!(b.solder_mask_expansion, Some(0.0));
     assert_eq!(b.outline.outer.segments.len(), 4);
     assert!(b.outline.cutouts.is_empty());
     let (x0, y0, x1, y1) = bounds(&b.outline.outer);

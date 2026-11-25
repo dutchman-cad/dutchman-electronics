@@ -12,6 +12,7 @@ empty board with a `Dropped` note that says to open and save the file in KiCad 9
 |---|---|
 | outline and cutouts | `gr_line`, `gr_arc`, `gr_circle`, `gr_rect`, `gr_poly` on `Edge.Cuts` (also inside footprints), joined end to end; the biggest closed contour is the outline, the rest are cutouts |
 | thickness | the stack-up (`setup` > `stackup`): copper, dielectric and solder mask layers added up; else `general` > `thickness` |
+| solder mask opening | `setup` > `pad_to_mask_clearance` |
 | layers | the `layers` table, in stack order (top silkscreen, paste, mask, copper top to bottom, bottom mask, paste, silkscreen, then the rest), with kind and side |
 | placements | `footprint`: reference, library name, `at`, side from `layer`, first `model` (file, offset, rotate) |
 | copper | `segment`, `arc`, `via`, `pad` (circle, rect, oval; roundrect, trapezoid and custom read as rectangles with a note; drills, plating, copper layers), `filled_polygon` of zones |

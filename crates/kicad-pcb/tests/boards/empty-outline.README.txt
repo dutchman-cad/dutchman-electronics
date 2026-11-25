@@ -6,4 +6,5 @@ Made with KiCad 9.0.9 (file version 20241229) by fixtures/kicad/build_boards.py.
 
 - Edge.Cuts: one rectangle (gr_rect), corners (0, 0) and (50, 30), line width 0.1.
 - Thickness: 1.6 (general thickness; the file has no stack-up table).
+- Solder mask: pad_to_mask_clearance 0 (the mask opening is as big as the pad).
 - Layers: F.Cu and B.Cu copper, F/B silkscreen, solder mask and paste, Edge.Cuts and the other KiCad default layers.
