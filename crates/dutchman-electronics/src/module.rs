@@ -15,10 +15,16 @@ pub const INTERFACE: u32 = 1;
 pub const INFO_SCHEMA: &str = "dutchman.module-info/1";
 /// Schema of the `detect <file> --json` reply.
 pub const DETECT_SCHEMA: &str = "dutchman.module-detect/1";
+/// The Altium project, listed beside the board formats: `read` opens the board it holds and
+/// fills in the project's parameters. It is not an [`board_model::InputFormat`] of its own,
+/// since a project is read together with its board file.
+#[cfg(feature = "altium")]
+const PROJECT: (&str, &str, &str) = ("altium_prjpcb", "Altium PCB project (.PrjPcb)", "prjpcb");
 
 /// The `info --json` reply: who this module is and which formats it reads.
 pub fn info() -> Value {
-    let formats: Vec<Value> = crate::formats()
+    #[allow(unused_mut)]
+    let mut formats: Vec<Value> = crate::formats()
         .iter()
         .map(|f| {
             json!({
@@ -33,6 +39,17 @@ pub fn info() -> Value {
         .iter()
         .flat_map(|f| f.extensions().iter().copied())
         .collect();
+    #[cfg(feature = "altium")]
+    {
+        let (id, name, extension) = PROJECT;
+        formats.push(json!({
+            "id": id,
+            "name": name,
+            "extension": extension,
+            "extensions": [extension],
+        }));
+        extensions.push(extension);
+    }
     extensions.sort_unstable();
     extensions.dedup();
     json!({
@@ -48,9 +65,27 @@ pub fn info() -> Value {
     })
 }
 
+/// How sure a file is an Altium project: its name, and a first section `[Design]`.
+#[cfg(feature = "altium")]
+fn project(head: &[u8], extension: Option<&str>) -> Detection {
+    let named = extension.is_some_and(|e| e.eq_ignore_ascii_case(PROJECT.2));
+    let text = head.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(head);
+    match (named, text.starts_with(b"[Design]")) {
+        (true, true) => Detection::Yes,
+        (true, false) => Detection::MaybeByName,
+        (false, _) => Detection::No,
+    }
+}
+
 /// The `detect <file> --json` reply for a file's first bytes and extension.
 pub fn detect(head: &[u8], extension: Option<&str>) -> Value {
+    #[allow(unused_mut)]
     let mut best: Option<(&'static str, Detection)> = None;
+    #[cfg(feature = "altium")]
+    match project(head, extension) {
+        Detection::No => {}
+        found => best = Some((PROJECT.0, found)),
+    }
     for format in crate::formats() {
         let detection = format.detect(head, extension);
         let better = match (best, detection) {
@@ -115,13 +150,16 @@ mod tests {
     #[test]
     fn info_lists_altium_and_kicad() {
         let v = info();
-        assert_eq!(v["extensions"], json!(["kicad_pcb", "pcbdoc"]));
+        assert_eq!(v["extensions"], json!(["kicad_pcb", "pcbdoc", "prjpcb"]));
         assert_eq!(v["formats"][1]["id"], "kicad_pcb");
         assert_eq!(v["formats"][1]["extension"], "kicad_pcb");
         assert_eq!(v["formats"][1]["name"], "KiCad PCB (.kicad_pcb)");
         assert_eq!(v["formats"][0]["id"], "altium_pcbdoc");
         assert_eq!(v["formats"][0]["extension"], "pcbdoc");
         assert_eq!(v["formats"][0]["name"], "Altium PCB document (.PcbDoc)");
+        assert_eq!(v["formats"][2]["id"], "altium_prjpcb");
+        assert_eq!(v["formats"][2]["extension"], "prjpcb");
+        assert_eq!(v["formats"][2]["name"], "Altium PCB project (.PrjPcb)");
     }
 
     #[cfg(feature = "altium")]
@@ -149,6 +187,17 @@ mod tests {
         let maybe = detect(b"text", Some("KiCad_PCB"));
         assert_eq!(maybe["detection"], "maybe_by_name");
         assert_eq!(maybe["format"], "kicad_pcb");
+    }
+
+    #[cfg(feature = "altium")]
+    #[test]
+    fn detect_a_project() {
+        let yes = detect(b"\xEF\xBB\xBF[Design]\r\nVersion=1.0", Some("PrjPcb"));
+        assert_eq!(yes["detection"], "yes");
+        assert_eq!(yes["format"], "altium_prjpcb");
+        let maybe = detect(b"something else", Some("prjpcb"));
+        assert_eq!(maybe["detection"], "maybe_by_name");
+        assert_eq!(detect(b"[Design]", Some("txt"))["detection"], "no");
     }
 
     #[test]

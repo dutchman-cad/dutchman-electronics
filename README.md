@@ -7,6 +7,7 @@ Reads circuit boards into [SolidCraft](https://github.com/tangency-labs/solidcra
 | Format | Status |
 |---|---|
 | Altium (`.PcbDoc`) | In progress |
+| Altium project (`.PrjPcb`) | In progress: reads the project's board and fills in the texts that refer to project parameters |
 | tscircuit | In progress |
 | KiCad (`.kicad_pcb`, KiCad 9 and 10) | In progress: reader in `crates/kicad-pcb` (scope: issue 75); more scope depends on the SolidCraft maintainers' answer on [tangency-labs/solidcraft#21320](https://github.com/tangency-labs/solidcraft/issues/21320) |
 | Fusion Electronics | TBD |
@@ -84,7 +85,12 @@ Each step is its own small pull request. Each ends with something you can run an
 cargo build
 cargo test
 cargo run -- streams path/to/board.PcbDoc
+cargo run -- read path/to/project.PrjPcb --out out --board main --param BoardRevision=C
 ```
+
+A text such as `.PCBNumber` refers to a project parameter. Reading a `.PrjPcb` fills in the project's
+parameters; `--param NAME=VALUE` gives one by hand (also for a `.PcbDoc` on its own) and wins over the
+project's. `--board` picks the board when a project holds several.
 
 New here? Read [CONTRIBUTING.md](CONTRIBUTING.md). Working with an AI? Point it at [AGENTS.md](AGENTS.md) first.
 

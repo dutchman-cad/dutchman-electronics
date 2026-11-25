@@ -337,3 +337,64 @@ fn an_unrelated_dropped_note_is_not_added_to_another_failure(
     assert!(!v.to_string().contains("dimension"), "{v}");
     Ok(())
 }
+
+/// The test project in the Altium reader's folder (CC0, see its README.txt).
+#[cfg(feature = "altium")]
+fn test_project() -> std::path::PathBuf {
+    test_board("param-project/param-project.PrjPcb")
+}
+
+#[cfg(feature = "altium")]
+#[test]
+fn read_opens_a_projects_board_with_its_parameters() -> Result<(), Box<dyn std::error::Error>> {
+    let out = std::env::temp_dir().join(format!("de-read-prj-{}", std::process::id()));
+    let result = run(&[
+        "read",
+        &test_project().to_string_lossy(),
+        "--out",
+        &out.to_string_lossy(),
+        "--json",
+        "--board",
+        "PARAM-BOARD-2",
+        "--param",
+        "BoardRevision=C",
+    ]);
+    std::fs::remove_dir_all(&out).ok();
+    let (ok, v) = result?;
+    assert!(ok, "{v}");
+    assert_eq!(v["source"]["format"], "altium_pcbdoc");
+    let notes: Vec<&str> = v["notes"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|n| n["message"].as_str())
+        .collect();
+    assert!(
+        notes
+            .contains(&"2 text(s) refer to a project parameter and show its value, as Altium does"),
+        "{notes:?}"
+    );
+    Ok(())
+}
+
+#[cfg(feature = "altium")]
+#[test]
+fn a_project_with_two_boards_asks_which_one() -> Result<(), Box<dyn std::error::Error>> {
+    let out = std::env::temp_dir().join(format!("de-read-prj2-{}", std::process::id()));
+    let (ok, v) = run(&[
+        "read",
+        &test_project().to_string_lossy(),
+        "--out",
+        &out.to_string_lossy(),
+        "--json",
+    ])?;
+    assert!(!ok);
+    assert_eq!(v["ok"], false);
+    let error = v["error"].as_str().unwrap_or_default();
+    assert!(
+        error.contains("holds 2 boards (param-board.PcbDoc, param-board-2.PcbDoc)"),
+        "{error}"
+    );
+    assert!(!out.exists());
+    Ok(())
+}

@@ -1,6 +1,8 @@
 //! `dutchman-electronics`: the command Dutchman's launcher finds on the PATH.
 //! Module interface for Dutchman: `info --json`, `detect <file> --json` and
-//! `read <file> --out <dir> --json`.
+//! `read <file> --out <dir> --json`. `read` also takes `--param NAME=VALUE` (repeatable) for
+//! the texts that refer to project parameters, and `--board NAME` to choose the board of an
+//! Altium project (`.PrjPcb`) that holds several.
 //! For people: `formats`, `streams <file>` and
 //! `privacy-check <file> [--watch WORD]... [--all-text]`.
 
@@ -23,7 +25,8 @@ fn read_board_file(path: &str) -> Result<Vec<u8>, String> {
 
 const USAGE: &str = "usage: dutchman-electronics info [--json]
        dutchman-electronics detect <file> [--json]
-       dutchman-electronics read <file> --out <dir> [--json]
+       dutchman-electronics read <board.PcbDoc|project.PrjPcb> --out <dir> [--json]
+                                [--param NAME=VALUE]... [--board NAME]
        dutchman-electronics formats
        dutchman-electronics streams <board.PcbDoc>
        dutchman-electronics privacy-check <board.PcbDoc> [--watch WORD]... [--all-text]";
@@ -156,11 +159,55 @@ fn detect(path: &str, json: bool) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// Reads a board file into a parts package in `out`; prints the manifest.
-fn read(path: &str, out: &str, json: bool) -> ExitCode {
+/// What `read` was asked for.
+#[derive(Debug, Default, PartialEq)]
+struct ReadArgs {
+    path: String,
+    out: String,
+    json: bool,
+    parameters: Vec<(String, String)>,
+    board: Option<String>,
+}
+
+/// Parses the words after `read`, or says what is wrong.
+fn read_args(words: &[&str]) -> Result<ReadArgs, String> {
+    let mut args = ReadArgs::default();
+    let (mut path, mut out) = (None, None);
+    let mut rest = words.iter();
+    while let Some(word) = rest.next() {
+        match *word {
+            "--json" => args.json = true,
+            "--out" => out = Some(rest.next().ok_or("--out needs a folder")?.to_string()),
+            "--board" => {
+                args.board = Some(rest.next().ok_or("--board needs a name")?.to_string());
+            }
+            "--param" => {
+                let given = rest.next().ok_or("--param needs NAME=VALUE")?;
+                let (name, value) = given
+                    .split_once('=')
+                    .filter(|(n, _)| !n.trim().is_empty())
+                    .ok_or_else(|| format!("--param {given}: expected NAME=VALUE"))?;
+                args.parameters
+                    .push((name.trim().to_string(), value.to_string()));
+            }
+            flag if flag.starts_with("--") => return Err(format!("unknown option {flag}")),
+            file if path.is_none() => path = Some(file.to_string()),
+            extra => return Err(format!("unexpected {extra}")),
+        }
+    }
+    args.path = path.ok_or("read needs a file")?;
+    args.out = out.ok_or("read needs --out <dir>")?;
+    Ok(args)
+}
+
+/// Reads a board file, or the board of an Altium project, into a parts package in `out`;
+/// prints the manifest.
+fn read(args: &ReadArgs) -> ExitCode {
     use dutchman_electronics::package;
-    let path = std::path::Path::new(path);
-    let built = package::read_input(path).and_then(|bytes| package::build(path, &bytes));
+    let (out, json) = (args.out.as_str(), args.json);
+    let path = std::path::Path::new(&args.path);
+    let built = package::open(path, args.board.as_deref(), &args.parameters)
+        .and_then(|input| package::build(&input.path, &input.bytes, &input.options));
     let written = built.and_then(|p| package::write(std::path::Path::new(out), &p).map(|()| p));
     match (written, json) {
         (Ok(p), true) => {
@@ -194,10 +241,13 @@ fn main() -> ExitCode {
         ["info", "--json"] => info(true),
         ["detect", path] => detect(path, false),
         ["detect", path, "--json"] | ["detect", "--json", path] => detect(path, true),
-        ["read", path, "--out", out] => read(path, out, false),
-        ["read", path, "--out", out, "--json"] | ["read", path, "--json", "--out", out] => {
-            read(path, out, true)
-        }
+        ["read", rest @ ..] => match read_args(rest) {
+            Ok(args) => read(&args),
+            Err(e) => {
+                eprintln!("{e}\n{USAGE}");
+                ExitCode::from(2)
+            }
+        },
         ["formats"] => {
             for f in dutchman_electronics::formats() {
                 println!("{}\t{}\t{}", f.id(), f.extensions().join(","), f.name());
@@ -227,6 +277,56 @@ fn main() -> ExitCode {
         _ => {
             eprintln!("{USAGE}");
             ExitCode::from(2)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn read_takes_its_options_in_any_order() -> Result<(), String> {
+        let args = read_args(&[
+            "p.PrjPcb",
+            "--param",
+            "PCBNumber=DN-7",
+            "--json",
+            "--out",
+            "dir",
+            "--board",
+            "b2",
+            "--param",
+            "Note=a=b",
+        ])?;
+        assert_eq!(
+            args,
+            ReadArgs {
+                path: "p.PrjPcb".into(),
+                out: "dir".into(),
+                json: true,
+                parameters: vec![
+                    ("PCBNumber".into(), "DN-7".into()),
+                    ("Note".into(), "a=b".into())
+                ],
+                board: Some("b2".into()),
+            }
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn read_refuses_what_it_does_not_understand() {
+        for words in [
+            &["b.PcbDoc"][..],
+            &["--out", "d"],
+            &["b.PcbDoc", "--out", "d", "--param", "novalue"],
+            &["b.PcbDoc", "--out", "d", "--param", "=x"],
+            &["b.PcbDoc", "--out", "d", "--frob"],
+            &["b.PcbDoc", "c.PcbDoc", "--out", "d"],
+            &["b.PcbDoc", "--out"],
+        ] {
+            assert!(read_args(words).is_err(), "{words:?}");
         }
     }
 }

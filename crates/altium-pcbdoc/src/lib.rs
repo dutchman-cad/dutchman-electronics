@@ -19,7 +19,9 @@ mod copper;
 mod fonts;
 mod models;
 pub mod privacy;
+pub mod project;
 mod shape_based;
+pub mod special_strings;
 mod texts;
 
 use board_model::{
