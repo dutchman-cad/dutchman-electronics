@@ -1,0 +1,16 @@
+Original test board made for Dutchman Electronics. Released under CC0 1.0 (public domain): https://creativecommons.org/publicdomain/zero/1.0/
+
+pad-shapes: one footprint with eight pads of the shapes the reader used to read as plain rectangles.
+
+Made with KiCad 9.0.9 (file version 20241229) by fixtures/kicad/build_boards.py. KiCad shows coordinates in millimetres with Y pointing down; the board's top-left corner is at page position (100, 100), and every number below is relative to that corner (so add 100 to x and y for the page position). The reader gives Y up: model x = 100 + X, model y = -(100 + Y).
+
+- Footprint test:Shapes, designator U1, on F.Cu at (25,15), not turned. Every pad is on F.Cu, F.Mask and F.Paste (surface mount) except pad 8. Pad positions below are relative to the footprint, so the model centre of pad n is x = 100 + 25 + dx, y = -115.
+- Pad 1 at dx = -21: roundrect 3 x 2, roundrect_rratio 0.25, so a corner radius of 0.25 * 2 = 0.5. Read as PadShape::RoundedRectangle, ratio 0.25.
+- Pad 2 at dx = -15: trapezoid 3 x 2, rect_delta (0 1). The top edge (the one at the top of the screen) is 2 wide (3 - 1), the bottom edge 4 wide (3 + 1). Corners relative to the centre in the model (Y up): (-2,-1), (2,-1), (1,1), (-1,1). Area 6.
+- Pad 3 at dx = -9: trapezoid 3 x 2, rect_delta (1 0). The left edge is 3 tall (2 + 1), the right edge 1 tall (2 - 1). Corners: (-1.5,-1.5), (1.5,-0.5), (1.5,0.5), (-1.5,1.5). Area 6.
+- Pad 4 at dx = -3: trapezoid 3 x 2, rect_delta (0.5 1). Corners: (-2,-1.25), (2,-0.75), (1,0.75), (-1,1.25). The two deltas add.
+- Pad 5 at dx = 3: roundrect 3 x 2 with chamfer_ratio 0.25 on the top-left and bottom-right corners, roundrect_rratio 0.25. The chamfered corners are cut 0.5 along each edge; the other two corners are rounded with radius 0.5. Area 6 - 2 * 0.125 - 2 * 0.25 * (1 - pi/4) = 5.6427.
+- Pad 6 at dx = 9: custom, rectangle anchor 1 x 1, plus one filled polygon primitive (width 0), an L with corners (0,0), (2,0), (2,1), (1,1), (1,2), (0,2) relative to the pad (KiCad's Y down; the model has them at (0,0), (2,0), (2,-1), (1,-1), (1,-2), (0,-2)). The anchor and the L overlap by a quarter square: two contours, areas 1 and 3.
+- Pad 7 at dx = 15: roundrect 3 x 2, ratio 0.25, turned 90 degrees (pad angle 90): PadShape::RoundedRectangle with rotation 90.
+- Pad 8 at dx = 21: through-hole custom, circle anchor 1.6 (radius 0.8), plus a filled triangle (0,0), (2.4,0), (0,2.4) (area 2.88), drill 0.8, plated, copper on every layer.
+- How the corner and delta conventions were measured: KiCad's own Gerber export of F.Cu (kicad-cli pcb export gerbers, KiCad 9.0.9) of this board shows each pad's outline with Y up; the corners above are read from it.

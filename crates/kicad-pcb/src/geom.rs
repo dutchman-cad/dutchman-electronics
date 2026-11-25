@@ -1,6 +1,8 @@
 //! Geometry the reader needs: KiCad's frame (Y down) to the neutral one (Y up), the turn of a
 //! footprint, arcs given by three points, and contours.
 
+use std::collections::HashMap;
+
 use board_model::{Contour, Point, Segment};
 
 use crate::sexpr::Node;
@@ -270,6 +272,156 @@ pub fn pts_contour(frame: &Frame, pts: &Node) -> Option<Contour> {
         }
     }
     Some(Contour { segments })
+}
+
+/// One piece of a zone's fill: the copper's outer contour and the holes inside it.
+#[derive(Debug)]
+pub struct FillPiece {
+    pub outer: Contour,
+    pub holes: Vec<Contour>,
+}
+
+/// The most loops one fill polygon is split into. More is left as the single contour KiCad wrote.
+const MAX_FILL_LOOPS: usize = 4096;
+
+fn signed_area(points: &[Point]) -> f64 {
+    let twice: f64 = points
+        .iter()
+        .zip(points.iter().cycle().skip(1))
+        .map(|(a, b)| a.x * b.y - b.x * a.y)
+        .sum();
+    twice / 2.0
+}
+
+/// True when `p` is inside the polygon (even-odd rule).
+fn inside(points: &[Point], p: Point) -> bool {
+    let mut odd = false;
+    for (a, b) in points.iter().zip(points.iter().cycle().skip(1)) {
+        if (a.y > p.y) != (b.y > p.y) && p.x < a.x + (p.y - a.y) / (b.y - a.y) * (b.x - a.x) {
+            odd = !odd;
+        }
+    }
+    odd
+}
+
+/// A vertex as a hashable key: KiCad writes nanometres, so six decimals tell vertices apart.
+fn vertex_key(p: Point) -> (i64, i64) {
+    ((p.x * 1e6).round() as i64, (p.y * 1e6).round() as i64)
+}
+
+/// A zone's `filled_polygon` as outer contours with their holes.
+///
+/// KiCad writes one closed ring for a whole fill: each hole is reached from the outside by a
+/// zero-width bridge (the ring runs to a vertex, round the hole, and back to the same vertex).
+/// The ring is cut into simple loops wherever it comes back to a vertex it already passed; the
+/// bridges collapse to loops without area and are dropped. Loops that wind like the biggest one
+/// are copper (several when the ring pinches), the others are holes, each put in the smallest
+/// piece that holds most of its corners. A fill with arcs, or with more than [`MAX_FILL_LOOPS`]
+/// loops, is returned as the one contour that was written. `None` when fewer than three corners
+/// are readable.
+pub fn split_fill(frame: &Frame, pts: &Node) -> Option<Vec<FillPiece>> {
+    if pts.args().iter().any(|n| n.head() == Some("arc")) {
+        let contour = pts_contour(frame, pts)?;
+        return Some(vec![FillPiece {
+            outer: contour,
+            holes: Vec::new(),
+        }]);
+    }
+    let mut ring: Vec<Point> = Vec::new();
+    for item in pts.args() {
+        if item.head() == Some("xy") {
+            let p = place(frame, item)?;
+            if ring.last().is_none_or(|q| dist(*q, p) > 1e-9) {
+                ring.push(p);
+            }
+        }
+    }
+    while let (Some(&a), Some(&b)) = (ring.first(), ring.last()) {
+        if ring.len() > 1 && dist(a, b) <= 1e-9 {
+            ring.pop();
+        } else {
+            break;
+        }
+    }
+    let first = ring.first().copied()?;
+    if ring.len() < 3 {
+        return None;
+    }
+    let whole = || {
+        Some(vec![FillPiece {
+            outer: crate::padshape::polygon(&ring),
+            holes: Vec::new(),
+        }])
+    };
+    // Cut the ring into loops at every vertex it passes twice.
+    let mut stack: Vec<Point> = Vec::new();
+    let mut at: HashMap<(i64, i64), usize> = HashMap::new();
+    let mut loops: Vec<Vec<Point>> = Vec::new();
+    for &p in ring.iter().chain(std::iter::once(&first)) {
+        let key = vertex_key(p);
+        match at.get(&key).copied() {
+            Some(pos) => {
+                let tail: Vec<Point> = stack.drain(pos + 1..).collect();
+                for q in &tail {
+                    at.remove(&vertex_key(*q));
+                }
+                let mut l: Vec<Point> = stack.get(pos).copied().into_iter().collect();
+                l.extend(tail);
+                loops.push(l);
+                if loops.len() > MAX_FILL_LOOPS {
+                    return whole();
+                }
+            }
+            None => {
+                at.insert(key, stack.len());
+                stack.push(p);
+            }
+        }
+    }
+    let mut loops: Vec<(Vec<Point>, f64)> = loops
+        .into_iter()
+        .filter(|l| l.len() >= 3)
+        .map(|l| {
+            let a = signed_area(&l);
+            (l, a)
+        })
+        .filter(|(_, a)| a.abs() > 1e-9)
+        .collect();
+    let Some(big) = loops
+        .iter()
+        .map(|(_, a)| *a)
+        .max_by(|a, b| a.abs().total_cmp(&b.abs()))
+    else {
+        return whole();
+    };
+    loops.sort_by(|a, b| a.1.abs().total_cmp(&b.1.abs()));
+    let (outers, holes): (Vec<_>, Vec<_>) = loops
+        .into_iter()
+        .partition(|(_, a)| (*a > 0.0) == (big > 0.0));
+    // `outers` is sorted smallest first, so the first one to hold a hole is its smallest parent.
+    let mut pieces: Vec<(Vec<Point>, Vec<Contour>)> =
+        outers.into_iter().map(|(l, _)| (l, Vec::new())).collect();
+    let last = pieces.len().saturating_sub(1);
+    for (hole, _) in holes {
+        let target = pieces
+            .iter()
+            .position(|(outer, _)| {
+                hole.iter().filter(|p| inside(outer, **p)).count() * 2 >= hole.len()
+            })
+            .unwrap_or(last);
+        if let Some(piece) = pieces.get_mut(target) {
+            piece.1.push(crate::padshape::polygon(&hole));
+        }
+    }
+    Some(
+        pieces
+            .into_iter()
+            .map(|(outer, holes)| FillPiece {
+                outer: crate::padshape::polygon(&outer),
+                holes,
+            })
+            .collect(),
+    )
 }
 
 #[cfg(test)]

@@ -13,6 +13,7 @@
 
 mod geom;
 mod outline;
+mod padshape;
 mod reader;
 pub mod sexpr;
 

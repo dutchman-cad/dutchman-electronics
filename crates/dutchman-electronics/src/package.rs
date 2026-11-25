@@ -433,7 +433,9 @@ fn plating(board: &Board, cut: &[board_step::CutHole], thickness: f64) -> Platin
         .iter()
         .filter(|item| match item {
             CopperItem::Via { .. } => true,
-            CopperItem::Pad { drill, plated, .. } => drill.is_some() && *plated,
+            CopperItem::Pad { drill, plated, .. } | CopperItem::PolygonPad { drill, plated, .. } => {
+                drill.is_some() && *plated
+            }
             _ => false,
         })
         .count();

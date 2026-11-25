@@ -149,6 +149,12 @@ pub enum PadShape {
     Round,
     Rectangle,
     Oval,
+    /// A rectangle with all four corners rounded to a radius of `radius_ratio` times the
+    /// shorter side (0 to 0.5: 0.5 on a square is a circle). The pad's size is the whole
+    /// rectangle.
+    RoundedRectangle {
+        radius_ratio: f64,
+    },
 }
 
 /// A piece of copper. `layer` is an index into [`Board::layers`].
@@ -185,6 +191,21 @@ pub enum CopperItem {
         /// A through-hole pad has a drill diameter.
         drill: Option<f64>,
         /// The hole is plated (lined with copper). Always false for a pad without a hole.
+        plated: bool,
+        /// The designator of the component this pad belongs to, if any.
+        owner: Option<String>,
+    },
+    /// A pad whose shape is not a plain [`PadShape`]: a trapezoid, a rectangle with chamfered
+    /// corners, or a custom shape. The copper is the union of `shapes`, closed contours in board
+    /// coordinates that may overlap (an anchor plus drawn pieces). `at` is the pad's centre: the
+    /// hole, when there is one, is drilled there.
+    PolygonPad {
+        layer: usize,
+        at: Point,
+        shapes: Vec<Contour>,
+        /// A through-hole pad has a drill diameter.
+        drill: Option<f64>,
+        /// The hole is plated. Always false for a pad without a hole.
         plated: bool,
         /// The designator of the component this pad belongs to, if any.
         owner: Option<String>,

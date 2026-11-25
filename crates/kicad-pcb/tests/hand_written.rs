@@ -210,3 +210,47 @@ fn hidden_and_empty_texts_are_noted() {
     assert!(o.notes.iter().any(|n| n.message.contains("hidden text")));
     assert!(o.notes.iter().any(|n| n.message.contains("empty text")));
 }
+
+#[test]
+fn a_fill_that_pinches_at_a_corner_is_two_pieces_without_holes() {
+    // Two squares that touch at (10, 10), written as one ring that passes it twice.
+    let text = format!(
+        "{HEAD}(zone (net 0) (net_name \"\") (layer \"F.Cu\") (polygon (pts (xy 0 0) (xy 1 0) (xy 1 1)))\n\
+         (filled_polygon (layer \"F.Cu\") (pts (xy 0 0) (xy 10 0) (xy 10 10) (xy 20 10) (xy 20 20) \
+         (xy 10 20) (xy 10 10) (xy 0 10))))\n)"
+    );
+    let o = read(&text).unwrap();
+    let holes: Vec<usize> = o
+        .board
+        .copper
+        .iter()
+        .filter_map(|c| match c {
+            board_model::CopperItem::Region { holes, .. } => Some(holes.len()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(holes, vec![0, 0]);
+}
+
+#[test]
+fn a_fill_with_one_bridge_gives_an_outer_contour_and_one_hole() {
+    let text = format!(
+        "{HEAD}(zone (net 0) (net_name \"\") (layer \"F.Cu\") (polygon (pts (xy 0 0) (xy 1 0) (xy 1 1)))\n\
+         (filled_polygon (layer \"F.Cu\") (pts (xy 0 0) (xy 10 0) (xy 10 10) (xy 0 10) (xy 0 5) \
+         (xy 4 5) (xy 4 7) (xy 6 7) (xy 6 5) (xy 4 5) (xy 0 5))))\n)"
+    );
+    let o = read(&text).unwrap();
+    let (contour, holes) = o
+        .board
+        .copper
+        .iter()
+        .find_map(|c| match c {
+            board_model::CopperItem::Region { contour, holes, .. } => Some((contour, holes)),
+            _ => None,
+        })
+        .unwrap();
+    // The bridge's start (0, 5) stays a vertex of the outer contour (on its left edge).
+    assert_eq!(contour.segments.len(), 5);
+    assert_eq!(holes.len(), 1);
+    assert_eq!(holes[0].segments.len(), 4);
+}

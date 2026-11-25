@@ -11,8 +11,9 @@ use board_model::{
     Placement, Point, ReadOutcome, Segment, Severity, Side, Text, TextFont,
 };
 
-use crate::geom::{arc_through, circle_segment, place, pts_contour, Frame};
+use crate::geom::{arc_through, circle_segment, place, pts_contour, split_fill, Frame};
 use crate::outline;
+use crate::padshape;
 use crate::sexpr::Node;
 
 /// The first board file version written by KiCad 9. Older files get a note instead of a guess.
@@ -652,9 +653,9 @@ impl Reader {
                 );
                 continue;
             };
-            let Some(contour) = fp
+            let Some(pieces) = fp
                 .child("pts")
-                .and_then(|p| pts_contour(&Frame::IDENTITY, p))
+                .and_then(|p| split_fill(&Frame::IDENTITY, p))
             else {
                 self.tally.add(
                     Severity::Dropped,
@@ -662,12 +663,14 @@ impl Reader {
                 );
                 continue;
             };
-            filled += 1;
-            self.copper.push(CopperItem::Region {
-                layer,
-                contour,
-                holes: Vec::new(),
-            });
+            for piece in pieces {
+                filled += 1;
+                self.copper.push(CopperItem::Region {
+                    layer,
+                    contour: piece.outer,
+                    holes: piece.holes,
+                });
+            }
         }
         if filled == 0 {
             self.tally.add(
@@ -809,6 +812,118 @@ impl Reader {
         })
     }
 
+    /// The contours of a custom pad, in the pad's frame: its anchor (a rectangle of the pad's
+    /// size, or a circle of its width) and the filled primitives. Strokes become capsules; what
+    /// cannot be drawn exactly is named in a note.
+    fn custom_pad(&mut self, pad: &Node, sx: f64, sy: f64) -> Vec<Contour> {
+        /// The most primitives read from one pad.
+        const MAX_PRIMITIVES: usize = 256;
+        let mut out: Vec<Contour> = Vec::new();
+        let anchor = pad
+            .child("options")
+            .and_then(|o| o.child("anchor"))
+            .and_then(|a| a.str_at(0))
+            .unwrap_or("rect");
+        if anchor == "circle" {
+            out.push(padshape::circle(Point { x: 0.0, y: 0.0 }, sx / 2.0));
+        } else {
+            let (hx, hy) = (sx / 2.0, sy / 2.0);
+            out.push(padshape::polygon(&[
+                Point { x: -hx, y: -hy },
+                Point { x: hx, y: -hy },
+                Point { x: hx, y: hy },
+                Point { x: -hx, y: hy },
+            ]));
+        }
+        let local = |n: &Node| n.pair().map(|(x, y)| Point { x, y: -y });
+        let prims = pad.child("primitives");
+        let all = prims.map(Node::args).unwrap_or(&[]);
+        if all.len() > MAX_PRIMITIVES {
+            self.tally.add(
+                Severity::Dropped,
+                "custom pad primitive(s) past the 256 read for each pad",
+            );
+        }
+        for prim in all.iter().take(MAX_PRIMITIVES) {
+            let width = prim
+                .child("width")
+                .and_then(|w| w.num(0))
+                .or_else(|| {
+                    prim.child("stroke")
+                        .and_then(|s| s.child("width"))
+                        .and_then(|w| w.num(0))
+                })
+                .unwrap_or(0.0)
+                .max(0.0);
+            let filled = prim
+                .child("fill")
+                .and_then(|f| f.str_at(0))
+                .is_some_and(|f| f == "yes" || f == "solid");
+            let corners: Option<Vec<Point>> = match prim.head() {
+                Some("gr_poly") => prim.child("pts").map(|p| {
+                    p.args()
+                        .iter()
+                        .filter(|n| n.head() == Some("xy"))
+                        .filter_map(local)
+                        .collect()
+                }),
+                Some("gr_rect") => prim
+                    .child("start")
+                    .and_then(local)
+                    .zip(prim.child("end").and_then(local))
+                    .map(|(a, b)| vec![a, Point { x: b.x, y: a.y }, b, Point { x: a.x, y: b.y }]),
+                _ => None,
+            };
+            let mut drawn = false;
+            if let Some(corners) = corners.filter(|c| c.len() >= 3) {
+                drawn = true;
+                if filled {
+                    out.push(padshape::polygon(&corners));
+                    if width > 0.0 {
+                        self.tally.add(
+                            Severity::Warning,
+                            "custom pad primitive(s) with a stroke width were drawn without the half-width the stroke adds",
+                        );
+                    }
+                } else if width > 0.0 {
+                    for (i, a) in corners.iter().enumerate() {
+                        if let Some(b) = corners.get(i + 1).or(corners.first()) {
+                            out.push(padshape::capsule(*a, *b, width));
+                        }
+                    }
+                } else {
+                    drawn = false;
+                }
+            } else if prim.head() == Some("gr_circle") {
+                let c = prim.child("center").and_then(local);
+                let e = prim.child("end").and_then(local);
+                if let (Some(c), Some(e)) = (c, e) {
+                    let r = (e.x - c.x).hypot(e.y - c.y);
+                    if filled && r > 0.0 {
+                        out.push(padshape::circle(c, r));
+                        drawn = true;
+                    }
+                }
+            } else if prim.head() == Some("gr_line") {
+                let a = prim.child("start").and_then(local);
+                let b = prim.child("end").and_then(local);
+                if let (Some(a), Some(b)) = (a, b) {
+                    if width > 0.0 {
+                        out.push(padshape::capsule(a, b, width));
+                        drawn = true;
+                    }
+                }
+            }
+            if !drawn {
+                self.tally.add(
+                    Severity::Dropped,
+                    "custom pad primitive(s) that are arcs, curves, outlines without width, or unreadable (left out of the pad)",
+                );
+            }
+        }
+        out
+    }
+
     fn pad(&mut self, pad: &Node, f: &Frame, owner: Option<&str>) {
         let kind = pad.str_at(1).unwrap_or("");
         let shape_name = pad.str_at(2).unwrap_or("");
@@ -822,28 +937,79 @@ impl Reader {
             return;
         };
         let rotation_deg = at.and_then(|a| a.num(2)).unwrap_or(0.0);
+        let centre = f.point(ax, ay);
+        // The pad's own outline when it is not a plain shape: contours in its frame (Y up).
+        let mut polygon: Option<Vec<Contour>> = None;
+        let min_side = sx.min(sy);
         let shape = match shape_name {
             "circle" => PadShape::Round,
             "oval" => PadShape::Oval,
             "rect" => PadShape::Rectangle,
             "roundrect" => {
-                self.tally.add(
-                    Severity::Info,
-                    "pad(s) with rounded corners were read as rectangles",
+                let ratio = pad
+                    .child("roundrect_rratio")
+                    .and_then(|r| r.num(0))
+                    .unwrap_or(0.0)
+                    .clamp(0.0, 0.5);
+                let corners = padshape::Corners::from_names(
+                    pad.child("chamfer")
+                        .map(Node::args)
+                        .unwrap_or(&[])
+                        .iter()
+                        .filter_map(Node::text),
                 );
-                PadShape::Rectangle
+                let chamfer = pad
+                    .child("chamfer_ratio")
+                    .and_then(|r| r.num(0))
+                    .unwrap_or(0.0)
+                    .clamp(0.0, 0.5);
+                if corners.any() && chamfer > 0.0 {
+                    polygon = Some(vec![padshape::rounded_chamfered_rect(
+                        sx,
+                        sy,
+                        ratio * min_side,
+                        chamfer * min_side,
+                        corners,
+                    )]);
+                    PadShape::Rectangle
+                } else if ratio > 0.0 {
+                    PadShape::RoundedRectangle {
+                        radius_ratio: ratio,
+                    }
+                } else {
+                    PadShape::Rectangle
+                }
             }
             "trapezoid" => {
-                self.tally.add(
-                    Severity::Warning,
-                    "trapezoid pad(s) were read as rectangles",
-                );
+                let (dx, dy) = pad
+                    .child("rect_delta")
+                    .and_then(Node::pair)
+                    .unwrap_or((0.0, 0.0));
+                match padshape::trapezoid(sx, sy, dx, dy) {
+                    Some(c) => polygon = Some(vec![c]),
+                    None => self.tally.add(
+                        Severity::Warning,
+                        "trapezoid pad(s) whose deltas leave no shape were read as rectangles",
+                    ),
+                }
+                PadShape::Rectangle
+            }
+            "custom" => {
+                let shapes = self.custom_pad(pad, sx, sy);
+                if shapes.is_empty() {
+                    self.tally.add(
+                        Severity::Warning,
+                        "custom pad(s) with no readable shape were read as rectangles of their anchor size",
+                    );
+                } else {
+                    polygon = Some(shapes);
+                }
                 PadShape::Rectangle
             }
             _ => {
                 self.tally.add(
                     Severity::Warning,
-                    "custom-shaped pad(s) were read as rectangles of their anchor size",
+                    "pad(s) of an unknown shape were read as rectangles",
                 );
                 PadShape::Rectangle
             }
@@ -904,9 +1070,23 @@ impl Reader {
         targets.dedup();
         let hole_only_note = targets.is_empty();
         for layer in targets {
+            if let Some(shapes) = &polygon {
+                self.copper.push(CopperItem::PolygonPad {
+                    layer,
+                    at: centre,
+                    shapes: shapes
+                        .iter()
+                        .map(|c| padshape::placed(c, centre, rotation_deg))
+                        .collect(),
+                    drill,
+                    plated,
+                    owner: owner.map(str::to_string),
+                });
+                continue;
+            }
             self.copper.push(CopperItem::Pad {
                 layer,
-                at: f.point(ax, ay),
+                at: centre,
                 shape,
                 size_x: sx,
                 size_y: sy,

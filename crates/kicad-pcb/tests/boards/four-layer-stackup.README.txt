@@ -1,0 +1,11 @@
+Original test board made for Dutchman Electronics. Released under CC0 1.0 (public domain): https://creativecommons.org/publicdomain/zero/1.0/
+
+four-layer-stackup: the 50 x 30 mm rectangle on a four-layer board, 1.6 mm thick, with a stack-up table written by KiCad.
+
+Made with KiCad 9.0.9 (file version 20241229) by fixtures/kicad/build_boards.py and fixtures/kicad/add_stackup.py. KiCad shows coordinates in millimetres with Y pointing down; the board's top-left corner is at page position (100, 100), and every number below is relative to that corner (so add 100 to x and y for the page position). The reader gives Y up: model x = 100 + X, model y = -(100 + Y).
+
+- Edge.Cuts: one rectangle, corners (0,0) and (50,30).
+- Copper layers, top to bottom: F.Cu, In1.Cu, In2.Cu, B.Cu.
+- How the stack-up was made: KiCad's board scripting cannot write a stack-up table, and KiCad's command line cannot either. So fixtures/kicad/stackup-four-layer.sexp, a table written by hand from the stack-up section of KiCad's file-format documentation, was pasted as text into the saved board's setup section; then KiCad loaded the board (pcbnew.LoadBoard) and saved it again (board.Save), which rewrote the whole file, table included, in KiCad's own layout. The numbers in the table are ours.
+- Stack-up (mm), top to bottom: F.Mask 0.01, F.Cu 0.035, dielectric 1 (prepreg, FR4) 0.2, In1.Cu 0.0175, dielectric 2 (core, FR4) 1.075, In2.Cu 0.0175, dielectric 3 (prepreg, FR4) 0.2, B.Cu 0.035, B.Mask 0.01; silkscreen and paste layers have no thickness; copper finish none.
+- Thickness: 0.01 + 0.035 + 0.2 + 0.0175 + 1.075 + 0.0175 + 0.2 + 0.035 + 0.01 = 1.6, which is also the general thickness the file records, so the reader gives 1.6 and no note.

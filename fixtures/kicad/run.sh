@@ -9,7 +9,9 @@ for v in 9.0 10.0; do
   [ "$v" = 10.0 ] && dir=$out/k10-work && mkdir -p "$dir"
   podman run --rm --userns=keep-id -v "$PWD:/work:Z" docker.io/kicad/kicad:$v sh -c "
     python3 /work/fixtures/kicad/build_boards.py /work/$dir &&
-    python3 /work/fixtures/kicad/fill_zones.py /work/$dir/one-zone.kicad_pcb"
+    python3 /work/fixtures/kicad/fill_zones.py /work/$dir/one-zone.kicad_pcb &&
+    python3 /work/fixtures/kicad/fill_zones.py /work/$dir/zone-thermal.kicad_pcb &&
+    python3 /work/fixtures/kicad/add_stackup.py /work/$dir/four-layer-stackup.kicad_pcb /work/fixtures/kicad/stackup-four-layer.sexp"
 done
 # The project files KiCad writes beside each board are not needed.
 rm -f "$out"/*.kicad_pro "$out"/*.kicad_prl "$out"/k10-work/*.kicad_pro "$out"/k10-work/*.kicad_prl

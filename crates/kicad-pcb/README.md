@@ -15,7 +15,7 @@ empty board with a `Dropped` note that says to open and save the file in KiCad 9
 | solder mask opening | `setup` > `pad_to_mask_clearance` |
 | layers | the `layers` table, in stack order (top silkscreen, paste, mask, copper top to bottom, bottom mask, paste, silkscreen, then the rest), with kind and side |
 | placements | `footprint`: reference, library name, `at`, side from `layer`, first `model` (file, offset, rotate) |
-| copper | `segment`, `arc`, `via`, `pad` (circle, rect, oval; roundrect, trapezoid and custom read as rectangles with a note; drills, plating, copper layers), `filled_polygon` of zones |
+| copper | `segment`, `arc`, `via`, `pad` (circle, rect, oval, roundrect as a rounded rectangle; trapezoid, chamfered and custom pads as polygon pads; drills, plating, copper layers), `filled_polygon` of zones, split into an outer contour and its holes |
 | silkscreen | `gr_*` and `fp_*` lines, arcs, circles, rectangles, polygons; `gr_text`, `fp_text` and the reference and value `property` texts |
 
 Everything else is a note: keep-out zones, zones without a saved fill, dimensions, text boxes,
@@ -44,7 +44,17 @@ a note.
   1.27 mm text) are our own estimates, not KiCad's metrics.
 - A slotted hole is read as a round hole as wide as the slot's narrow side; a hole set off-centre
   in its pad is drawn centred (a warning).
-- A zone's fill is the polygon KiCad saved, with its zero-width bridges to the holes.
+- A zone's fill is one ring in the file, with a zero-width bridge out to each hole. The reader cuts
+  the ring into simple loops wherever it passes a vertex twice (the bridges collapse to nothing),
+  calls the loops that wind like the biggest one copper and the others holes, and puts each hole in
+  the smallest piece that holds most of its corners. A fill with arcs, or one that splits into more
+  than 4096 loops, is kept as the single contour KiCad wrote.
+- Custom pads: the anchor (rectangle of the pad's size, or circle of its width) plus filled
+  `gr_poly`, `gr_rect` and `gr_circle` primitives, and `gr_line` and unfilled polygons and
+  rectangles drawn with their width as round-ended strokes. Arcs, curves, unfilled circles and
+  strokes without width are left out with a note; a stroke width on a filled primitive is not added
+  to it (a warning). A pad with a chamfer keeps the rounding of its other corners (`roundrect_rratio`),
+  as KiCad's own Gerber export shows. Pads on the bottom side are untested.
 
 ## Frames
 
@@ -76,12 +86,15 @@ layer) the behaviour comes from those boards and from KiCad's own exports of the
 `tests/boards/*.kicad_pcb` are CC0 boards, one feature each, with every number in the board's
 `README.txt`; the `k10-` boards are the same boards made with KiCad 10.0.8 and must read the
 same. `model-placements` pins where a model lands on a top and a bottom part against KiCad's own
-VRML export. `fixtures/kicad/run.sh` rebuilds them (needs podman). `tests/hand_written.rs`
-covers what no KiCad-made board holds yet from text written by hand from the documentation: the
-stack-up table, older and newer version numbers and net names written as strings.
+VRML export. `fixtures/kicad/run.sh` rebuilds them (needs podman). `pad-shapes`, `zone-thermal`
+and `four-layer-stackup` cover the pad shapes, a pour with holes and the stack-up table (KiCad
+cannot be scripted to write one, so the table was pasted into a saved board and KiCad rewrote the
+file; see that board's README.txt). `tests/hand_written.rs` covers what no KiCad-made board holds
+yet from text written by hand from the documentation: stack-ups that disagree with the general
+thickness, older and newer version numbers, net names written as strings and fills that pinch.
 
 `tests/open-hardware/<board>/` holds larger real-world boards made by others under an open
 Creative Commons licence (CC0, CC-BY 4.0 or CC-BY-SA 4.0), each with its licence text and a
 `README.txt` naming the source, commit, attribution and the numbers KiCad itself gives for the
 board; `tests/open_hardware.rs` checks the reader against those numbers. The rules are in
-CONTRIBUTING.md. A real KiCad-made board with a saved stack-up is still wanted (see issue 75).
+CONTRIBUTING.md.

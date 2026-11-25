@@ -261,6 +261,25 @@ fn pad(at: Point, shape: PadShape, size_x: f64, size_y: f64, rotation_deg: f64) 
                 .map(|&(x, y)| coord(turned(at, x, y, rotation_deg)))
                 .collect(),
         ),
+        PadShape::RoundedRectangle { radius_ratio } => {
+            let r = radius_ratio.clamp(0.0, 0.5) * size_x.min(size_y);
+            if !(r > CHORD / 10.0) {
+                return pad(at, PadShape::Rectangle, size_x, size_y, rotation_deg);
+            }
+            // The four corner arcs, counter-clockwise from the bottom left; the ring closes with
+            // straight edges between them.
+            let mut ring = Vec::new();
+            for (sx, sy, start) in [
+                (-1.0, -1.0, 180.0),
+                (1.0, -1.0, 270.0),
+                (1.0, 1.0, 0.0),
+                (-1.0, 1.0, 90.0),
+            ] {
+                let center = turned(at, sx * (hx - r), sy * (hy - r), rotation_deg);
+                arc_points(center, r, start + rotation_deg, 90.0, &mut ring);
+            }
+            polygon(ring)
+        }
         PadShape::Round | PadShape::Oval if (size_x - size_y).abs() < 1e-9 => circle(at, hx),
         PadShape::Round | PadShape::Oval => {
             // A slot: a stroke along the longer side, as wide as the shorter one.
@@ -276,6 +295,39 @@ fn pad(at: Point, shape: PadShape, size_x: f64, size_y: f64, rotation_deg: f64) 
             )
         }
     }
+}
+
+/// A contour grown outwards by `by`: the contour itself plus a round-ended stroke `2 * by` wide
+/// along every edge, whose union is the contour offset by `by` (to within [`CHORD`]).
+fn grown(c: &Contour, by: f64) -> Vec<Polygon> {
+    let mut out: Vec<Polygon> = contour(c).into_iter().collect();
+    if !(by.is_finite() && by > 0.0) {
+        return out;
+    }
+    for segment in &c.segments {
+        match *segment {
+            Segment::Line { from, to } => out.extend(stroke(from, to, 2.0 * by)),
+            Segment::Arc {
+                center,
+                radius,
+                start_deg,
+                end_deg,
+                clockwise,
+            } => {
+                let (a, b) = if clockwise {
+                    (end_deg, start_deg)
+                } else {
+                    (start_deg, end_deg)
+                };
+                if segment.sweep_deg().is_some_and(|s| s.abs() >= 360.0) {
+                    out.extend(circle(center, radius + by));
+                } else {
+                    out.extend(arc_stroke(center, radius, a, b, 2.0 * by));
+                }
+            }
+        }
+    }
+    out
 }
 
 fn contour(c: &Contour) -> Option<Polygon> {
@@ -766,6 +818,24 @@ fn overlays_within(
                         None => unusable = unusable.saturating_add(1),
                     }
                     continue;
+                }
+                CopperItem::PolygonPad {
+                    layer,
+                    at,
+                    shapes: outlines,
+                    drill,
+                    ..
+                } => {
+                    opened = outlines
+                        .iter()
+                        .flat_map(|c| grown(c, expansion))
+                        .collect();
+                    (
+                        *layer,
+                        outlines.iter().filter_map(contour).collect(),
+                        true,
+                        drill.map(|d| (*at, d)),
+                    )
                 }
                 CopperItem::Pad {
                     layer,
