@@ -20,6 +20,39 @@ pub const BOARD_COLOR: &str = "#c8b27a";
 /// The Plating part, the copper inside plated holes: the same gold as the bare pads.
 pub const PLATING_COLOR: &str = COPPER_BARE_COLOR;
 
+/// How a surface takes the light, written into the manifest as `"metallic"` and `"roughness"`
+/// (each 0 to 1) next to its colour.
+///
+/// Everything is non-metallic on purpose: SolidCraft's modelling viewport has no environment to
+/// reflect, so a metallic surface there renders flat dark grey. Gold and copper read right as a
+/// coloured, fairly smooth dielectric instead.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Finish {
+    pub metallic: f64,
+    pub roughness: f64,
+}
+
+/// Solder mask, and the copper seen through it: a satin gloss.
+pub const MASK_FINISH: Finish = Finish {
+    metallic: 0.0,
+    roughness: 0.35,
+};
+/// Bare pads and plating: gold, a little less glossy than the mask.
+pub const GOLD_FINISH: Finish = Finish {
+    metallic: 0.0,
+    roughness: 0.45,
+};
+/// Silkscreen ink: matte.
+pub const SILKSCREEN_FINISH: Finish = Finish {
+    metallic: 0.0,
+    roughness: 0.8,
+};
+/// The FR4 edge: matte.
+pub const BOARD_FINISH: Finish = Finish {
+    metallic: 0.0,
+    roughness: 0.9,
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -44,5 +77,9 @@ mod tests {
             );
         }
         const { assert!(MASK_OPACITY > 0.0 && MASK_OPACITY <= 1.0) };
+        for f in [MASK_FINISH, GOLD_FINISH, SILKSCREEN_FINISH, BOARD_FINISH] {
+            assert!((0.0..=1.0).contains(&f.metallic), "{f:?}");
+            assert!((0.0..=1.0).contains(&f.roughness), "{f:?}");
+        }
     }
 }
