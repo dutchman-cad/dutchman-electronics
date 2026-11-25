@@ -508,6 +508,117 @@ one-colored-body-resistor.PcbDoc
     On saving, Altium gave the body a new random model ID and left out the footprint library
     field that was blanked on one-resistor (see "Paths inside the files").
 
+Dense board: DUTCHMAN NODE 1
+----------------------------
+Made on 2026-11-25 by my own script, from a file copy of outline-with-arcs.PcbDoc, laid out like
+a small real product. Every footprint is my own (numbers below), drawn by the script: no
+library footprints and no downloaded models. The parts, nets and tracks come from a layout file
+of my own, routed by my own small router; the script built the board from it, read every part,
+pad, body and designator back from Altium and compared them with that file (all matched). Altium
+Designer 26.12.2's design rule check reports no violations, with the board's own two rules
+below.
+
+dense-board.PcbDoc
+    Outline: that of outline-with-arcs (50 x 30, corners rounded to radius 3.000) without its
+    round cutout. Two layers, 1.600 thick, the stack and colours of empty-outline.
+    Rules set on the board: track width 0.150 to 0.500 (0.200 preferred) on both copper layers,
+    hole size up to 3.500. Everything else is Altium's default (clearance 0.254).
+    Mounting holes: two free pads, round 5.000, plated hole 3.200, no net, at (4.5, 4.5) and
+    (45.5, 25.5).
+
+    Footprints (pads relative to the part's centre, before rotation; all SMD pads rectangular on
+    one copper layer, through-hole pads plated, hole 1.000):
+        R0603-DN: 2 pads 0.800 x 1.000 at x -0.800 and +0.800 (resistor, 0603)
+        C0603-DN: the same pads (capacitor, 0603)
+        LED0603-DN: the same pads; pad 1 is the cathode (LED, 0603)
+        R0402-DN: 2 pads 0.600 x 0.600 at x -0.500 and +0.500 (resistor, 0402)
+        C0402-DN: the same pads (capacitor, 0402)
+        SOT23-DN: pads 0.600 x 0.800: 1 at (-0.950, -1.000), 2 at (0.950, -1.000), 3 at (0, 1.000)
+        SOIC8-DN: pads 1.500 x 0.600, pitch 1.270: 1 to 4 at x -2.700, y 1.905 down to -1.905; 5 to
+            8 at x 2.700, y -1.905 up to 1.905
+        TQFP32-DN: pads 1.450 x 0.500 (0.500 x 1.450 on the top and bottom rows), pitch 0.800,
+            centres 4.200 from the middle: 1 to 8 down the left side from y 2.800, 9 to 16 along the
+            bottom from x -2.800, 17 to 24 up the right side, 25 to 32 along the top from x 2.800
+        HDR1X4-DN: 4 through-hole pads 1.700 (pad 1 square, the others round) at x 0, y 3.810 down
+            to -3.810, pitch 2.540
+
+    Parts (centre, rotation and side as Altium shows them; a bottom part was placed on top and
+    flipped, which Altium turns to 180). Body: an extruded box over the footprint, standoff 0,
+    colour and height as given, opacity 1; R3 and R4 instead each have the STEP model box-1608.step
+    of one-step-resistor, embedded twice (the script gave each part the file on its own).
+        designator  footprint   value    centre            rotation  side    body
+        J1          HDR1X4-DN   PWR/I2C  ( 3.500, 15.000)      0     top     RGB (20, 20, 20), height 2.500
+        J2          HDR1X4-DN   ANALOG   (46.500, 15.000)      0     top     RGB (20, 20, 20), height 2.500
+        U1          TQFP32-DN   MCU      (27.000, 15.000)      0     top     RGB (30, 30, 30), height 1.200
+        U2          SOIC8-DN    EEPROM   (13.500,  7.000)      0     top     RGB (30, 30, 30), height 1.750
+        U3          SOT23-DN    3V3 LDO  ( 9.000, 23.500)      0     top     RGB (30, 30, 30), height 1.100
+        Q1          SOT23-DN    NPN      (20.000, 25.000)      0     top     RGB (30, 30, 30), height 1.100
+        D1          LED0603-DN  GREEN    (33.000, 25.500)      0     top     RGB (250, 250, 235), height 0.600
+        R1          R0603-DN    4k7      (17.500, 12.500)     90     top     RGB (40, 40, 40), height 0.450
+        R2          R0603-DN    4k7      (19.500, 12.500)     90     top     RGB (40, 40, 40), height 0.450
+        R3          R0603-DN    1k       (16.600, 23.600)      0     top     box-1608.step
+        R4          R0603-DN    330      (36.600, 25.500)      0     top     box-1608.step
+        R5          R0603-DN    10k      (24.000, 22.400)      0     top     RGB (40, 40, 40), height 0.450
+        R6          R0603-DN    1k       (40.500, 20.600)      0     top     RGB (40, 40, 40), height 0.450
+        R7          R0603-DN    1k       (40.500, 16.270)      0     top     RGB (40, 40, 40), height 0.450
+        R8          R0603-DN    1k       (40.500, 11.400)      0     top     RGB (40, 40, 40), height 0.450
+        R9          R0603-DN    100k     (13.000, 17.000)      0     top     RGB (40, 40, 40), height 0.450
+        R10         R0603-DN    100k     (13.000, 14.000)      0     top     RGB (40, 40, 40), height 0.450
+        C1          C0603-DN    10u      ( 5.500, 25.000)     90     top     RGB (190, 150, 100), height 0.800
+        C2          C0603-DN    10u      (12.500, 25.500)      0     top     RGB (190, 150, 100), height 0.800
+        C3          C0603-DN    100n     (21.000,  6.500)     90     top     RGB (190, 150, 100), height 0.800
+        C4          C0603-DN    100n     (34.000,  9.000)      0     top     RGB (190, 150, 100), height 0.800
+        C5          C0603-DN    1u       (34.000, 21.000)      0     top     RGB (190, 150, 100), height 0.800
+        C6          C0603-DN    100n     ( 9.000,  3.500)      0     top     RGB (190, 150, 100), height 0.800
+        C7          C0603-DN    100n     (27.600, 22.400)      0     top     RGB (190, 150, 100), height 0.800
+        C8          C0402-DN    10n      (41.000, 23.000)    180     bottom  RGB (190, 150, 100), height 0.500
+        C9          C0402-DN    10n      (41.000,  9.500)    180     bottom  RGB (190, 150, 100), height 0.500
+        C10         C0402-DN    10n      (41.000,  6.500)    180     bottom  RGB (190, 150, 100), height 0.500
+        C11         C0402-DN    100n     (24.500, 18.000)    180     bottom  RGB (190, 150, 100), height 0.500
+        C12         C0402-DN    100n     (29.500, 12.000)    180     bottom  RGB (190, 150, 100), height 0.500
+        C13         C0402-DN    100n     (29.500, 18.000)    180     bottom  RGB (190, 150, 100), height 0.500
+        C14         C0402-DN    1u       (24.500, 12.000)    180     bottom  RGB (190, 150, 100), height 0.500
+        C15         C0402-DN    100n     ( 9.000, 18.000)    180     bottom  RGB (190, 150, 100), height 0.500
+        R11         R0402-DN    0        (16.000, 26.000)    180     bottom  RGB (40, 40, 40), height 0.350
+        R12         R0402-DN    10k      (35.000, 15.000)    180     bottom  RGB (40, 40, 40), height 0.350
+
+    Nets (pins as designator.pad):
+        +3V3: U3.2 C2.1 U1.1 U1.7 U1.20 U1.28 R1.1 R2.1 R5.1 U2.8 C3.1 C4.1 C5.1 C11.1 C12.1 C13.1
+            C14.1 R4.2 R11.1 C6.1
+        AIN1: U1.17 R8.2 C9.1
+        AIN2: U1.18 R7.2 C10.1 R12.1
+        AIN3: U1.19 R6.2 C8.1
+        GND: J1.4 J2.4 U3.1 Q1.2 C1.2 C2.2 C3.2 C4.2 C5.2 C6.2 C7.2 C8.2 C9.2 C10.2 C11.2 C12.2
+            C13.2 C14.2 C15.2 R10.2 U1.2 U1.8 U1.21 U1.29 U2.1 U2.2 U2.3 U2.4 R12.2
+        IN1: J2.3 R8.1
+        IN2: J2.2 R7.1
+        IN3: J2.1 R6.1
+        LED_A: D1.2 R4.1
+        LED_CTRL: U1.9 R3.1
+        LED_K: Q1.3 D1.1
+        NRST: U1.30 R5.2 C7.1
+        Q1_B: R3.2 Q1.1
+        SCL: J1.3 U1.4 U2.6 R2.2
+        SDA: J1.2 U1.3 U2.5 R1.2
+        VIN: J1.1 U3.3 C1.1 R9.1
+        VSENSE: U1.6 R9.2 R10.1 C15.1
+        WP: U2.7 R11.2
+
+    Copper: 162 track segments with 45-degree bends (VIN 0.400 wide, +3V3 and the GND
+    stubs 0.300, the signals 0.200) and 40 vias (diameter 0.600, hole 0.300, top to
+    bottom): signal vias, GND stitching vias, a GND via under the middle of U1 that U1's GND pins
+    and C11 to C14 are tracked to, and a GND via for R10 pad 2, which the pour cannot reach. A
+    solid GND pour on each copper layer, outline (0.6, 3), (3, 0.6), (47, 0.6), (49.4, 3),
+    (49.4, 27), (47, 29.4), (3, 29.4), (0.6, 27), "remove dead copper" off; Altium joins the GND
+    pads and vias with thermal-relief spokes.
+    Silkscreen: every designator in the stroke font, height 0.800, stroke 0.120, upright, top
+    parts on Top Overlay and bottom parts on Bottom Overlay (mirrored); lines 0.150 wide beside
+    each chip, outlines on the ICs, headers and LED, pin-1 dots; "DUTCHMAN NODE 1" on Top Overlay
+    at (14, 1.2), height 1.200, stroke 0.180; "v1 CC0" on Bottom Overlay, mirrored, at (44, 2.6),
+    height 0.800, stroke 0.120. Comments are hidden.
+    Altium embedded Arial on saving although no text uses a TrueType font; it was removed the
+    same way as for one-ttf-text (see above).
+
 Paths inside the files
 ----------------------
 Altium writes a few paths from the PC that saved a board into the file. After the last save, I
