@@ -1141,7 +1141,7 @@ mod tests {
         let m = &package.manifest;
         let colour = |name: &str| overlay_named(m, "one-plated-pad", name)["color"].clone();
         for side in ["top", "bottom"] {
-            assert_eq!(colour(&format!("Solder mask {side}")), "#1f5f3a");
+            assert_eq!(colour(&format!("Solder mask {side}")), "#247832");
             assert_eq!(colour(&format!("Copper {side} pads")), "#d4af37");
         }
         assert_eq!(part_named(m, "Board")["color"], "#c8b27a");
@@ -1166,16 +1166,17 @@ mod tests {
         let track = package_of("one-track");
         assert_eq!(
             overlay_named(&track.manifest, "one-track", "Copper top")["color"],
-            "#2b6e43"
+            "#328b3a"
         );
         let silk = package_of("one-overlay-line");
         assert_eq!(
             overlay_named(&silk.manifest, "one-overlay-line", "Silkscreen top")["color"],
-            "#f2f2f2"
+            "#fafafa"
         );
-        // Components carry no colour.
+        // An extruded body has the file's colour (Altium's default grey, 128, 128, 128, opaque).
         let resistor = package_of("one-resistor");
-        assert!(part_named(&resistor.manifest, "R1").get("color").is_none());
+        let r1 = part_named(&resistor.manifest, "R1");
+        assert_eq!((&r1["color"], &r1["opacity"]), (&json!("#808080"), &json!(1.0)));
     }
 
     #[cfg(feature = "altium")]
