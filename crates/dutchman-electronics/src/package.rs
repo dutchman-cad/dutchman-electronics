@@ -137,7 +137,8 @@ pub fn build(path: &Path, bytes: &[u8]) -> Result<Package, String> {
         }));
         files.push((PLATING_FILE.to_string(), text.into_bytes()));
     }
-    let (overlays, overlay_notes) = crate::overlay::overlays(&board, step.thickness, BOARD_PART);
+    let (overlays, overlay_notes) =
+        crate::overlay::overlays(&board, &outcome.fonts, step.thickness, BOARD_PART);
     notes.extend(overlay_notes);
     let manifest = json!({
         "schema": PARTS_SCHEMA,
@@ -1224,7 +1225,7 @@ mod tests {
         assert!(!track.copper.is_empty() && !line.graphics.is_empty());
         let mut blue_board = read("one-blue-mask-resistor");
         blue_board.copper = track.copper.clone();
-        let (overlays, _) = crate::overlay::overlays(&blue_board, 1.6, BOARD_PART);
+        let (overlays, _) = crate::overlay::overlays(&blue_board, &[], 1.6, BOARD_PART);
         let find = |list: &[Value], name: &str| {
             list.iter()
                 .find(|o| o["name"] == name)
@@ -1235,11 +1236,11 @@ mod tests {
         assert_eq!(find(&overlays, "Copper top")["color"], "#1862ec");
         let mut yellow_board = read("one-yellow-silkscreen-resistor");
         yellow_board.graphics = line.graphics.clone();
-        let (overlays, _) = crate::overlay::overlays(&yellow_board, 1.6, BOARD_PART);
+        let (overlays, _) = crate::overlay::overlays(&yellow_board, &[], 1.6, BOARD_PART);
         assert_eq!(find(&overlays, "Silkscreen top")["color"], "#ffff00");
         // Silkscreen colours stay at the file's other values on the blue board's side.
         blue_board.graphics = line.graphics;
-        let (overlays, _) = crate::overlay::overlays(&blue_board, 1.6, BOARD_PART);
+        let (overlays, _) = crate::overlay::overlays(&blue_board, &[], 1.6, BOARD_PART);
         assert_eq!(find(&overlays, "Silkscreen top")["color"], "#fafafa");
     }
 
@@ -1348,7 +1349,7 @@ mod tests {
             .board;
         board.appearance.top_finish = None;
         board.appearance.bottom_finish = finish("HASL");
-        let (overlays, _) = crate::overlay::overlays(&board, 1.6, BOARD_PART);
+        let (overlays, _) = crate::overlay::overlays(&board, &[], 1.6, BOARD_PART);
         let pads = overlays
             .iter()
             .find(|o| o["name"] == "Copper bottom pads")
@@ -1358,7 +1359,7 @@ mod tests {
         assert!(overlays.iter().all(|o| o["name"] != "Copper top pads"));
         // The same board with no finish keeps the gold default.
         board.appearance.bottom_finish = None;
-        let (overlays, _) = crate::overlay::overlays(&board, 1.6, BOARD_PART);
+        let (overlays, _) = crate::overlay::overlays(&board, &[], 1.6, BOARD_PART);
         let pads = overlays
             .iter()
             .find(|o| o["name"] == "Copper bottom pads")
