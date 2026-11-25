@@ -139,24 +139,36 @@ pub fn check(bytes: &[u8], options: &Options) -> Result<Report, ReadError> {
 /// The stream that holds embedded font files, packed.
 const FONTS_STREAM: &str = "/EmbeddedFonts6/Data";
 
+/// The most bytes of `name` table strings read from one font file before the file is checked
+/// byte for byte instead. A real font holds a few kilobytes of names; the records of a hostile
+/// one could all point at the same long span.
+const MAX_NAME_TABLE_TEXT: usize = 1 << 20;
+
 /// Checks each embedded font's names and its unpacked file, or the raw stream when it cannot be
-/// split into fonts or a font cannot be unpacked. A font is unpacked to at most the input limit.
+/// split into fonts or a font cannot be unpacked. All fonts together are unpacked to at most the
+/// input limit, one at a time: each is checked and dropped before the next is unpacked.
 fn check_fonts(stream: &str, data: &[u8], options: &Options, report: &mut Report) {
+    check_fonts_within(stream, data, options, MAX_INPUT_BYTES, report);
+}
+
+/// [`check_fonts`] with all fonts together allowed to unpack to at most `budget` bytes.
+fn check_fonts_within(
+    stream: &str,
+    data: &[u8],
+    options: &Options,
+    mut budget: usize,
+    report: &mut Report,
+) {
     let Ok(records) = crate::fonts::records(data) else {
         check_stream(stream, data, options, report);
         return;
     };
-    let mut files = Vec::with_capacity(records.len());
-    for r in &records {
-        match crate::fonts::unpack(r, MAX_INPUT_BYTES) {
-            Ok(file) => files.push(file),
-            Err(_) => {
-                check_stream(stream, data, options, report);
-                return;
-            }
-        }
-    }
-    for (i, (r, file)) in records.iter().zip(&files).enumerate() {
+    for (i, r) in records.iter().enumerate() {
+        let Ok(file) = crate::fonts::unpack(r, budget) else {
+            check_stream(stream, data, options, report);
+            return;
+        };
+        budget = budget.saturating_sub(file.len());
         check_stream(
             &format!("{stream} font {i} names"),
             r.names,
@@ -164,19 +176,20 @@ fn check_fonts(stream: &str, data: &[u8], options: &Options, report: &mut Report
             report,
         );
         let name = format!("{stream} font {i} unpacked");
-        match truetype_names(file) {
+        match truetype_names(&file) {
             Some(texts) => {
                 check_texts(&name, texts, options, report);
-                check_watched(&name, file, options, report);
+                check_watched(&name, &file, options, report);
             }
-            None => check_stream(&name, file, options, report),
+            None => check_stream(&name, &file, options, report),
         }
     }
 }
 
 /// The strings of a TrueType file's `name` table, as (offset in the file, text), or `None` when
-/// the file is not a TrueType file with a readable `name` table. Windows and Unicode strings are
-/// UTF-16 with the high byte first; Macintosh ones are read one byte per character.
+/// the file is not a TrueType file with a readable `name` table, or when its strings add up to
+/// more than [`MAX_NAME_TABLE_TEXT`] bytes. Windows and Unicode strings are UTF-16 with the high
+/// byte first; Macintosh ones are read one byte per character.
 fn truetype_names(file: &[u8]) -> Option<Vec<(usize, String)>> {
     let u16_at = |at: usize| -> Option<usize> {
         let b = file.get(at..at.checked_add(2)?)?;
@@ -198,12 +211,17 @@ fn truetype_names(file: &[u8]) -> Option<Vec<(usize, String)>> {
     let count = u16_at(name_at.checked_add(2)?)?;
     let strings_at = name_at.checked_add(u16_at(name_at.checked_add(4)?)?)?;
     let mut out = Vec::with_capacity(count);
+    let mut text_bytes = 0usize;
     for i in 0..count {
         let rec = name_at.checked_add(6)?.checked_add(i.checked_mul(12)?)?;
         let platform = u16_at(rec)?;
         let len = u16_at(rec.checked_add(8)?)?;
         let start = strings_at.checked_add(u16_at(rec.checked_add(10)?)?)?;
         let bytes = file.get(start..start.checked_add(len)?)?;
+        text_bytes = text_bytes.checked_add(len)?;
+        if text_bytes > MAX_NAME_TABLE_TEXT {
+            return None;
+        }
         let text = if platform == 1 {
             bytes.iter().map(|&b| char::from(b)).collect()
         } else {
@@ -581,20 +599,27 @@ mod tests {
 
     /// `/EmbeddedFonts6/Data` holding `file`, packed.
     fn fonts_stream(file: &[u8]) -> Vec<u8> {
+        fonts_stream_named("Test Sans", &[file])
+    }
+
+    /// `/EmbeddedFonts6/Data` holding each of `files`, packed, under the full name `full`.
+    fn fonts_stream_named(full: &str, files: &[&[u8]]) -> Vec<u8> {
         let mut out = Vec::new();
-        for s in ["Test Sans", "Test Sans", "Book"] {
-            let bytes: Vec<u8> = s
-                .encode_utf16()
-                .chain([0])
-                .flat_map(u16::to_le_bytes)
-                .collect();
-            out.extend(u32::try_from(bytes.len()).unwrap_or(0).to_le_bytes());
-            out.extend(bytes);
+        for file in files {
+            for s in [full, "Test Sans", "Book"] {
+                let bytes: Vec<u8> = s
+                    .encode_utf16()
+                    .chain([0])
+                    .flat_map(u16::to_le_bytes)
+                    .collect();
+                out.extend(u32::try_from(bytes.len()).unwrap_or(0).to_le_bytes());
+                out.extend(bytes);
+            }
+            let packed = miniz_oxide::deflate::compress_to_vec_zlib(file, 6);
+            out.extend([0, 0, 1]);
+            out.extend(u32::try_from(packed.len()).unwrap_or(0).to_le_bytes());
+            out.extend(packed);
         }
-        let packed = miniz_oxide::deflate::compress_to_vec_zlib(file, 6);
-        out.extend([0, 0, 1]);
-        out.extend(u32::try_from(packed.len()).unwrap_or(0).to_le_bytes());
-        out.extend(packed);
         out
     }
 
@@ -642,5 +667,68 @@ mod tests {
             &mut raw,
         );
         assert!(raw.findings.iter().any(|f| f.stream == FONTS_STREAM));
+    }
+
+    #[test]
+    fn many_fonts_share_one_unpacking_budget() {
+        let big = vec![0u8; 1_000];
+        let data = fonts_stream_named(r"C:\Users\someone", &[&big, &big, &big]);
+        let streams = |budget: usize| {
+            let mut report = Report::default();
+            check_fonts_within(
+                FONTS_STREAM,
+                &data,
+                &Options::default(),
+                budget,
+                &mut report,
+            );
+            let mut s: Vec<String> = report.findings.into_iter().map(|f| f.stream).collect();
+            s.dedup();
+            s
+        };
+        // Room for all three: each font's names are checked on their own.
+        assert_eq!(
+            streams(3_000),
+            [0, 1, 2].map(|i| format!("{FONTS_STREAM} font {i} names"))
+        );
+        // Room for two: the third does not fit in what is left, so the whole stream is checked
+        // byte for byte as well, which still finds the path in the names.
+        assert_eq!(
+            streams(2_500).last().map(String::as_str),
+            Some(FONTS_STREAM)
+        );
+    }
+
+    #[test]
+    fn a_name_table_whose_records_all_point_at_one_long_span_is_checked_byte_for_byte() {
+        // 65,535 records, each pointing at the same 60,000 bytes (the records themselves, as
+        // the string storage may start anywhere): about 3.9 GB of text if read.
+        let count: u16 = u16::MAX;
+        let span: u16 = 60_000;
+        let mut f = vec![0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0];
+        f.extend(b"name");
+        f.extend([0; 4]);
+        f.extend(28u32.to_be_bytes());
+        f.extend([0; 4]);
+        f.extend([0, 0]);
+        f.extend(count.to_be_bytes());
+        f.extend(6u16.to_be_bytes());
+        for _ in 0..count {
+            f.extend([0, 1, 0, 0, 0, 0, 0, 0]);
+            f.extend(span.to_be_bytes());
+            f.extend([0, 0]);
+        }
+        f.extend(b"\0C:\\Users\\x\0");
+        assert_eq!(truetype_names(&f), None);
+        let report = fonts_report(&f, &[]);
+        let found: Vec<_> = report
+            .findings
+            .iter()
+            .map(|r| (r.stream.as_str(), &r.kind))
+            .collect();
+        assert_eq!(
+            found,
+            [("/EmbeddedFonts6/Data font 0 unpacked", &Kind::Path)]
+        );
     }
 }

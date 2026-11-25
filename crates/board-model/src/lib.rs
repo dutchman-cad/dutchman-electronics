@@ -382,7 +382,9 @@ pub struct EmbeddedFont {
     pub style: String,
     pub bold: bool,
     pub italic: bool,
-    /// The TrueType file itself. It keeps its own licence, which the file names.
+    /// The TrueType file itself. It keeps its own licence, which the file names. The reader
+    /// hands it over as the board stores it, without checking that it is a TrueType file, so
+    /// a program that draws with it has to treat it as untrusted input.
     pub data: Vec<u8>,
 }
 

@@ -3,8 +3,8 @@
 //! Worked out from our own CC0 test boards `one-dejavu-text`, `one-dejavu-bold-text` and
 //! `one-dejavu-italic-text` (one text each in DejaVu Sans Mono: regular, bold and italic), compared
 //! with `empty-outline` and with the public DejaVu Sans Mono 2.37 files, which they hold byte for
-//! byte (see their README.txt and LEGAL.md). `/EmbeddedFonts6/Header` is the number of fonts (1
-//! on each). The data is one record per font, back to back:
+//! byte (see their README.txt and LEGAL.md). `/EmbeddedFonts6/Header` is the number of fonts as a
+//! `u32` (1 on each, 0 on boards without a font). The data is one record per font, back to back:
 //!
 //! - three strings, each a `u32` byte length and that many bytes of UTF-16 ending in a 0: the
 //!   face's full name ("DejaVu Sans Mono Bold"), its family ("DejaVu Sans Mono", which is how a
@@ -12,6 +12,9 @@
 //! - three bytes: bold (1 only on the bold board), italic (1 only on the italic board), and a
 //!   byte that is 1 on all three boards, whose meaning is not known,
 //! - a `u32` length and that many bytes: the font file, zlib-compressed.
+//!
+//! The reader hands the unpacked bytes over as they are: it does not check that they are a
+//! TrueType file. Whoever draws with them has to treat them as untrusted input.
 //!
 //! A text marks its font bold and italic in two bytes of its own record (see `texts.rs`); a text
 //! is drawn with the font whose family and both marks match.
@@ -83,13 +86,25 @@ pub(crate) fn records(data: &[u8]) -> Result<Vec<Record<'_>>, String> {
     Ok(out)
 }
 
+/// Why a font file could not be unpacked, and how many bytes were unpacked before that (they
+/// count against a shared budget like the bytes of a font that could be unpacked).
+#[derive(Debug, PartialEq)]
+pub(crate) struct Unpacked {
+    pub why: String,
+    pub spent: usize,
+}
+
 /// Unpacks one font file to at most `limit` bytes.
-pub(crate) fn unpack(record: &Record<'_>, limit: usize) -> Result<Vec<u8>, String> {
+pub(crate) fn unpack(record: &Record<'_>, limit: usize) -> Result<Vec<u8>, Unpacked> {
     miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(record.packed, limit).map_err(|e| {
-        if e.status == miniz_oxide::inflate::TINFLStatus::HasMoreOutput {
-            format!("all fonts together unpack to more than {limit} bytes")
+        let why = if e.status == miniz_oxide::inflate::TINFLStatus::HasMoreOutput {
+            format!("it unpacks to more than {limit} bytes")
         } else {
             format!("not zlib data ({:?})", e.status)
+        };
+        Unpacked {
+            why,
+            spent: e.output.len(),
         }
     })
 }
@@ -98,22 +113,27 @@ pub(crate) fn unpack(record: &Record<'_>, limit: usize) -> Result<Vec<u8>, Strin
 /// that the board does not embed, or that cannot be unpacked, gets a note; its texts keep their
 /// position, height and rotation.
 pub(crate) fn read(
+    header: Option<&[u8]>,
     data: Option<&[u8]>,
     texts: &[Text],
     notes: &mut Vec<Note>,
 ) -> Vec<EmbeddedFont> {
-    read_within(data, texts, MAX_INPUT_BYTES, notes)
+    read_within(header, data, texts, MAX_INPUT_BYTES, notes)
 }
 
-/// [`read`] with all fonts together allowed to unpack to at most `budget` bytes.
+/// [`read`] with all fonts together allowed to unpack to at most `limit` bytes.
 fn read_within(
+    header: Option<&[u8]>,
     data: Option<&[u8]>,
     texts: &[Text],
-    mut budget: usize,
+    limit: usize,
     notes: &mut Vec<Note>,
 ) -> Vec<EmbeddedFont> {
     let records = match data.filter(|d| !d.is_empty()).map(records) {
-        Some(Ok(records)) => records,
+        Some(Ok(records)) => {
+            check_count(header, records.len(), notes);
+            records
+        }
         Some(Err(why)) => {
             notes.push(Note {
                 severity: Severity::Warning,
@@ -123,25 +143,27 @@ fn read_within(
             });
             Vec::new()
         }
-        None => Vec::new(),
+        None => {
+            check_count(header, 0, notes);
+            Vec::new()
+        }
     };
-    let mut used: BTreeMap<(String, bool, bool), usize> = BTreeMap::new();
+    // Texts that name a font in different case use the same font (`EmbeddedFont::serves`), so
+    // they are counted together, under the spelling met first.
+    let mut used: BTreeMap<(String, bool, bool), (String, usize)> = BTreeMap::new();
     for t in texts {
         if let TextFont::TrueType { name, bold, italic } = &t.font {
-            let n = used.entry((name.clone(), *bold, *italic)).or_default();
+            let (_, n) = used
+                .entry((name.to_ascii_lowercase(), *bold, *italic))
+                .or_insert_with(|| (name.clone(), 0));
             *n = n.saturating_add(1);
         }
     }
-    let limit = budget;
+    let mut budget = limit;
     let mut fonts: Vec<EmbeddedFont> = Vec::new();
     let mut missing = Vec::new();
     let mut taken = vec![false; records.len()];
-    for ((name, bold, italic), n) in &used {
-        let wanted = TextFont::TrueType {
-            name: name.clone(),
-            bold: *bold,
-            italic: *italic,
-        };
+    for ((_, bold, italic), (name, n)) in &used {
         let face = describe(name, *bold, *italic);
         let found = records.iter().enumerate().find(|(_, r)| {
             r.family.eq_ignore_ascii_case(name) && r.bold == *bold && r.italic == *italic
@@ -156,9 +178,6 @@ fn read_within(
         if let Some(flag) = taken.get_mut(index) {
             *flag = true;
         }
-        if fonts.iter().any(|f| f.serves(&wanted)) {
-            continue;
-        }
         match unpack(record, budget) {
             Ok(file) => {
                 budget = budget.saturating_sub(file.len());
@@ -171,13 +190,18 @@ fn read_within(
                     data: file,
                 });
             }
-            Err(why) => notes.push(Note {
-                severity: Severity::Warning,
-                message: format!(
-                    "the embedded font {face} could not be unpacked ({why}, at most {limit} \
-                     bytes); {n} text(s) use it, and their position, height and rotation are read"
-                ),
-            }),
+            Err(e) => {
+                notes.push(Note {
+                    severity: Severity::Warning,
+                    message: format!(
+                        "the embedded font {face} could not be unpacked ({}; {budget} of the \
+                         {limit} bytes allowed for all fonts were left for it); {n} text(s) use \
+                         it, and their position, height and rotation are read",
+                        e.why
+                    ),
+                });
+                budget = budget.saturating_sub(e.spent);
+            }
         }
     }
     for message in missing.iter().take(MAX_FONT_NOTES) {
@@ -201,6 +225,33 @@ fn read_within(
         });
     }
     fonts
+}
+
+/// Notes a `/EmbeddedFonts6/Header` whose font count differs from the fonts in the data.
+fn check_count(header: Option<&[u8]>, found: usize, notes: &mut Vec<Note>) {
+    let Some(header) = header else {
+        return;
+    };
+    let count = <[u8; 4]>::try_from(header)
+        .ok()
+        .map(u32::from_le_bytes)
+        .and_then(|c| usize::try_from(c).ok());
+    let message = match count {
+        Some(c) if c == found => return,
+        Some(c) => format!(
+            "/EmbeddedFonts6/Header says the board embeds {c} font(s), but \
+             /EmbeddedFonts6/Data holds {found}; the fonts in the data are used"
+        ),
+        None => format!(
+            "/EmbeddedFonts6/Header is {} bytes, not a 4-byte font count; the {found} font(s) \
+             in /EmbeddedFonts6/Data are used",
+            header.len()
+        ),
+    };
+    notes.push(Note {
+        severity: Severity::Warning,
+        message,
+    });
 }
 
 /// "\"DejaVu Sans Mono\"", with " bold", " italic" or " bold italic" after it.
@@ -338,7 +389,7 @@ mod tests {
             text(true, false, "Test Sans"),
         ];
         let mut notes = Vec::new();
-        let fonts = read(Some(&data), &texts, &mut notes);
+        let fonts = read(None, Some(&data), &texts, &mut notes);
         let got: Vec<_> = fonts
             .iter()
             .map(|f| (f.style.as_str(), f.data.as_slice()))
@@ -356,7 +407,7 @@ mod tests {
         let data = two_fonts();
         let texts = [text(false, true, "Test Sans"), text(false, false, "Arial")];
         let mut notes = Vec::new();
-        let fonts = read(Some(&data), &texts, &mut notes);
+        let fonts = read(None, Some(&data), &texts, &mut notes);
         assert!(fonts.is_empty());
         let messages: Vec<_> = notes.iter().map(|n| n.message.as_str()).collect();
         assert_eq!(
@@ -371,15 +422,85 @@ mod tests {
         );
     }
 
+    fn warnings(notes: &[Note]) -> Vec<&str> {
+        notes
+            .iter()
+            .filter(|n| n.severity == Severity::Warning)
+            .map(|n| n.message.as_str())
+            .collect()
+    }
+
     #[test]
-    fn fonts_that_unpack_too_big_are_left_out_with_a_note() {
+    fn a_font_that_unpacks_too_big_gets_one_note_for_all_its_spellings() {
+        let data = two_fonts();
+        // "Test Sans" and "test sans" are the same font, so it is tried and noted once.
+        let texts = [
+            text(false, false, "Test Sans"),
+            text(false, false, "test sans"),
+        ];
+        let mut notes = Vec::new();
+        let fonts = read_within(None, Some(&data), &texts, 5, &mut notes);
+        assert!(fonts.is_empty());
+        assert_eq!(
+            warnings(&notes),
+            [
+                "the embedded font \"Test Sans\" could not be unpacked (it unpacks to more than 5 \
+                 bytes; 5 of the 5 bytes allowed for all fonts were left for it); 2 text(s) use \
+                 it, and their position, height and rotation are read"
+            ]
+        );
+    }
+
+    #[test]
+    fn the_fonts_share_one_budget_and_the_note_names_what_was_left() {
+        let data = two_fonts();
+        let texts = [
+            text(false, false, "Test Sans"),
+            text(true, false, "Test Sans"),
+        ];
+        let mut notes = Vec::new();
+        // "regular font" takes 12 of the 15 bytes, so "bold font" (9) does not fit in the 3 left.
+        let fonts = read_within(None, Some(&data), &texts, 15, &mut notes);
+        let got: Vec<_> = fonts.iter().map(|f| f.style.as_str()).collect();
+        assert_eq!(got, ["Book"]);
+        let w = warnings(&notes);
+        assert_eq!(w.len(), 1, "{w:?}");
+        assert!(
+            w.iter().all(|m| m.starts_with(
+                "the embedded font \"Test Sans\" bold could not be unpacked (it unpacks to more \
+                 than 3 bytes; 3 of the 15 bytes"
+            )),
+            "{w:?}"
+        );
+    }
+
+    #[test]
+    fn a_header_count_that_differs_from_the_data_gets_a_warning() {
         let data = two_fonts();
         let texts = [text(false, false, "Test Sans")];
-        let mut notes = Vec::new();
-        let fonts = read_within(Some(&data), &texts, 5, &mut notes);
-        assert!(fonts.is_empty());
-        assert!(notes.iter().any(|n| n.severity == Severity::Warning
-            && n.message.contains("unpack to more than 5 bytes")));
+        let count = |header: Option<&[u8]>, data: Option<&[u8]>| {
+            let mut notes = Vec::new();
+            read(header, data, &texts, &mut notes);
+            warnings(&notes).join("; ")
+        };
+        assert_eq!(count(Some(&2u32.to_le_bytes()), Some(&data)), "");
+        assert_eq!(count(Some(&0u32.to_le_bytes()), None), "");
+        assert_eq!(count(None, Some(&data)), "");
+        assert_eq!(
+            count(Some(&3u32.to_le_bytes()), Some(&data)),
+            "/EmbeddedFonts6/Header says the board embeds 3 font(s), but /EmbeddedFonts6/Data \
+             holds 2; the fonts in the data are used"
+        );
+        assert_eq!(
+            count(Some(&1u32.to_le_bytes()), None),
+            "/EmbeddedFonts6/Header says the board embeds 1 font(s), but /EmbeddedFonts6/Data \
+             holds 0; the fonts in the data are used"
+        );
+        assert_eq!(
+            count(Some(&[2, 0]), Some(&data)),
+            "/EmbeddedFonts6/Header is 2 bytes, not a 4-byte font count; the 2 font(s) in \
+             /EmbeddedFonts6/Data are used"
+        );
     }
 
     #[test]
@@ -390,6 +511,7 @@ mod tests {
             assert!(records(damaged).is_err(), "cut at {cut}");
             let mut notes = Vec::new();
             let fonts = read(
+                None,
                 Some(damaged),
                 &[text(false, false, "Test Sans")],
                 &mut notes,

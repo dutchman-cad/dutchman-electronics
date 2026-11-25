@@ -251,8 +251,14 @@ impl InputFormat for Altium {
                 .map_err(ReadError::Invalid)?,
             None => Vec::new(),
         };
+        let fonts_header = read_stream(&mut container, "/EmbeddedFonts6/Header")?;
         let fonts6 = read_stream(&mut container, "/EmbeddedFonts6/Data")?;
-        let fonts = fonts::read(fonts6.as_deref(), &texts, &mut notes);
+        let fonts = fonts::read(
+            fonts_header.as_deref(),
+            fonts6.as_deref(),
+            &texts,
+            &mut notes,
+        );
         for (path, what) in NOT_READ_YET {
             if let Some(s) = streams.iter().find(|s| s.path == *path && s.len > 0) {
                 notes.push(Note {
