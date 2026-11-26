@@ -381,6 +381,39 @@ fn read_opens_a_projects_board_with_its_parameters() -> Result<(), Box<dyn std::
 
 #[cfg(feature = "altium")]
 #[test]
+fn a_project_with_one_board_needs_no_board_option() -> Result<(), Box<dyn std::error::Error>> {
+    // all-features.PrjPcb links only all-features.PcbDoc; its two parameter texts and U1's
+    // .Comment get their values.
+    let out = std::env::temp_dir().join(format!("de-read-prj1-{}", std::process::id()));
+    let result = run(&[
+        "read",
+        &test_board("all-features.PrjPcb").to_string_lossy(),
+        "--out",
+        &out.to_string_lossy(),
+        "--json",
+    ]);
+    std::fs::remove_dir_all(&out).ok();
+    let (ok, v) = result?;
+    assert!(ok, "{v}");
+    assert_eq!(v["name"], "all-features");
+    let notes: Vec<&str> = v["notes"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|n| n["message"].as_str())
+        .collect();
+    assert!(
+        notes.contains(
+            &"3 text(s) refer to a project parameter or to .Designator, .Comment or .Layer_Name \
+              and show its value, as Altium does"
+        ),
+        "{notes:?}"
+    );
+    Ok(())
+}
+
+#[cfg(feature = "altium")]
+#[test]
 fn a_project_with_two_boards_asks_which_one() -> Result<(), Box<dyn std::error::Error>> {
     let out = std::env::temp_dir().join(format!("de-read-prj2-{}", std::process::id()));
     let (ok, v) = run(&[

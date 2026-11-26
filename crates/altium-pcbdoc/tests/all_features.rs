@@ -75,7 +75,6 @@ fn only_the_known_gaps_are_warned_about() -> Result<(), Box<dyn std::error::Erro
         "1 region(s) of KIND 0 on Mechanical 13 not read yet",
         "1 text(s) on Mechanical 2 (not a copper or overlay layer) not read yet",
         "2 copper item(s) on inner layers are left out",
-        "37 text(s) are drawn in the Hershey Roman Simplex stroke font",
     ];
     let unexpected: Vec<&str> = out
         .notes
@@ -318,5 +317,44 @@ fn j1_is_the_through_hole_header_step_model() -> Result<(), Box<dyn std::error::
     let original = header.models.first().map(|m| m.step.clone());
     assert!(original.is_some());
     assert_eq!(step(&out, id), original, "not the file of one-step-header");
+    Ok(())
+}
+
+/// all-features.PrjPcb (beside the board): one board, PCBNumber DN-0001 and BoardRevision A.
+/// With them, `.PCBNumber` on Top Overlay shows DN-0001 and `Rev .BoardRevision`, mirrored on
+/// Bottom Overlay, shows Rev A, as Altium shows them (README.txt).
+#[test]
+fn the_project_fills_in_its_parameters() -> Result<(), Box<dyn std::error::Error>> {
+    use altium_pcbdoc::{project, special_strings::resolve_texts};
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/boards");
+    let p = project::read(&std::fs::read(dir.join("all-features.PrjPcb"))?)?;
+    assert_eq!(p.boards, ["all-features.PcbDoc"]);
+    assert_eq!(
+        p.parameters,
+        [
+            ("BoardRevision".to_string(), "A".to_string()),
+            ("PCBNumber".to_string(), "DN-0001".to_string())
+        ]
+    );
+    let mut out = read()?;
+    let stored = |out: &ReadOutcome, s: &str| out.board.texts.iter().any(|t| t.content == s);
+    assert!(stored(&out, ".PCBNumber") && stored(&out, "Rev .BoardRevision"));
+    resolve_texts(&mut out.board, &p.parameters);
+    let number = out
+        .board
+        .texts
+        .iter()
+        .find(|t| t.content == "DN-0001")
+        .ok_or("no DN-0001")?;
+    assert!(near(number.at.x, 6.2) && near(number.at.y, 27.6) && near(number.height, 0.7));
+    assert!(!number.mirrored);
+    let rev = out
+        .board
+        .texts
+        .iter()
+        .find(|t| t.content == "Rev A")
+        .ok_or("no Rev A")?;
+    assert!(near(rev.at.x, 44.0) && near(rev.at.y, 3.75) && near(rev.height, 0.6));
+    assert!(rev.mirrored);
     Ok(())
 }

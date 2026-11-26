@@ -890,6 +890,21 @@ scripts, every scripted change read back and logged:
    standoff -3.000 and overall height 8.500, and gave the model MODELID
    {EAA8DA22-03CC-4142-A160-71B7E4E5E84E}; the file is stored unchanged. J2 keeps its extruded
    body.
+10. A project, all-features.PrjPcb, beside the board. By hand: File > New > Project, Local
+   Projects, PCB, <Empty>, name all-features, with two text parameters:
+        PCBNumber      DN-0001
+        BoardRevision  A
+   then Add Existing to Project with a file copy of the board, and the project saved. Altium
+   put the project and the board in a folder of their own; both files were moved here, and the
+   project links the board by its plain name (DocumentPath=all-features.PcbDoc). Altium wrote
+   the name of the PC's default printer into the project's ten TargetPrinter= lines; each was
+   emptied, as for param-project. Then, by my own script with the project open, two texts
+   in the stroke font, rotation 0, read back with the string Altium shows:
+        Stored text          Layer           At            Height  Stroke  Mir.  Altium shows
+        .PCBNumber           Top Overlay     6.200, 27.600 0.700   0.100   no    DN-0001
+        Rev .BoardRevision   Bottom Overlay  44.000, 3.750 0.600   0.100   yes   Rev A
+   Their boxes, around the shown string: x 6.100 to 10.732, y 27.500 to 28.400, and x 41.101
+   to 44.100, y 3.650 to 4.450. Saving put Arial into the board again; it was removed as before.
 A first try put the TrueType text and the free copper over "DUTCHMAN NODE 1"; a second script
 removed them and placed them as above before the board was first saved with the cutout.
 
