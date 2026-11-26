@@ -745,6 +745,26 @@ mechanical-pair-bottom-resistor.PcbDoc  (from one-resistor)
         the rectangle (24.100, 14.500) to (25.900, 15.500) as before (it is symmetric), and the
         pin-1 mark now from (25.400, 15.500) to (25.900, 15.000)
 
+Scripted board: pad shapes (pad-shapes)
+---------------------------------------
+Made on 2026-11-26 from a file copy of empty-outline.PcbDoc by my own script; every pad was read
+back and logged, and the board saved. Free pads (no net, no component), all in simple mode (one
+size and shape for every layer). Altium's script names the shapes eOctagonal (3) and
+eRoundedRectangular (9); the corner of a rounded rectangle is set as a percentage. Altium's
+Gerber file of the top copper (made only to check the numbers below, not kept) draws each corner
+radius as the percentage of half the shorter side, and each octagon as the pad's rectangle with
+its corners cut off at 45 degrees by a quarter of the shorter side.
+
+pad-shapes.PcbDoc  (from empty-outline)
+    Pad  Centre              Layer        Size           Rotation  Shape              Corner
+    1    (10.000, 15.000)    Top Layer    2.000 x 1.000  0         rounded rectangle  50%: radius 0.250
+    2    (20.000, 15.000)    Top Layer    2.000 x 1.000  0         rounded rectangle  25%: radius 0.125
+    3    (30.000, 15.000)    Top Layer    2.000 x 1.000  30        rounded rectangle  25%: radius 0.125
+    4    (40.000, 15.000)    Top Layer    2.000 x 1.000  0         octagon            corners cut 0.250
+    5    (40.000, 24.000)    Top Layer    1.500 x 1.500  0         octagon            corners cut 0.375
+    6    (20.000, 24.000)    Multi-Layer  1.600 x 1.600  0         rounded rectangle  30%: radius 0.240
+    Pad 6 has a round plated hole of 0.800; the others have none.
+
 Paths inside the files
 ----------------------
 Altium writes a few paths from the PC that saved a board into the file. After the last save, I
