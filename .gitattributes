@@ -1,0 +1,11 @@
+# Test boards and models are checked byte for byte: keep them exactly as their program wrote
+# them on every platform (no CRLF conversion on Windows checkouts).
+*.kicad_pcb  -text
+*.kicad_pro  -text
+*.PcbDoc     binary
+*.PrjPcb     -text
+*.step       -text
+*.stp        -text
+*.STEP       -text
+*.wrl        -text
+*.sexp       -text
