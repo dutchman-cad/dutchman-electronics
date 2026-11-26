@@ -50,6 +50,11 @@ pub const PLATING_FILE: &str = "plating.step";
 /// How thick the copper lining a plated hole is, in mm (a common 25 micrometers). Board files do
 /// not give it, so it is assumed and a note says so.
 pub const PLATING_THICKNESS: f64 = 0.025;
+/// The folder (`group`) a loader puts the components of each side in, and the overlays in. The
+/// `Board` and `Plating` parts have none and stay at the top level.
+pub const GROUP_TOP: &str = "Components top";
+pub const GROUP_BOTTOM: &str = "Components bottom";
+pub const GROUP_LAYERS: &str = "Layers";
 
 /// A package before it is written: the manifest and its files.
 #[derive(Clone, Debug, PartialEq)]
@@ -693,6 +698,10 @@ fn components(list: &[Placement], embedded: &[EmbeddedModel], thickness: f64) ->
             "name": name,
             "model": id,
             "transform": compose(&part_frame(p, thickness), &on_part),
+            "group": match p.side {
+                Side::Top => GROUP_TOP,
+                Side::Bottom => GROUP_BOTTOM,
+            },
             "notes": part_notes,
         });
         // An extruded body the file colors; an embedded STEP model keeps its own colors.
@@ -1280,8 +1289,24 @@ mod tests {
             let t = point_heights(&String::from_utf8(step.clone()).unwrap())
                 .into_iter()
                 .fold(f64::MIN, f64::max);
+            for p in package.manifest["parts"].as_array().unwrap() {
+                // The board and plating stay at the top level; each component is in its side's folder.
+                let want = match p["name"].as_str().unwrap() {
+                    BOARD_PART | PLATING_PART => None,
+                    _ => Some([GROUP_TOP, GROUP_BOTTOM]),
+                };
+                match want {
+                    None => assert!(p.get("group").is_none(), "{}: {p}", path.display()),
+                    Some(groups) => assert!(
+                        groups.iter().any(|g| p["group"] == *g),
+                        "{}: {p}",
+                        path.display()
+                    ),
+                }
+            }
             for o in package.manifest["overlays"].as_array().unwrap() {
                 assert_eq!(o["part"], "Board");
+                assert_eq!(o["group"], GROUP_LAYERS);
                 assert!(overlay_area(o) > 0.0, "{}: {o}", path.display());
                 let z = o["z"].as_f64().unwrap();
                 // Copper and mask start at the face, silkscreen on top of the copper, and the
@@ -1966,6 +1991,27 @@ mod tests {
             .map(|p| p["name"].as_str().unwrap())
             .collect();
         assert_eq!(names, vec!["Plating (2)", "Board (2)"]);
+    }
+
+    #[test]
+    fn components_are_grouped_by_side() {
+        let placed = components(
+            &[
+                part("R1", 1.0, 1.0, 0.0, Side::Top),
+                part("R2", 2.0, 1.0, 0.0, Side::Bottom),
+            ],
+            &[],
+            1.6,
+        );
+        let groups: Vec<(&str, &str)> = placed
+            .parts
+            .iter()
+            .map(|p| (p["name"].as_str().unwrap(), p["group"].as_str().unwrap()))
+            .collect();
+        assert_eq!(
+            groups,
+            vec![("R1", "Components top"), ("R2", "Components bottom")]
+        );
     }
 
     fn cut(x: f64, radius: f64, plated: bool) -> board_step::CutHole {
