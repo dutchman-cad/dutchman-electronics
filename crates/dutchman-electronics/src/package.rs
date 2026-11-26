@@ -1265,6 +1265,57 @@ mod tests {
             .sum()
     }
 
+    /// all-features after thinning (#126): every overlay is still a valid multipolygon (rings that
+    /// do not cross, holes inside, areas that do not touch), and the silkscreen, which had 15116
+    /// points before thinning, keeps fewer than 8000.
+    #[cfg(feature = "altium")]
+    #[test]
+    fn thinned_overlays_stay_valid_and_the_silkscreen_loses_most_points() {
+        use geo::Validation;
+        let package = package_of("all-features");
+        let ring = |r: &Value| {
+            geo::LineString::from(
+                r.as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|q| (q[0].as_f64().unwrap(), q[1].as_f64().unwrap()))
+                    .collect::<Vec<_>>(),
+            )
+        };
+        let mut silk_points = 0;
+        for o in package.manifest["overlays"].as_array().unwrap() {
+            let polygons: Vec<geo::Polygon> = o["areas"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|a| {
+                    geo::Polygon::new(
+                        ring(&a["outer"]),
+                        a["holes"].as_array().unwrap().iter().map(ring).collect(),
+                    )
+                })
+                .collect();
+            let shape = geo::MultiPolygon::new(polygons);
+            assert!(
+                shape.is_valid(),
+                "{}: {:?}",
+                o["name"],
+                shape.validation_errors()
+            );
+            if o["kind"] == "silkscreen" {
+                silk_points += shape
+                    .iter()
+                    .map(|p| {
+                        p.interiors().iter().map(|h| h.0.len() - 1).sum::<usize>()
+                            + p.exterior().0.len()
+                            - 1
+                    })
+                    .sum::<usize>();
+            }
+        }
+        assert!(silk_points > 0 && silk_points < 8000, "{silk_points}");
+    }
+
     #[cfg(feature = "altium")]
     #[test]
     fn every_test_board_gives_a_package_with_sound_overlays() {
@@ -2127,7 +2178,8 @@ mod tests {
         // README.txt, third batch: stroke texts 2.000 high with a 0.200 pen. Capitals stand on
         // the baseline at the position, so with the pen's 0.1 radius they reach from y - 0.1 up
         // to y + 2.1.
-        let near = |a: f64, b: f64| (a - b).abs() < 1e-3;
+        // Within 1e-3, plus the 0.005 by which thinning (overlay/thin.rs) may pull an outline in.
+        let near = |a: f64, b: f64| (a - b).abs() < 1e-3 + 0.005;
         let silk = |board: &str, name: &str| {
             let package = package_of(board);
             let m = &package.manifest;
