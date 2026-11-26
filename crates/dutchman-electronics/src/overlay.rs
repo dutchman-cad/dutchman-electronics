@@ -1316,6 +1316,7 @@ fn overlays_within(
                 let mut o = json!({
                     "name": b.name,
                     "part": board_part,
+                    "group": crate::package::GROUP_LAYERS,
                     "kind": b.kind,
                     "side": b.side,
                     "z": (b.z * 1e6).round() / 1e6,
