@@ -1,4 +1,6 @@
-use board_model::{Board, CopperItem, Graphic, Layer, LayerKind, PadShape, Point, Side};
+use board_model::{
+    Board, Contour, CopperItem, Graphic, Layer, LayerKind, PadShape, Point, Segment, Side,
+};
 use serde_json::Value;
 
 use super::*;
@@ -168,7 +170,7 @@ fn the_mask_is_the_outline_less_cutouts_pads_copper_and_drills() {
     assert_eq!(top["kind"], "mask");
     // Mask z = T + 0: 1.6.
     assert_eq!(top["z"], 1.6);
-    assert_eq!(top["opacity"], 0.85);
+    assert_eq!(top["opacity"], 1.0);
     assert_eq!(top["color"], "#1f5f3a");
     // Bottom mask z = 0 - 0: 0.
     assert_eq!(bottom["z"], 0.0);
@@ -1180,7 +1182,7 @@ fn each_overlay_has_its_z_thickness_and_colour() {
         assert_eq!(o["thickness"], thickness, "{name}");
         assert_eq!(o["color"], color, "{name}");
     }
-    assert_eq!(named(&list, "Solder mask top")["opacity"], 0.85);
+    assert_eq!(named(&list, "Solder mask top")["opacity"], 1.0);
 }
 
 #[test]
@@ -1491,4 +1493,212 @@ fn a_character_the_font_lacks_is_noted() {
             .any(|m| m.starts_with("1 character(s) the text's font has no glyph for")),
         "{notes:?}"
     );
+}
+
+/// A 20 x 10 rectangle with corners rounded to radius 3, counter-clockwise, as one contour.
+fn rounded_rect() -> Contour {
+    let line = |a: (f64, f64), b: (f64, f64)| Segment::Line {
+        from: p(a.0, a.1),
+        to: p(b.0, b.1),
+    };
+    let arc = |c: (f64, f64), s: f64, e: f64| Segment::Arc {
+        center: p(c.0, c.1),
+        radius: 3.0,
+        start_deg: s,
+        end_deg: e,
+        clockwise: false,
+    };
+    Contour {
+        segments: vec![
+            line((-7.0, -5.0), (7.0, -5.0)),
+            arc((7.0, -2.0), 270.0, 0.0),
+            line((10.0, -2.0), (10.0, 2.0)),
+            arc((7.0, 2.0), 0.0, 90.0),
+            line((7.0, 5.0), (-7.0, 5.0)),
+            arc((-7.0, 2.0), 90.0, 180.0),
+            line((-10.0, 2.0), (-10.0, -2.0)),
+            arc((-7.0, -2.0), 180.0, 270.0),
+        ],
+    }
+}
+
+/// The same outline walked the other way round, with clockwise arcs.
+fn reversed(c: &Contour) -> Contour {
+    Contour {
+        segments: c
+            .segments
+            .iter()
+            .rev()
+            .map(|s| match *s {
+                Segment::Line { from, to } => Segment::Line { from: to, to: from },
+                Segment::Arc {
+                    center,
+                    radius,
+                    start_deg,
+                    end_deg,
+                    clockwise,
+                } => Segment::Arc {
+                    center,
+                    radius,
+                    start_deg: end_deg,
+                    end_deg: start_deg,
+                    clockwise: !clockwise,
+                },
+            })
+            .collect(),
+    }
+}
+
+/// Every point of every arc of `c`, taken `nudge` mm towards the arc's centre, 400 to an arc.
+fn arc_samples(c: &Contour, nudge: f64) -> Vec<geo::Point> {
+    let mut out = Vec::new();
+    for s in &c.segments {
+        if let Segment::Arc {
+            center,
+            radius,
+            start_deg,
+            ..
+        } = *s
+        {
+            let sweep = s.sweep_deg().unwrap();
+            for k in 0..=400 {
+                let a = (start_deg + sweep * f64::from(k) / 400.0).to_radians();
+                let r = radius - nudge;
+                out.push(geo::Point::new(
+                    center.x + r * a.cos(),
+                    center.y + r * a.sin(),
+                ));
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn the_covering_outline_holds_every_point_of_the_true_corner_arcs() {
+    use geo::Intersects;
+    // The corner arcs bulge out of the region: their chords (inscribed) fall short by up to
+    // CHORD, so the covering polygon must go outside them, and by at most the bound derived at
+    // `contour_covering`: CHORD / cos(5.625 degrees).
+    for c in [rounded_rect(), reversed(&rounded_rect())] {
+        let covering = contour_covering(&c).unwrap();
+        for pt in arc_samples(&c, 1e-9) {
+            assert!(
+                covering.intersects(&pt),
+                "{pt:?} is outside the covering polygon"
+            );
+        }
+        // No chord polygon gets there: the inscribed ring misses the arcs between its points.
+        let inscribed = contour(&c).unwrap();
+        let missed = arc_samples(&c, 1e-9)
+            .iter()
+            .filter(|pt| !inscribed.intersects(*pt))
+            .count();
+        assert!(missed > 0);
+        // And it stays within the bound of the true arc: every vertex is within
+        // r (1 / cos(d / 2) - 1) of a circle of its arc, d <= 11.25 degrees.
+        let bound = CHORD / (5.625f64).to_radians().cos();
+        for v in &covering.exterior().0 {
+            let off = [(7.0, -2.0), (7.0, 2.0), (-7.0, 2.0), (-7.0, -2.0)]
+                .iter()
+                .map(|&(cx, cy)| ((v.x - cx).hypot(v.y - cy) - 3.0).abs())
+                .fold(f64::MAX, f64::min);
+            // A straight-edge vertex lies on a corner circle too (the arc ends), so only the
+            // arc vertices count: those off every line of the rectangle.
+            let on_line = v.x.abs() == 10.0 || v.y.abs() == 5.0;
+            assert!(
+                on_line || off <= bound + 1e-9,
+                "{v:?} is {off} from its arc"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_covering_outline_leaves_a_notch_arc_to_its_chords() {
+    use geo::Intersects;
+    // A 10 x 10 square with a round notch of radius 2 bitten into its top edge: the arc turns
+    // clockwise round the square, with the notch's centre outside the region, so the polygon
+    // must hold the notch's chords (inscribed in it) and still hold the whole region.
+    let c = Contour {
+        segments: vec![
+            Segment::Line {
+                from: p(0.0, 0.0),
+                to: p(10.0, 0.0),
+            },
+            Segment::Line {
+                from: p(10.0, 0.0),
+                to: p(10.0, 10.0),
+            },
+            Segment::Line {
+                from: p(10.0, 10.0),
+                to: p(7.0, 10.0),
+            },
+            Segment::Arc {
+                center: p(5.0, 10.0),
+                radius: 2.0,
+                start_deg: 0.0,
+                end_deg: 180.0,
+                clockwise: true,
+            },
+            Segment::Line {
+                from: p(3.0, 10.0),
+                to: p(0.0, 10.0),
+            },
+            Segment::Line {
+                from: p(0.0, 10.0),
+                to: p(0.0, 0.0),
+            },
+        ],
+    };
+    let covering = contour_covering(&c).unwrap();
+    // The true region lies on the far side of the notch arc from its centre.
+    for pt in arc_samples(&c, -1e-9) {
+        assert!(covering.intersects(&pt), "{pt:?} is outside");
+    }
+    assert!(covering.exterior().0.len() < 80);
+}
+
+#[test]
+fn a_covering_cutout_holds_its_whole_true_hole() {
+    use geo::Intersects;
+    // A round hole of radius 1.5 as one full-circle arc: the cut polygon holds the true disc, so
+    // the mask never covers the hole's rim.
+    let hole = Contour {
+        segments: vec![Segment::Arc {
+            center: p(4.0, 3.0),
+            radius: 1.5,
+            start_deg: 0.0,
+            end_deg: 0.0,
+            clockwise: false,
+        }],
+    };
+    let covering = contour_covering(&hole).unwrap();
+    for pt in arc_samples(&hole, 1e-9) {
+        assert!(covering.intersects(&pt), "{pt:?} is outside the cut");
+    }
+}
+
+#[test]
+fn the_mask_face_holds_the_true_outline_and_its_holes_stay_open() {
+    let mut b = board(vec![], vec![]);
+    b.outline.outer = rounded_rect();
+    b.outline.cutouts = vec![Contour {
+        segments: vec![Segment::Arc {
+            center: p(0.0, 0.0),
+            radius: 1.5,
+            start_deg: 0.0,
+            end_deg: 0.0,
+            clockwise: false,
+        }],
+    }];
+    let (list, _) = overlays(&b, 1.6, "Board");
+    let mask = named(&list, "Solder mask top");
+    // The corner arc of the true outline is under the mask (a hair inside it), the hole's rim not.
+    for pt in arc_samples(&b.outline.outer, 1e-6) {
+        assert!(covers(mask, pt.x(), pt.y()), "{pt:?} is not under the mask");
+    }
+    for pt in arc_samples(&b.outline.cutouts[0], 1e-6) {
+        assert!(!covers(mask, pt.x(), pt.y()), "{pt:?} is under the mask");
+    }
 }

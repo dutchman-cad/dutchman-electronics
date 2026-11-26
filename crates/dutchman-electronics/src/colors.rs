@@ -11,12 +11,21 @@ use board_model::{Color, SurfaceFinish};
 
 /// Solder mask: a dark green.
 pub const MASK_COLOR: &str = "#1f5f3a";
-/// How opaque the solder mask overlay is (0 clear, 1 solid), so the copper shows through it.
+/// How opaque the solder mask overlay is (0 clear, 1 solid): fully.
+///
+/// The mask overlay fills only between the copper (the masked copper is cut out of it and drawn
+/// in [`COPPER_MASKED_COLOR`], the colour copper shows through the mask), so all it ever lies on
+/// is bare laminate, and the board body under it is the pale FR4 of the board edge
+/// ([`BOARD_COLOR`]). A translucent mask let that cream through: at 0.85 the mask over laminate
+/// came out paler than the copper-coloured areas beside it, the reverse of a real board, where
+/// mask over bare laminate is the darkest green and mask over copper the lighter. Solid, the
+/// mask over laminate is exactly the file's mask colour (never toned down) and the copper next
+/// to it is the lighter, warmer [`COPPER_MASKED_COLOR`]; the board edge stays the laminate colour.
 ///
 /// This is ours on purpose, whatever the file says: the opacity in a board file (0.6 on the
 /// blue-mask test board) is Altium's 3D-view display setting, not a property of the physical
-/// mask, and this value is tuned for the SolidCraft viewport.
-pub const MASK_OPACITY: f64 = 0.85;
+/// mask.
+pub const MASK_OPACITY: f64 = 1.0;
 /// Copper under the mask, as it looks through it: a green a little lighter and warmer than the mask.
 pub const COPPER_MASKED_COLOR: &str = "#2b6e43";
 /// Bare pad copper: gold, as on an ENIG finish.
