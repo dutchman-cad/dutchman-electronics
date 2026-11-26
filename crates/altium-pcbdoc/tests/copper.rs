@@ -504,3 +504,110 @@ fn small_board_pours_hand_over_their_holes() -> Result<(), Box<dyn std::error::E
     assert!(warnings.is_empty(), "{warnings:?}");
     Ok(())
 }
+
+/// A rounded-rectangle pad: x, y, size x, size y, rotation, corner percent and hole.
+type RoundedPad = (f64, f64, f64, f64, f64, f64, Option<f64>);
+
+#[test]
+fn pad_shapes_has_rounded_rectangles_and_octagons() -> Result<(), Box<dyn std::error::Error>> {
+    let out = read("pad-shapes.PcbDoc")?;
+    // Rounded rectangles: (x, y, size x, size y, rotation, corner percent, hole).
+    let rounded: [RoundedPad; 4] = [
+        (10.0, 15.0, 2.0, 1.0, 0.0, 50.0, None),
+        (20.0, 15.0, 2.0, 1.0, 0.0, 25.0, None),
+        (30.0, 15.0, 2.0, 1.0, 30.0, 25.0, None),
+        (20.0, 24.0, 1.6, 1.6, 0.0, 30.0, Some(0.8)),
+    ];
+    for (x, y, w, h, rot, percent, hole) in rounded {
+        let found = out.board.copper.iter().find_map(|c| match c {
+            CopperItem::Pad {
+                at,
+                shape,
+                size_x,
+                size_y,
+                rotation_deg,
+                drill,
+                plated,
+                ..
+            } if near(at.x, x) && near(at.y, y) => {
+                Some((*shape, *size_x, *size_y, *rotation_deg, *drill, *plated))
+            }
+            _ => None,
+        });
+        let (shape, size_x, size_y, rotation, drill, plated) =
+            found.ok_or(format!("no pad at ({x}, {y})"))?;
+        // The corner radius is the percentage of half the shorter side.
+        let PadShape::RoundedRectangle { radius_ratio } = shape else {
+            return Err(format!("pad at ({x}, {y}) is {shape:?}").into());
+        };
+        let radius = radius_ratio * w.min(h);
+        assert!(near(radius, percent / 100.0 * w.min(h) / 2.0), "{radius}");
+        assert!(near(size_x, w) && near(size_y, h) && near(rotation, rot));
+        assert_eq!(drill.is_some(), hole.is_some());
+        if let (Some(d), Some(want)) = (drill, hole) {
+            assert!(near(d, want) && plated);
+        }
+    }
+    // Octagons: each corner cut off by a quarter of the shorter side.
+    let mut octagons: Vec<Vec<(f64, f64)>> = out
+        .board
+        .copper
+        .iter()
+        .filter_map(|c| match c {
+            CopperItem::PolygonPad {
+                shapes,
+                drill: None,
+                ..
+            } => shapes.first().map(|s| {
+                s.segments
+                    .iter()
+                    .filter_map(|seg| match *seg {
+                        board_model::Segment::Line { from, .. } => Some((from.x, from.y)),
+                        board_model::Segment::Arc { .. } => None,
+                    })
+                    .collect()
+            }),
+            _ => None,
+        })
+        .collect();
+    octagons.sort_by(|a, b| {
+        a.len().cmp(&b.len()).then(
+            a.first()
+                .partial_cmp(&b.first())
+                .unwrap_or(std::cmp::Ordering::Equal),
+        )
+    });
+    let want = |cx: f64, cy: f64, w: f64, h: f64| -> Vec<(f64, f64)> {
+        let (a, b, c) = (w / 2.0, h / 2.0, w.min(h) / 4.0);
+        [
+            (a, -b + c),
+            (a, b - c),
+            (a - c, b),
+            (-a + c, b),
+            (-a, b - c),
+            (-a, -b + c),
+            (-a + c, -b),
+            (a - c, -b),
+        ]
+        .iter()
+        .map(|(x, y)| (cx + x, cy + y))
+        .collect()
+    };
+    for corners in [want(40.0, 15.0, 2.0, 1.0), want(40.0, 24.0, 1.5, 1.5)] {
+        assert!(
+            octagons.iter().any(|o| o.len() == 8
+                && o.iter()
+                    .zip(&corners)
+                    .all(|(p, q)| near(p.0, q.0) && near(p.1, q.1))),
+            "{corners:?} not in {octagons:?}"
+        );
+    }
+    let warnings: Vec<&str> = out
+        .notes
+        .iter()
+        .filter(|n| n.severity == board_model::Severity::Warning)
+        .map(|n| n.message.as_str())
+        .collect();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    Ok(())
+}
