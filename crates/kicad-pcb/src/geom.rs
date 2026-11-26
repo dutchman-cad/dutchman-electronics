@@ -325,6 +325,9 @@ const MAX_FILL_POINTS: usize = 400_000;
 /// pieces (one piece needs none).
 const MAX_FILL_TESTS: usize = 40_000_000;
 
+/// A copper piece while holes are being assigned: its corners, their bounding box, its holes.
+type Piece = (Vec<Point>, (Point, Point), Vec<Contour>);
+
 fn point_bounds(points: &[Point]) -> (Point, Point) {
     let mut lo = Point {
         x: f64::INFINITY,
@@ -446,7 +449,7 @@ pub fn split_fill(frame: &Frame, pts: &Node) -> Option<FillSplit> {
         .into_iter()
         .partition(|(_, a)| (*a > 0.0) == (big > 0.0));
     // `outers` is sorted smallest first, so the first one to hold a hole is its smallest parent.
-    let mut pieces: Vec<(Vec<Point>, (Point, Point), Vec<Contour>)> = outers
+    let mut pieces: Vec<Piece> = outers
         .into_iter()
         .map(|(l, _)| {
             let b = point_bounds(&l);
