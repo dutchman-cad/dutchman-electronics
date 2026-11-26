@@ -10,9 +10,9 @@
 //! [`crate::colors`] and a `thickness`: every area is extruded from its `z` away from the board.
 //! Copper starts at the face and is [`COPPER_THICKNESS`] thick, the mask starts there too and is
 //! [`MASK_THICKNESS`] thick (so copper stands proud of it), silkscreen starts on top of the
-//! mask and is [`SILK_THICKNESS`] thick, so its top clears the mask and the copper. The bottom
-//! side mirrors the top. Past [`MAX_SOLID_FACES`] the largest overlays are drawn flat, and a note
-//! says which.
+//! copper and is [`SILK_THICKNESS`] thick (real ink), so it clears both the copper and the mask.
+//! The bottom side mirrors the top. Past [`MAX_SOLID_FACES`] the largest overlays are drawn flat,
+//! and a note says which.
 //!
 //! Copper on inner layers lies inside the board and is left out by default. With [`Copper::All`]
 //! each inner copper layer whose place in the stack is known gets an overlay of its own (side
@@ -56,16 +56,13 @@ pub const COPPER_THICKNESS: f64 = 0.035;
 /// How thick the solder mask is, in mm (20 um). It fills only between the copper, so copper
 /// stands [`COPPER_THICKNESS`] less this proud of it.
 pub const MASK_THICKNESS: f64 = 0.020;
-/// How thick the silkscreen solid is, in mm. Real ink is about 15 um, but SolidCraft 0.49.1 hides
-/// silkscreen in oblique views (isometric and the like; the top view shows it) wherever it lies
-/// over the mask unless its top stands about 0.1 mm or more above the mask's top (a lead of
-/// 0.075 mm still vanished, 0.115 mm showed). The ink starts on the mask ([`SILK_LIFT`]), so
-/// this is also how far its top stands above the mask.
-pub const SILK_THICKNESS: f64 = 0.13;
-/// How far silkscreen starts off the board face, in mm: on the top of the solder mask
-/// ([`MASK_THICKNESS`]), with no gap under it. Over copper, which stands higher than the mask,
-/// it starts inside the copper (its top is still above the copper's), so it is never in the air.
-pub const SILK_LIFT: f64 = MASK_THICKNESS;
+/// How thick silkscreen ink is, in mm (15 um).
+pub const SILK_THICKNESS: f64 = 0.015;
+/// How far silkscreen starts off the board face, in mm: at the top of the copper
+/// ([`COPPER_THICKNESS`]), which is higher than the top of the mask ([`MASK_THICKNESS`]). Over
+/// masked copper the mask is cut away and the copper reaches this height, so starting here keeps
+/// the ink clear of both copper and mask.
+pub const SILK_LIFT: f64 = COPPER_THICKNESS;
 /// How far a flat sheet of copper under the mask (no `thickness`, see [`MAX_SOLID_FACES`]) is
 /// drawn off the board face, in mm, away from the board, so it does not share the face's plane.
 pub const FLAT_MASKED_COPPER_LIFT: f64 = 0.007;

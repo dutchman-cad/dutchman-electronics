@@ -1284,12 +1284,12 @@ mod tests {
                 assert_eq!(o["part"], "Board");
                 assert!(overlay_area(o) > 0.0, "{}: {o}", path.display());
                 let z = o["z"].as_f64().unwrap();
-                // Copper and mask start at the face, silkscreen on top of the mask, and the
+                // Copper and mask start at the face, silkscreen on top of the copper, and the
                 // bottom side mirrors the top below z = 0.
                 let (offset, thickness) = match o["kind"].as_str().unwrap() {
                     "copper" => (0.0, 0.035),
                     "mask" => (0.0, 0.020),
-                    _ => (0.020, 0.13),
+                    _ => (0.035, 0.015),
                 };
                 let want = if o["side"] == "top" {
                     t + offset
