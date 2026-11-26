@@ -1748,6 +1748,50 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "altium")]
+    #[test]
+    fn a_through_hole_header_gets_its_step_model_and_four_plated_holes() {
+        // one-step-header: J1 at (25, 15) holds header-1x4.step (x -1.27 to 1.27, y -5.08 to
+        // 5.08, z -3 to 8.5: the pins reach through the 1.6 mm board and 1.4 mm below it), and
+        // its four pads have plated 1.0 mm holes.
+        let package = package_of("one-step-header");
+        let m = &package.manifest;
+        let j1 = part_named(m, "J1");
+        assert!(j1.get("color").is_none());
+        let (_, step) = package
+            .files
+            .iter()
+            .find(|(name, _)| {
+                m["models"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|x| x["id"] == j1["model"] && x["file"] == name.as_str())
+            })
+            .unwrap();
+        let step = String::from_utf8(step.clone()).unwrap();
+        assert_eq!(step.matches("MANIFOLD_SOLID_BREP(").count(), 5);
+        let (lo, hi) = placed_box(&j1["transform"], [-1.27, -5.08, -3.0], [1.27, 5.08, 8.5]);
+        assert!(
+            near(lo, [23.73, 9.92, -1.4]) && near(hi, [26.27, 20.08, 10.1]),
+            "{lo:?} {hi:?}"
+        );
+        let (_, plating) = package
+            .files
+            .iter()
+            .find(|(name, _)| name == PLATING_FILE)
+            .unwrap();
+        let radii = cylinder_radii(&String::from_utf8(plating.clone()).unwrap());
+        // Each tube is written as two halves, outside and inside, as on one-plated-pad.
+        assert_eq!(radii.len(), 16, "{radii:?}");
+        assert!(
+            radii
+                .iter()
+                .all(|r| (r - 0.5).abs() < 1e-3 || (r - 0.475).abs() < 1e-3),
+            "{radii:?}"
+        );
+    }
+
     #[test]
     fn no_component_takes_the_plating_part_name() {
         let placed = components(

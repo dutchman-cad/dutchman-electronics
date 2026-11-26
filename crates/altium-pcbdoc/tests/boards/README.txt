@@ -682,6 +682,34 @@ leaves it as written. They follow the same rule as project parameters (see
 param-project/README.txt): "R: .Designator" and "L: .Layer_Name" keep what comes before the dot,
 and the name matches in any case. R1's own designator text "R1" is on the board as before.
 
+Scripted board: a through-hole header with a STEP model (one-step-header)
+------------------------------------------------------------------------
+Made on 2026-11-26 by my own script, from a file copy of empty-outline.PcbDoc; every number was
+read back and logged.
+
+The STEP model header-1x4.step is my own, written by this repository's board-step crate (CC0 like
+the board): five solids in one file. The housing is a box x -1.270 to 1.270, y -5.080 to 5.080,
+z 0 to 2.500, with four square holes 0.640 x 0.640 through it, centred at x 0 and y 3.810,
+1.270, -1.270 and -3.810. The four pins are boxes 0.640 x 0.640 at those centres, from z -3.000
+to 8.500, so on the board they reach through its 1.600 thickness and 1.400 below it. The pins
+fill the holes exactly.
+
+one-step-header.PcbDoc
+    one component: designator J1, comment "HEADER" (hidden), footprint HDR1X4-STEP, centre
+    (25.000, 15.000), rotation 0, top side. Designator shown on Top Overlay at (23.600, 21.000),
+    height 1.000, stroke 0.150.
+    Pads, all on Multi-Layer, 1.700 x 1.700, rotation 0, hole round 1.000, plated:
+        pad 1 at (25.000, 18.810), rectangle (square)
+        pad 2 at (25.000, 16.270), round
+        pad 3 at (25.000, 13.730), round
+        pad 4 at (25.000, 11.190), round
+    Silkscreen (Top Overlay, width 0.150, part of J1): a rectangle (23.600, 9.790) to
+    (26.400, 20.210).
+    3D body on Mechanical 1 holding header-1x4.step, embedded, its origin on J1's centre, not
+    turned or raised. Altium read back x 23.73 to 26.27, y 9.92 to 20.08, standoff -3.000
+    (the pins' tips below the top face) and overall height 8.500. Altium gave the model
+    MODELID {AFE25888-7D73-4AF3-9861-6835E8C67860} and stored the file unchanged.
+
 Paths inside the files
 ----------------------
 Altium writes a few paths from the PC that saved a board into the file. After the last save, I
