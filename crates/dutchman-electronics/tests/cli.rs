@@ -820,3 +820,45 @@ fn read_refuses_an_option_it_does_not_know() -> Result<(), Box<dyn std::error::E
     assert_eq!(out.status.code(), Some(2));
     Ok(())
 }
+
+/// KiCad keeps no checksum: a KiCad board's linked file is used by its name alone. The KiCad
+/// one-resistor links `box-1608.step`, the CC0 box beside the Altium linked-model board.
+#[cfg(all(feature = "altium", feature = "kicad"))]
+#[test]
+fn a_kicad_boards_linked_model_is_used_by_its_name() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = std::env::temp_dir().join(format!("de-kicad-linked-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    std::fs::create_dir_all(&dir)?;
+    let board = dir.join("one-resistor.kicad_pcb");
+    std::fs::copy(kicad_board("one-resistor.kicad_pcb"), &board)?;
+    std::fs::copy(
+        test_board("linked-model/box-1608.step"),
+        dir.join("box-1608.step"),
+    )?;
+    let result = read_into("kicad-linked", &board, &[]);
+    std::fs::remove_dir_all(&dir).ok();
+    let (ok, v, files) = result?;
+    assert!(ok, "{v}");
+    let r1 = v["parts"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|p| p["name"] == "R1")
+        .ok_or("R1 is not in the package")?;
+    let file = v["models"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|m| m["id"] == r1["model"])
+        .and_then(|m| m["file"].as_str())
+        .ok_or("R1's model is not listed")?;
+    assert!(files.iter().any(|f| f == file), "{files:?}");
+    let notes = messages(&v);
+    assert!(
+        notes.iter().any(|m| m
+            == "1 part(s) link to the model file box-1608.step; box-1608.step was found by its \
+                name only (the board keeps no checksum to check it by) and is used"),
+        "{notes:?}"
+    );
+    Ok(())
+}
