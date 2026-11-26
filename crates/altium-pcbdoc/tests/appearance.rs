@@ -1,4 +1,4 @@
-//! Solder mask and silkscreen colours, checked against tests/boards/README.txt.
+//! Solder mask and silkscreen colors, checked against tests/boards/README.txt.
 
 use altium_pcbdoc::Altium;
 use board_model::{Appearance, Color, InputFormat, ReadOutcome, SurfaceFinish};
@@ -14,7 +14,7 @@ fn rgba(r: u8, g: u8, b: u8, opacity: f64) -> Option<Color> {
     Some(Color { r, g, b, opacity })
 }
 
-/// The colours a board has, with the same solder mask and the same silkscreen on both sides.
+/// The colors a board has, with the same solder mask and the same silkscreen on both sides.
 fn both_sides(mask: Option<Color>, silk: Option<Color>) -> Appearance {
     Appearance {
         top_solder_mask: mask,
@@ -29,7 +29,7 @@ const GREEN_MASK: (u8, u8, u8) = (36, 120, 50);
 const WHITE_SILK: (u8, u8, u8) = (250, 250, 250);
 
 #[test]
-fn altiums_default_colours() -> Result<(), Box<dyn std::error::Error>> {
+fn altiums_default_colors() -> Result<(), Box<dyn std::error::Error>> {
     let out = read("one-resistor.PcbDoc")?;
     let (m, s) = (GREEN_MASK, WHITE_SILK);
     assert_eq!(

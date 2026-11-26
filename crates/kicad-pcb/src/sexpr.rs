@@ -104,9 +104,9 @@ impl Node {
     }
 }
 
-/// The biggest position (millimetres) in either direction: 100 metres.
+/// The biggest position (millimeters) in either direction: 100 meters.
 pub const MAX_COORDINATE: f64 = 1e5;
-/// The biggest width, size, drill or thickness (millimetres): 10 metres.
+/// The biggest width, size, drill or thickness (millimeters): 10 meters.
 pub const MAX_SIZE: f64 = 1e4;
 
 /// Makes every number outside the sane ranges unreadable, so the reader drops the item that holds

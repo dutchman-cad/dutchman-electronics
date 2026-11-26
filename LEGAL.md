@@ -9,7 +9,7 @@ This is a working policy written by engineers, not legal advice.
 We ask for two different statements, for two different things:
 
 1. **Provenance of reader code and format specs** (this page). Every pull request that adds or changes a format reader or a format description carries the provenance sentence below.
-2. **Test boards** (CONTRIBUTING.md). Every committed test board carries the CC0 declaration line in its README.txt. The one exception is the open-hardware boards made by others (`crates/kicad-pcb/tests/open-hardware`): each keeps its own accepted Creative Commons licence (CC0, CC-BY 4.0 or CC-BY-SA 4.0), named in its README.txt with its source and attribution. A test enforces both.
+2. **Test boards** (CONTRIBUTING.md). Every committed test board carries the CC0 declaration line in its README.txt. The one exception is the open-hardware boards made by others (`crates/kicad-pcb/tests/open-hardware`): each keeps its own accepted Creative Commons license (CC0, CC-BY 4.0 or CC-BY-SA 4.0), named in its README.txt with its source and attribution. A test enforces both.
 
 ## Allowed sources
 
@@ -18,7 +18,7 @@ A reader, or a written description of a format, may be derived only from:
 - **Files you are legally entitled to possess**, above all boards you designed yourself, or files whose terms allow inspection and sharing what you learn from them.
 - **Observing those files' bytes**: hex views, structure listings, and comparing files you made with one controlled change between them.
 - **Public information**: open standards, published papers, and public vendor documentation with no restriction on use.
-- **Open-source code under a permissive licence** (MIT, BSD, Apache-2.0), with attribution: name the source in the pull request, and keep its licence and copyright notice wherever code is reused.
+- **Open-source code under a permissive license** (MIT, BSD, Apache-2.0), with attribution: name the source in the pull request, and keep its license and copyright notice wherever code is reused.
 
 ### KiCad
 
@@ -33,7 +33,7 @@ Reader code and format descriptions must not be derived from, and must not conta
 3. **Confidential material**: anything under NDA, internal vendor documents, leaked specifications, or anything obtained by breaking an agreement or an access control.
 4. **Copyleft code**: anything under GPL, LGPL or AGPL. This explicitly includes KiCad's Altium importer (`pcbnew/plugins/altium`, GPL-3), every other copyleft Altium parser, and all of KiCad's own source code (GPL). Do not read such code at all while working on reader code, not even as a hint.
 5. **Files you may not possess or share**, including any employer's or customer's boards.
-6. **Circumventing protection.** We do not decode content protected by encryption, licence enforcement or other access controls, and we accept no keys, tools or format knowledge whose purpose is getting around such a measure.
+6. **Circumventing protection.** We do not decode content protected by encryption, license enforcement or other access controls, and we accept no keys, tools or format knowledge whose purpose is getting around such a measure.
 
 ## Conflict-of-knowledge rule
 

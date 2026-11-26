@@ -7,9 +7,9 @@ use board_model::{Contour, Point, Segment};
 
 use crate::sexpr::Node;
 
-/// Two points closer than this (millimetres) are the same point when a contour is joined up.
-/// Our own choice, 5 micrometres: KiCad writes nanometres but arcs are given by three rounded
-/// points, which leave the ends about a micrometre off the circle.
+/// Two points closer than this (millimeters) are the same point when a contour is joined up.
+/// Our own choice, 5 micrometers: KiCad writes nanometers but arcs are given by three rounded
+/// points, which leave the ends about a micrometer off the circle.
 pub const JOIN_TOLERANCE: f64 = 0.005;
 
 /// Where a footprint sits: its origin in board coordinates (Y up) and its turn in degrees,
@@ -304,7 +304,7 @@ fn inside(points: &[Point], p: Point) -> bool {
     odd
 }
 
-/// A vertex as a hashable key: KiCad writes nanometres, so six decimals tell vertices apart.
+/// A vertex as a hashable key: KiCad writes nanometers, so six decimals tell vertices apart.
 fn vertex_key(p: Point) -> (i64, i64) {
     ((p.x * 1e6).round() as i64, (p.y * 1e6).round() as i64)
 }

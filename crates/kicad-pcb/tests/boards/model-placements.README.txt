@@ -1,6 +1,6 @@
 Original test board made for Dutchman Electronics. Released under CC0 1.0 (public domain): https://creativecommons.org/publicdomain/zero/1.0/
 
-model-placements: four parts, each with two pads set off-centre and a 3D model reference, to show where a model lands.
+model-placements: four parts, each with two pads set off-center and a 3D model reference, to show where a model lands.
 
 Made with KiCad 9.0.9 (file version 20241229) by fixtures/kicad/build_boards.py, on the 50 x 30 mm rectangle. KiCad's Y points down; the board's top-left corner is at page position (100, 100), and the numbers below are relative to it. The model "box.step" is not stored in the board.
 

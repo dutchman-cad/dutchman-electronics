@@ -762,7 +762,7 @@ fn arc_ends_sit_on_their_circle_when_the_input_is_one_altium_step_off() {
 
 #[test]
 fn two_arcs_of_different_circles_meet_on_both_circles() {
-    // Two circles of radius 5 centred at (0, 0) and (6, 0) cross at (3, 4). The second is
+    // Two circles of radius 5 centered at (0, 0) and (6, 0) cross at (3, 4). The second is
     // written one Altium step off its place, so the joint cannot be on both as given.
     let step = 2.54e-6;
     let a = 4f64.atan2(3.0).to_degrees();

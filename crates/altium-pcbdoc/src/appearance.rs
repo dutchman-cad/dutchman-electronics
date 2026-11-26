@@ -1,9 +1,9 @@
-//! Solder mask and silkscreen colours.
+//! Solder mask and silkscreen colors.
 //!
 //! Worked out from our own CC0 test boards (see LEGAL.md):
 //!
 //! - `/Board6/Data` has a key `3DCONFIGURATION` whose value is a second list of settings,
-//!   separated by backticks: `` `KEY=VALUE`KEY=VALUE… ``. These are the colours Altium's own 3D
+//!   separated by backticks: `` `KEY=VALUE`KEY=VALUE… ``. These are the colors Altium's own 3D
 //!   view draws the board in, saved with the board (View Configuration in 3D).
 //! - `CFG3D.TOPSOLDERMASKCOLOR`, `CFG3D.BOTSOLDERMASKCOLOR`, `CFG3D.TOPSILKSCREENCOLOR` and
 //!   `CFG3D.BOTSILKSCREENCOLOR` are each a number with red in the lowest byte, then green, then
@@ -42,7 +42,7 @@ const COPPER_TYPE: &str = "f4eccd87-2cfb-4f37-be50-4f3a272b4d01";
 /// The most bytes the stack XML may unpack to before it is treated as hostile.
 pub(crate) const MAX_STACK_XML: usize = 16 << 20;
 
-/// Reads the solder mask and silkscreen colours and the surface finishes from the `/Board6/Data`
+/// Reads the solder mask and silkscreen colors and the surface finishes from the `/Board6/Data`
 /// record. What is missing stays `None`; what cannot be read is `None` too, with a note.
 pub(crate) fn read(board: &Properties, notes: &mut Vec<Note>) -> Appearance {
     let mut appearance = colors(board, notes);
@@ -193,7 +193,7 @@ fn property(body: &str, name: &str) -> Option<String> {
     )
 }
 
-/// `#AARRGGBB` as a colour.
+/// `#AARRGGBB` as a color.
 fn argb(text: &str) -> Option<Color> {
     let hex = text.trim().strip_prefix('#')?;
     if hex.len() != 8 {
@@ -209,7 +209,7 @@ fn argb(text: &str) -> Option<Color> {
     })
 }
 
-/// A length such as `0.004mm` or `0.8mil` in millimetres.
+/// A length such as `0.004mm` or `0.8mil` in millimeters.
 fn length_mm(text: &str) -> Option<f64> {
     let text = text.trim();
     let (number, scale) = match text.strip_suffix("mm") {
@@ -220,7 +220,7 @@ fn length_mm(text: &str) -> Option<f64> {
     (mm.is_finite() && (0.0..=100.0).contains(&mm)).then_some(mm)
 }
 
-/// The solder mask and silkscreen colours of `3DCONFIGURATION`.
+/// The solder mask and silkscreen colors of `3DCONFIGURATION`.
 /// A Windows COLORREF in decimal (red in the low byte, `3307556` is (36, 120, 50)) with an
 /// opacity from 0 to 1, or `None` when either is not one.
 pub(crate) fn colorref(value: &str, opacity: Option<f64>) -> Option<Color> {
@@ -276,7 +276,7 @@ fn colors(board: &Properties, notes: &mut Vec<Note>) -> Appearance {
         notes.push(Note {
             severity: Severity::Warning,
             message: format!(
-                "{unreadable} solder mask or silkscreen colour(s) in 3DCONFIGURATION could not be \
+                "{unreadable} solder mask or silkscreen color(s) in 3DCONFIGURATION could not be \
                  read; left out"
             ),
         });
@@ -293,7 +293,7 @@ mod tests {
     }
 
     #[test]
-    fn colours_are_red_green_blue_from_the_low_byte_up() {
+    fn colors_are_red_green_blue_from_the_low_byte_up() {
         let mut notes = Vec::new();
         let a = read(
             &props(
@@ -311,7 +311,7 @@ mod tests {
     }
 
     #[test]
-    fn unreadable_colours_are_left_out_with_a_note() {
+    fn unreadable_colors_are_left_out_with_a_note() {
         let mut notes = Vec::new();
         let a = read(
             &props(
@@ -323,7 +323,7 @@ mod tests {
         assert_eq!(a, Appearance::default());
         assert_eq!(notes.len(), 1);
         assert!(notes[0].message.starts_with("3 solder mask"));
-        // No 3DCONFIGURATION at all is no colour and no note.
+        // No 3DCONFIGURATION at all is no color and no note.
         let mut notes = Vec::new();
         let none = read(&Properties::parse(b"|KIND0=0|"), &mut notes);
         assert_eq!((none, notes.len()), (Appearance::default(), 0));

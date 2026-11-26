@@ -104,7 +104,7 @@ fn one_step_resistor_has_its_embedded_step_box() -> Result<(), Box<dyn std::erro
         (BOX_1608_ID, "box-1608.step")
     );
     assert_eq!(x_range(&stored.step).ok_or("no points")?, (-0.8, 0.8));
-    // The model's origin is R1's centre, not rotated, not raised.
+    // The model's origin is R1's center, not rotated, not raised.
     assert!(
         model.offset.iter().all(|v| near(*v, 0.0)),
         "{:?}",
@@ -140,7 +140,7 @@ fn one_linked_step_resistor_names_its_file_and_checksum() -> Result<(), Box<dyn 
         "{:?}",
         out.notes
     );
-    // Placed as on one-step-resistor: R1's centre, not rotated, not raised.
+    // Placed as on one-step-resistor: R1's center, not rotated, not raised.
     assert!(
         model.offset.iter().all(|v| near(*v, 0.0)),
         "{:?}",
@@ -174,7 +174,7 @@ fn the_embedded_model_stream_exists() -> Result<(), Box<dyn std::error::Error>> 
     Ok(())
 }
 
-/// The designator, centre and model ID of each part, sorted by designator.
+/// The designator, center and model ID of each part, sorted by designator.
 fn parts(out: &ReadOutcome) -> Vec<(String, f64, f64, Option<String>)> {
     let mut found: Vec<_> = out
         .board
@@ -225,9 +225,9 @@ fn two_parts_with_two_embedded_models() -> Result<(), Box<dyn std::error::Error>
             .find(|m| m.id == id)
             .ok_or("model missing")
     };
-    let (centred, offset) = (model(BOX_1608_ID)?, model(BOX_OFFSET_ID)?);
-    assert_eq!(centred.name, "box-1608.step");
-    assert_eq!(x_range(&centred.step).ok_or("no points")?, (-0.8, 0.8));
+    let (centered, offset) = (model(BOX_1608_ID)?, model(BOX_OFFSET_ID)?);
+    assert_eq!(centered.name, "box-1608.step");
+    assert_eq!(x_range(&centered.step).ok_or("no points")?, (-0.8, 0.8));
     assert_eq!(offset.name, "box-offset.step");
     assert_eq!(x_range(&offset.step).ok_or("no points")?, (0.0, 1.6));
     assert!(out.notes.is_empty(), "{:?}", out.notes);
@@ -257,13 +257,13 @@ fn the_shape_based_copy_of_the_bodies_raises_no_note() -> Result<(), Box<dyn std
 }
 
 #[test]
-fn an_extruded_body_has_its_colour_and_opacity() -> Result<(), Box<dyn std::error::Error>> {
-    let grey = read("one-resistor.PcbDoc")?;
+fn an_extruded_body_has_its_color_and_opacity() -> Result<(), Box<dyn std::error::Error>> {
+    let gray = read("one-resistor.PcbDoc")?;
     let colored = read("one-colored-body-resistor.PcbDoc")?;
-    let grey_model = r1_model(&grey).ok_or("R1 has no model")?;
+    let gray_model = r1_model(&gray).ok_or("R1 has no model")?;
     let model = r1_model(&colored).ok_or("R1 has no model")?;
     assert_eq!(
-        grey_model.color,
+        gray_model.color,
         Some(Color {
             r: 128,
             g: 128,
@@ -280,18 +280,18 @@ fn an_extruded_body_has_its_colour_and_opacity() -> Result<(), Box<dyn std::erro
             opacity: 0.5
         })
     );
-    // Only the colour differs: the same box in the same place, and no notes.
-    assert_eq!(model.source, grey_model.source);
+    // Only the color differs: the same box in the same place, and no notes.
+    assert_eq!(model.source, gray_model.source);
     assert_eq!(
         (model.offset, model.rotation_deg),
-        (grey_model.offset, grey_model.rotation_deg)
+        (gray_model.offset, gray_model.rotation_deg)
     );
     assert!(colored.notes.is_empty(), "{:?}", colored.notes);
     Ok(())
 }
 
 #[test]
-fn a_step_model_has_no_body_colour() -> Result<(), Box<dyn std::error::Error>> {
+fn a_step_model_has_no_body_color() -> Result<(), Box<dyn std::error::Error>> {
     let out = read("one-step-resistor.PcbDoc")?;
     let model = r1_model(&out).ok_or("R1 has no model")?;
     assert_eq!(model.color, None);

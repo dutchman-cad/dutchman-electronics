@@ -7,7 +7,7 @@
 //! - file paths (`C:\...`, `\\server\...`, `\Users\`, `/home/`),
 //! - e-mail addresses,
 //! - default Windows computer names (`DESKTOP-...`, `LAPTOP-...`),
-//! - every word the caller asks to watch for (a name, a company, a licence number), matched
+//! - every word the caller asks to watch for (a name, a company, a license number), matched
 //!   without regard to upper or lower case, in either text encoding.
 //!
 //! The watched words come from the person running the check and are never stored anywhere.
@@ -83,7 +83,7 @@ pub struct Finding {
 /// What to look for.
 #[derive(Clone, Debug, Default)]
 pub struct Options {
-    /// Words to search for (a name, a company, a licence number), any case.
+    /// Words to search for (a name, a company, a license number), any case.
     pub watch: Vec<String>,
     /// Also list every text run, so a person can read through it.
     pub all_text: bool,

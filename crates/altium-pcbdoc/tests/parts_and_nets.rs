@@ -1,4 +1,4 @@
-//! A rotated part, bottom-side parts, an off-centre extruded body and a net, checked against the numbers in
+//! A rotated part, bottom-side parts, an off-center extruded body and a net, checked against the numbers in
 //! tests/boards/README.txt (to 0.001 mm, as AGENTS.md asks).
 
 use altium_pcbdoc::Altium;
@@ -189,7 +189,7 @@ fn the_offset_extruded_body_on_a_top_side_part() -> Result<(), Box<dyn std::erro
 #[test]
 fn the_offset_extruded_body_is_the_same_on_the_flipped_part(
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // Flipping moved R1's centre to (25.4, 15) and gave it rotation 180 (see README.txt).
+    // Flipping moved R1's center to (25.4, 15) and gave it rotation 180 (see README.txt).
     check_offset_extruded(
         "one-bottom-extruded-resistor.PcbDoc",
         (25.4, 15.0),

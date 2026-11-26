@@ -196,7 +196,7 @@ fn a_slotted_hole_is_as_wide_as_its_narrow_side_and_an_offset_is_noted() {
     assert!(o
         .notes
         .iter()
-        .any(|n| n.severity == Severity::Warning && n.message.contains("off-centre")));
+        .any(|n| n.severity == Severity::Warning && n.message.contains("off-center")));
 }
 
 #[test]

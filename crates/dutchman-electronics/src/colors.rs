@@ -1,11 +1,11 @@
-//! The colours the parts package gives its overlays and parts, in one place.
+//! The colors the parts package gives its overlays and parts, in one place.
 //!
-//! The board file's own colours win: the solder mask and silkscreen colours of each side, the
-//! surface finish of each side (which sets the colour of the bare pads, and of the plating from
-//! the top finish) and the colour and opacity of an extruded component body. They are written
+//! The board file's own colors win: the solder mask and silkscreen colors of each side, the
+//! surface finish of each side (which sets the color of the bare pads, and of the plating from
+//! the top finish) and the color and opacity of an extruded component body. They are written
 //! into the manifest as `"color": "#rrggbb"` (lowercase sRGB). Where the file says nothing, the
 //! constants below are the fallback: a dark green mask, an off-white silkscreen, gold pads.
-//! Components with an embedded STEP model get no colour: the model carries its own.
+//! Components with an embedded STEP model get no color: the model carries its own.
 
 use board_model::{Color, SurfaceFinish};
 
@@ -14,13 +14,13 @@ pub const MASK_COLOR: &str = "#1f5f3a";
 /// How opaque the solder mask overlay is (0 clear, 1 solid): fully.
 ///
 /// The mask overlay fills only between the copper (the masked copper is cut out of it and drawn
-/// in [`COPPER_MASKED_COLOR`], the colour copper shows through the mask), so all it ever lies on
+/// in [`COPPER_MASKED_COLOR`], the color copper shows through the mask), so all it ever lies on
 /// is bare laminate, and the board body under it is the pale FR4 of the board edge
 /// ([`BOARD_COLOR`]). A translucent mask let that cream through: at 0.85 the mask over laminate
-/// came out paler than the copper-coloured areas beside it, the reverse of a real board, where
+/// came out paler than the copper-colored areas beside it, the reverse of a real board, where
 /// mask over bare laminate is the darkest green and mask over copper the lighter. Solid, the
-/// mask over laminate is exactly the file's mask colour (never toned down) and the copper next
-/// to it is the lighter, warmer [`COPPER_MASKED_COLOR`]; the board edge stays the laminate colour.
+/// mask over laminate is exactly the file's mask color (never toned down) and the copper next
+/// to it is the lighter, warmer [`COPPER_MASKED_COLOR`]; the board edge stays the laminate color.
 ///
 /// This is ours on purpose, whatever the file says: the opacity in a board file (0.6 on the
 /// blue-mask test board) is Altium's 3D-view display setting, not a property of the physical
@@ -42,11 +42,11 @@ pub const BOARD_COLOR: &str = "#c8b27a";
 pub const PLATING_COLOR: &str = COPPER_BARE_COLOR;
 
 /// How a surface takes the light, written into the manifest as `"metallic"` and `"roughness"`
-/// (each 0 to 1) next to its colour.
+/// (each 0 to 1) next to its color.
 ///
-/// Everything is non-metallic on purpose: SolidCraft's modelling viewport has no environment to
-/// reflect, so a metallic surface there renders flat dark grey. Gold and copper read right as a
-/// coloured, fairly smooth dielectric instead.
+/// Everything is non-metallic on purpose: SolidCraft's modeling viewport has no environment to
+/// reflect, so a metallic surface there renders flat dark gray. Gold and copper read right as a
+/// colored, fairly smooth dielectric instead.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Finish {
     pub metallic: f64,
@@ -73,7 +73,7 @@ pub const COPPER_FINISH: Finish = Finish {
     metallic: 0.0,
     roughness: 0.5,
 };
-/// Extruded component bodies the file gives a colour to: a moulded plastic.
+/// Extruded component bodies the file gives a color to: a moulded plastic.
 pub const BODY_FINISH: Finish = Finish {
     metallic: 0.0,
     roughness: 0.6,
@@ -89,12 +89,12 @@ pub const BOARD_FINISH: Finish = Finish {
     roughness: 0.9,
 };
 
-/// A colour as lowercase `#rrggbb`.
+/// A color as lowercase `#rrggbb`.
 pub fn hex(c: &Color) -> String {
     format!("#{:02x}{:02x}{:02x}", c.r, c.g, c.b)
 }
 
-/// Per-channel gains that turn a dark or mid mask colour into the copper seen through it. Red
+/// Per-channel gains that turn a dark or mid mask color into the copper seen through it. Red
 /// gains most and blue least, so the copper reads lighter and warmer than the mask. They are
 /// chosen so the default mask `#1f5f3a` gives exactly [`COPPER_MASKED_COLOR`], `#2b6e43`.
 const MASKED_COPPER_GAIN: [f64; 3] = [1.39, 1.158, 1.155];
@@ -109,7 +109,7 @@ pub const MIN_COPPER_DIFFERENCE: u8 = 12;
 /// leave the copper too close to the mask, as for a black mask or a fully saturated one.
 const COPPER_NUDGE: [u8; 3] = [16, 12, 12];
 
-/// The colour of copper under a solder mask of colour `mask`, as lowercase `#rrggbb`.
+/// The color of copper under a solder mask of color `mask`, as lowercase `#rrggbb`.
 ///
 /// A dark or mid mask (relative luminance 0.6 or less) is multiplied per channel by
 /// [`MASKED_COPPER_GAIN`] (red 1.39, green 1.158, blue 1.155); a lighter one by
@@ -161,12 +161,12 @@ pub fn masked_copper(mask: &Color) -> String {
     })
 }
 
-/// Relative luminance of a colour, 0 (black) to 1 (white), from its sRGB values as they are.
+/// Relative luminance of a color, 0 (black) to 1 (white), from its sRGB values as they are.
 fn luminance(c: &Color) -> f64 {
     (0.2126 * f64::from(c.r) + 0.7152 * f64::from(c.g) + 0.0722 * f64::from(c.b)) / 255.0
 }
 
-/// What the bare pads of one side look like: colour and finish.
+/// What the bare pads of one side look like: color and finish.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PadLook {
     pub color: &'static str,
@@ -325,7 +325,7 @@ mod tests {
     }
 
     #[test]
-    fn every_colour_is_a_lowercase_hex_triplet() {
+    fn every_color_is_a_lowercase_hex_triplet() {
         for c in [
             MASK_COLOR,
             COPPER_MASKED_COLOR,

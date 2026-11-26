@@ -1,7 +1,7 @@
 //! Fills the board model from a parsed `.kicad_pcb`.
 //!
 //! Everything here follows KiCad's published file-format documentation (see README.md for the
-//! pages) and our own test boards. Lengths in the file are millimetres with Y pointing down; the
+//! pages) and our own test boards. Lengths in the file are millimeters with Y pointing down; the
 //! model has Y pointing up, so every Y changes sign here and nowhere else.
 
 use std::collections::{BTreeMap, HashMap};
@@ -473,7 +473,7 @@ impl Reader {
         let justify = effects.and_then(|e| e.child("justify"));
         let has = |w: &str| justify.is_some_and(|j| j.has_flag(w));
         let mirrored = has("mirror");
-        // KiCad anchors a text by its centre unless told otherwise; the model anchors it at the
+        // KiCad anchors a text by its center unless told otherwise; the model anchors it at the
         // left end of its baseline. Without glyph widths the shift is an estimate.
         let lines: Vec<&str> = content.split('\n').collect();
         let longest = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0) as f64;
@@ -973,7 +973,7 @@ impl Reader {
             return;
         }
         let rotation_deg = at.and_then(|a| a.num(2)).unwrap_or(0.0);
-        let centre = f.point(ax, ay);
+        let center = f.point(ax, ay);
         // The pad's own outline when it is not a plain shape: contours in its frame (Y up).
         let mut polygon: Option<Vec<Contour>> = None;
         let min_side = sx.min(sy);
@@ -1064,7 +1064,7 @@ impl Reader {
         if drill_node.is_some_and(|d| d.child("offset").is_some()) {
             self.tally.add(
                 Severity::Warning,
-                "pad hole(s) set off-centre in their pad were drawn centred (the offset is not read)",
+                "pad hole(s) set off-center in their pad were drawn centered (the offset is not read)",
             );
         }
         let drill = drill.filter(|d| *d > 0.0);
@@ -1109,10 +1109,10 @@ impl Reader {
             if let Some(shapes) = &polygon {
                 self.copper.push(CopperItem::PolygonPad {
                     layer,
-                    at: centre,
+                    at: center,
                     shapes: shapes
                         .iter()
-                        .map(|c| padshape::placed(c, centre, rotation_deg))
+                        .map(|c| padshape::placed(c, center, rotation_deg))
                         .collect(),
                     drill,
                     plated,
@@ -1122,7 +1122,7 @@ impl Reader {
             }
             self.copper.push(CopperItem::Pad {
                 layer,
-                at: centre,
+                at: center,
                 shape,
                 size_x: sx,
                 size_y: sy,
@@ -1364,12 +1364,12 @@ pub fn read(mut root: Node) -> ReadOutcome {
     if r.inexact_text {
         r.tally.add(
             Severity::Info,
-            "board(s) whose centred or right-aligned texts sit where we estimate them (KiCad aligns a text by its middle and we have no glyph widths)",
+            "board(s) whose centered or right-aligned texts sit where we estimate them (KiCad aligns a text by its middle and we have no glyph widths)",
         );
     }
     r.tally.add(
         Severity::Info,
-        "board(s) whose stack-up colours, materials, copper weights and finish were not read",
+        "board(s) whose stack-up colors, materials, copper weights and finish were not read",
     );
     let mut notes = r.tally.into_notes();
     notes.sort_by_key(|n| match n.severity {

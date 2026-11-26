@@ -2,7 +2,7 @@ Original test board made for Dutchman Electronics. Released under CC0 1.0 (publi
 
 one-zone: a filled copper zone with a via it keeps clear of.
 
-Made with KiCad 9.0.9 (file version 20241229) by fixtures/kicad/build_boards.py. KiCad shows coordinates in millimetres with Y pointing down; the board's top-left corner is at page position (100, 100), and every number below is relative to that corner (so add 100 to x and y for the page position). The reader gives Y up: model x = 100 + X, model y = -(100 + Y).
+Made with KiCad 9.0.9 (file version 20241229) by fixtures/kicad/build_boards.py. KiCad shows coordinates in millimeters with Y pointing down; the board's top-left corner is at page position (100, 100), and every number below is relative to that corner (so add 100 to x and y for the page position). The reader gives Y up: model x = 100 + X, model y = -(100 + Y).
 
 - Nets: GND (1), SIG (2).
 - Zone on F.Cu, net GND, outline (5,5), (45,5), (45,25), (5,25); minimum width 0.25, clearance 0.5. KiCad filled it (fill saved in the file).

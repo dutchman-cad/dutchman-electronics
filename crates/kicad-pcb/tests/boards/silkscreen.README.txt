@@ -2,10 +2,10 @@ Original test board made for Dutchman Electronics. Released under CC0 1.0 (publi
 
 silkscreen: one of each silkscreen item on F.SilkS.
 
-Made with KiCad 9.0.9 (file version 20241229) by fixtures/kicad/build_boards.py. KiCad shows coordinates in millimetres with Y pointing down; the board's top-left corner is at page position (100, 100), and every number below is relative to that corner (so add 100 to x and y for the page position). The reader gives Y up: model x = 100 + X, model y = -(100 + Y).
+Made with KiCad 9.0.9 (file version 20241229) by fixtures/kicad/build_boards.py. KiCad shows coordinates in millimeters with Y pointing down; the board's top-left corner is at page position (100, 100), and every number below is relative to that corner (so add 100 to x and y for the page position). The reader gives Y up: model x = 100 + X, model y = -(100 + Y).
 
 - Line from (5,5) to (15,5), width 0.15.
 - Arc from (20,5) through (22.12132, 5.878680) to (23,8): a quarter circle of radius 3 about (20,8), width 0.2.
-- Circle centred (35,8), radius 2.0, width 0.15.
+- Circle centered (35,8), radius 2.0, width 0.15.
 - Polygon with corners (5,20), (12,20), (8.5,26), width 0.15.
-- Text "HELLO" at (30,22), 1.5 high, thickness 0.2, centred (KiCad's default justification), not turned.
+- Text "HELLO" at (30,22), 1.5 high, thickness 0.2, centered (KiCad's default justification), not turned.

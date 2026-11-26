@@ -30,7 +30,7 @@ fn near(a: f64, b: f64) -> bool {
 }
 
 /// Equal angles in degrees, whole turns apart or not (KiCad rounds the middle point of an arc to
-/// a nanometre, so the angles are right to about a ten-thousandth of a degree).
+/// a nanometer, so the angles are right to about a ten-thousandth of a degree).
 fn same_angle(a: f64, b: f64) -> bool {
     let d = (a - b).rem_euclid(360.0);
     d < 0.001 || d > 359.999
@@ -464,7 +464,7 @@ fn silkscreen_lines_arcs_circles_polygons_and_text() {
     );
     let circle = arcs.iter().find(|a| a.2 == a.3).unwrap();
     assert!(at(circle.0, 35.0, 8.0) && near(circle.1, 2.0) && near(circle.4, 0.15));
-    // The text: "HELLO" centred on (30, 22). The model anchors a text at its baseline's left
+    // The text: "HELLO" centered on (30, 22). The model anchors a text at its baseline's left
     // end, so the reader moves it by half an estimated width (5 letters, 0.6 of the height
     // each) and half the height. The turn is 0.
     assert_eq!(b.texts.len(), 1);
@@ -509,7 +509,7 @@ fn a_filled_zone_comes_as_copper_with_its_gap_around_the_via() {
     let (x0, y0, x1, y1) = bounds(contour);
     assert!(near(x0, 105.0) && near(x1, 145.0) && near(y0, -125.0) && near(y1, -105.0));
     assert!((area(contour) - 800.0).abs() < 0.05, "{}", area(contour));
-    // One hole: the gap round the via at (25, 15), 0.9 from its centre.
+    // One hole: the gap round the via at (25, 15), 0.9 from its center.
     assert_eq!(holes.len(), 1);
     for s in &holes[0].segments {
         let Segment::Line { from, .. } = s else {
@@ -608,8 +608,8 @@ fn a_pour_round_a_pad_and_a_via_has_one_hole_for_each() {
         let (contour, holes) = regions[0];
         assert!((area(contour) - 800.0).abs() < 0.05, "{name}");
         assert_eq!(holes.len(), 2, "{name}");
-        // The via's gap: a disc of radius 0.4 + 0.5, centred on (30, 15).
-        // The pad's gap: a disc of radius 0.8 + 0.5 centred on (15, 15), with the four 0.5 mm
+        // The via's gap: a disc of radius 0.4 + 0.5, centered on (30, 15).
+        // The pad's gap: a disc of radius 0.8 + 0.5 centered on (15, 15), with the four 0.5 mm
         // spokes of the thermal relief left as copper, pi * 1.3^2 pi * 1.3^2 less four 0.5 wide spokes running from the drill (radius 0.4): 3.470.
         let mut found = [false, false];
         for h in holes {
@@ -786,7 +786,7 @@ fn a_stackup_kicad_wrote_gives_the_thickness_without_a_note() {
 }
 
 /// The polygon pads KiCad's own Gerber export drew (tests/gerber/<board>-<layer>.corners.txt, made
-/// by fixtures/kicad/gerber_corners.py): the pad, its centre and its corners, in board coordinates.
+/// by fixtures/kicad/gerber_corners.py): the pad, its center and its corners, in board coordinates.
 fn gerber_pads(board: &str, layer: &str) -> Vec<(String, Point, Vec<Point>)> {
     let path = format!(
         "{}/tests/gerber/{board}-{layer}.corners.txt",

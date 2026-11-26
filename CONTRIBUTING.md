@@ -4,7 +4,7 @@ You design boards. You do not have to be a programmer. This project is built to 
 
 ## The idea in one minute
 
-An Altium `.PcbDoc` file is a box with labelled drawers inside (a "container"). Each drawer holds one kind of data: board settings, tracks, components, text. We:
+An Altium `.PcbDoc` file is a box with labeled drawers inside (a "container"). Each drawer holds one kind of data: board settings, tracks, components, text. We:
 
 1. open the box and list the drawers (done),
 2. learn what is in each drawer by making tiny test boards and watching what changes,
@@ -45,7 +45,7 @@ Make boards that are as small and boring as possible, one new thing at a time:
 3. `one-track.PcbDoc`: the rectangle plus one top-layer track, 10 mm long, 0.5 mm wide.
 4. `one-resistor.PcbDoc`: a single 0603 resistor with a 3D model, designator `R1`, at a known position.
 
-Write the exact numbers down in a `README.txt` beside each file (where you placed things, in millimetres), and the Altium version that saved it (e.g. `Altium Designer 26.12.2`). Those numbers are the "right answer" the tests check against; the version tells us which file layout a board uses.
+Write the exact numbers down in a `README.txt` beside each file (where you placed things, in millimeters), and the Altium version that saved it (e.g. `Altium Designer 26.12.2`). Those numbers are the "right answer" the tests check against; the version tells us which file layout a board uses.
 
 Then put each board in `crates/altium-pcbdoc/tests/boards/` with its `README.txt` (either `README.txt` in the board's own folder, or `<board name>.README.txt` beside it), and this line at the top of that file:
 
@@ -53,19 +53,19 @@ Then put each board in `crates/altium-pcbdoc/tests/boards/` with its `README.txt
 Original test board made for Dutchman Electronics. Released under CC0 1.0 (public domain): https://creativecommons.org/publicdomain/zero/1.0/
 ```
 
-CC0 means anyone may use it for anything with no conditions. Do not add a board without that line; a test refuses boards that lack it. Do not add 3D models you did not make or that you downloaded; use a simple box you modelled yourself.
+CC0 means anyone may use it for anything with no conditions. Do not add a board without that line; a test refuses boards that lack it. Do not add 3D models you did not make or that you downloaded; use a simple box you modeled yourself.
 
 ### Check a board for personal traces before sharing it
 
 A board file can carry more than the board: the folder it was saved in, a user or computer name,
-a company or licence name. Before a board leaves your computer (a pull request, a zip, a chat), run:
+a company or license name. Before a board leaves your computer (a pull request, a zip, a chat), run:
 
 ```sh
 cargo run -- privacy-check path/to/board.PcbDoc --watch "Your Name" --watch "Your Company" --watch "your-login"
 ```
 
 Add a `--watch` for anything that would point to you or your employer: your name, your Windows
-login, your computer's name, your company, your licence or serial number. It searches every part
+login, your computer's name, your company, your license or serial number. It searches every part
 of the file, in both text encodings Altium uses, ignoring upper and lower case. It must end with
 `clean`. If it does not, it shows where the text is; tell us in #electronics-dev (without pasting
 the personal text itself) and we will work out how the builder script blanks it.
@@ -95,19 +95,19 @@ boards with KiCad 9 in a container (needs podman).
 
 Larger real-world boards from other people's open-hardware projects go in
 `crates/kicad-pcb/tests/open-hardware/<board>/`, one folder per board. These are the only boards
-that may carry a licence line other than the CC0 one, and only with one of these licences:
+that may carry a license line other than the CC0 one, and only with one of these licenses:
 
-| Licence line id | What it asks of us |
+| License line id | What it asks of us |
 |---|---|
 | `CC0-1.0` | nothing |
-| `CC-BY-4.0` | name the creator, the licence and the source, and say it was changed |
+| `CC-BY-4.0` | name the creator, the license and the source, and say it was changed |
 | `CC-BY-SA-4.0` | the same, and the board file (and any changed copy of it) stays under CC BY-SA 4.0 |
 
-We accept only version 4.0 of the two attribution licences, and no `-NC` (non-commercial) or
+We accept only version 4.0 of the two attribution licenses, and no `-NC` (non-commercial) or
 `-ND` (no changes) variant, because we must be free to re-save a board and to ship the repository
 commercially. Reading a board with our code does not make our code a copy of it, so the
-Apache-2.0 licence of the rest of the repository stays as it is; the board folder keeps its own
-licence. CERN-OHL, TAPR, GPL-family and other hardware licences are not accepted for now: ask first.
+Apache-2.0 license of the rest of the repository stays as it is; the board folder keeps its own
+license. CERN-OHL, TAPR, GPL-family and other hardware licenses are not accepted for now: ask first.
 
 Rules for such a folder (the test `boards_are_ours.rs` enforces them):
 
@@ -118,13 +118,13 @@ Rules for such a folder (the test `boards_are_ours.rs` enforces them):
 - The board comes from the project's own published repository or release, never from KiCad's
   source repositories (they are GPL: see [LEGAL.md](LEGAL.md)). The download goes in its own empty
   directory and nothing in it is run.
-- `README.txt` starts with this line, with the id and URL of one accepted licence:
-  `Openly licensed board by others, not CC0. Licence: CC-BY-4.0, https://creativecommons.org/licenses/by/4.0/`
+- `README.txt` starts with this line, with the id and URL of one accepted license:
+  `Openly licensed board by others, not CC0. License: CC-BY-4.0, https://creativecommons.org/licenses/by/4.0/`
 - The README.txt then names the source URL (`Source: https://...`), the exact commit or tag, the
-  attribution the licence asks for (`Attribution ...`, not needed for CC0), how the file was
+  attribution the license asks for (`Attribution ...`, not needed for CC0), how the file was
   re-saved, and the key numbers as KiCad itself reports them (`- Outline`, `- Thickness`,
   `- Copper layers`, `- Footprints`), never numbers from our own reader.
-- The licence text as the project published it is in `LICENSE-<id>.txt` beside the board.
+- The license text as the project published it is in `LICENSE-<id>.txt` beside the board.
 - The board is privacy-scanned before it is committed (paths, e-mail addresses, computer names:
   the checks `privacy-check` runs, repeated on the KiCad text by a test in `crates/dutchman-electronics`).
 

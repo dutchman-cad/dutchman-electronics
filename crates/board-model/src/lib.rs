@@ -9,7 +9,7 @@
 //! board file --InputFormat::read--> Board (this crate) --Dutchman's writer--> .sc
 //! ```
 //!
-//! All lengths are millimetres, all angles degrees, counter-clockwise, Y up.
+//! All lengths are millimeters, all angles degrees, counter-clockwise, Y up.
 
 /// The largest board file this module will open, in bytes. Anything bigger is refused up front.
 pub const MAX_INPUT_BYTES: usize = 256 << 20;
@@ -18,7 +18,7 @@ pub const MAX_INPUT_BYTES: usize = 256 << 20;
 // The neutral board model
 // ---------------------------------------------------------------------------------------------
 
-/// A point on the board, in millimetres.
+/// A point on the board, in millimeters.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Point {
     pub x: f64,
@@ -110,7 +110,7 @@ pub struct Outline {
     pub cutouts: Vec<Contour>,
 }
 
-/// A colour as a board file records it: 8-bit sRGB, and how opaque it is (1 = solid, 0 = clear).
+/// A color as a board file records it: 8-bit sRGB, and how opaque it is (1 = solid, 0 = clear).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Color {
     pub r: u8,
@@ -139,7 +139,7 @@ pub struct SurfaceFinish {
     /// The material, such as `Nickel, Gold` or `PbSn`.
     pub material: String,
     pub color: Option<Color>,
-    /// Millimetres.
+    /// Millimeters.
     pub thickness: Option<f64>,
 }
 
@@ -197,7 +197,7 @@ pub enum CopperItem {
     },
     /// A pad whose shape is not a plain [`PadShape`]: a trapezoid, a rectangle with chamfered
     /// corners, or a custom shape. The copper is the union of `shapes`, closed contours in board
-    /// coordinates that may overlap (an anchor plus drawn pieces). `at` is the pad's centre: the
+    /// coordinates that may overlap (an anchor plus drawn pieces). `at` is the pad's center: the
     /// hole, when there is one, is drilled there.
     PolygonPad {
         layer: usize,
@@ -310,12 +310,12 @@ pub enum ModelSource {
 pub struct ModelRef {
     pub name: String,
     pub source: ModelSource,
-    /// Model offset from the component origin, millimetres.
+    /// Model offset from the component origin, millimeters.
     pub offset: [f64; 3],
     /// Model rotation about X, Y, Z in degrees.
     pub rotation_deg: [f64; 3],
     /// What an [`ModelSource::Extruded`] body is drawn in, when the file says. `None` for a model
-    /// file, which brings its own colours.
+    /// file, which brings its own colors.
     pub color: Option<Color>,
 }
 
@@ -356,7 +356,7 @@ pub struct Board {
     pub graphics: Vec<Graphic>,
     pub texts: Vec<Text>,
     pub components: Vec<Placement>,
-    /// Solder mask and silkscreen colours.
+    /// Solder mask and silkscreen colors.
     pub appearance: Appearance,
     /// How far the solder mask opens past the edge of each bare pad, in mm, when the file says.
     /// `None` means the file does not say; readers of the board then use
@@ -423,7 +423,7 @@ pub struct EmbeddedFont {
     pub style: String,
     pub bold: bool,
     pub italic: bool,
-    /// The TrueType file itself. It keeps its own licence, which the file names. The reader
+    /// The TrueType file itself. It keeps its own license, which the file names. The reader
     /// hands it over as the board stores it, without checking that it is a TrueType file, so
     /// a program that draws with it has to treat it as untrusted input.
     pub data: Vec<u8>,

@@ -12,7 +12,7 @@
 //! - `MODEL.MODELTYPE=0` is an extruded body: its shape is that outline, from `STANDOFFHEIGHT`
 //!   (0) up to `OVERALLHEIGHT` (17.7165 mil, 0.45 mm). `MODEL.MODELTYPE=1` is a STEP model:
 //!   `MODELID` names an entry of `/Models/Data`, `MODEL.EMBED=TRUE` says it is in the file, and
-//!   `MODEL.2D.X`/`MODEL.2D.Y` (R1's centre on `one-step-resistor`), `MODEL.3D.ROTX/ROTY/ROTZ`
+//!   `MODEL.2D.X`/`MODEL.2D.Y` (R1's center on `one-step-resistor`), `MODEL.3D.ROTX/ROTY/ROTZ`
 //!   (degrees) and `MODEL.3D.DZ` place the model's origin.
 //! - `/Models/Data` is a run of records, each a `u32` length and text, with `ID`, `NAME`
 //!   (`box-1608.step`) and `EMBED=TRUE`. The n-th record (from 0) is stored in the stream
@@ -21,17 +21,17 @@
 //!   `box-1608.step` in `/Models/1`); on `shared-step-model` two parts use one model, stored once,
 //!   and both bodies give the same `MODELID`. The reader hands each used model over unpacked, once,
 //!   in `ReadOutcome::models`; a part's `ModelSource::Embedded` names it by that ID.
-//! - With the off-centre STEP box `box-offset.step` (x 0 to 1.6 in the model), `MODEL.3D.ROTZ`
+//! - With the off-center STEP box `box-offset.step` (x 0 to 1.6 in the model), `MODEL.3D.ROTZ`
 //!   follows the part: 0 on `one-offset-step-resistor`, 90 on `one-rotated-step-resistor` (R1 at
-//!   90), 180 on `one-bottom-step-resistor` (R1 flipped: `LAYER=BOTTOM`, rotation 180, centre
-//!   moved to (25.4, 15), `BODYPROJECTION=1`). `MODEL.2D.X/Y` is R1's centre on all three. So on
+//!   90), 180 on `one-bottom-step-resistor` (R1 flipped: `LAYER=BOTTOM`, rotation 180, center
+//!   moved to (25.4, 15), `BODYPROJECTION=1`). `MODEL.2D.X/Y` is R1's center on all three. So on
 //!   the part itself the model is the same each time; the turn on the part is ROTZ minus the
 //!   part's rotation, and the flip is the part's side.
 //! - On `one-rotated-resistor` (R1 at 90 degrees) the extruded box's outline is stored turned:
 //!   x 24.6 to 25.4, y 14.2 to 15.8; turned back by the part's rotation it is the same
 //!   (-0.8, -0.4) to (0.8, 0.4) box as on `one-resistor`. On `one-bottom-resistor` the body has
 //!   `BODYPROJECTION=1` (0 on the top-side boards).
-//! - The lopsided extruded outline (0, -0.4), (1.6, -0.4), (1.6, 0), (0, 0.4) about R1's centre
+//! - The lopsided extruded outline (0, -0.4), (1.6, -0.4), (1.6, 0), (0, 0.4) about R1's center
 //!   (`one-offset-extruded-resistor`) shows how a flip stores it: on
 //!   `one-bottom-extruded-resistor` R1 is at (25.4, 15), rotation 180, and the outline is stored
 //!   as (23.8, 14.6), (23.8, 15), (25.4, 15.4), (25.4, 14.6). Turned back by 180 degrees that is
@@ -39,7 +39,7 @@
 //!   it is rotated. So the reader negates y again for a bottom-side part, and the outline is the
 //!   same on both boards. `one-bottom-rotated-extruded-resistor` (R1 flipped, then at 90) gives the
 //!   same outline too.
-//! - A STEP model turned 30 degrees on R1 with its origin at (-0.350, 0.606) from R1's centre
+//! - A STEP model turned 30 degrees on R1 with its origin at (-0.350, 0.606) from R1's center
 //!   (`one-turned-step-resistor`, top, ROTZ 30) keeps that place on the part when R1 is flipped
 //!   (`one-bottom-turned-step-resistor`, R1 at 180, ROTZ 210) and then turned to 90
 //!   (`one-bottom-rotated-turned-step-resistor`, ROTZ 300): turned back by the part's rotation,
@@ -58,11 +58,11 @@
 //!   15.918). On the flipped `one-bottom-y-tilted-step-resistor` ROTY stays 90 and, in the part's
 //!   own frame, offset (0, 0.4) and no turn give Altium's x 24.55 to 25; a tilt of -90 would put
 //!   it at x 25 to 25.45. So a flip keeps both tilts, and the reader hands them over unchanged.
-//! - `BODYCOLOR3D` and `BODYOPACITY3D` are a body's colour, a Windows COLORREF in decimal (red in
+//! - `BODYCOLOR3D` and `BODYOPACITY3D` are a body's color, a Windows COLORREF in decimal (red in
 //!   the low byte), and opacity. Every body on the earlier boards has 8421504, (128, 128, 128),
 //!   and 1.000; `one-colored-body-resistor` (R1's extruded box set to (32, 128, 224) and 0.5)
-//!   has 14712864 and 0.500. The reader hands the colour over for extruded bodies only: a STEP
-//!   model brings its own colours, and its body keeps the grey all the same.
+//!   has 14712864 and 0.500. The reader hands the color over for extruded bodies only: a STEP
+//!   model brings its own colors, and its body keeps the gray all the same.
 //! - `/ShapeBasedComponentBodies6/Data` repeats the bodies; see `shape_based.rs`.
 //! - A linked model (the body's Source set to "Link to Model", `linked-model/` with
 //!   `box-1608.step` next to the board) is not in the file: `/Models/Data` is empty and the body
@@ -91,7 +91,7 @@ use crate::copper::{read_u16, read_u32};
 const BODY_RECORD: u8 = 0x0c;
 /// Bytes at the start of a body record's body that come before its text length.
 const BODY_SKIPPED: usize = 18;
-/// Millimetres per internal unit (1/10000 mil).
+/// Millimeters per internal unit (1/10000 mil).
 const MM_PER_UNIT: f64 = 0.0254 / 10_000.0;
 const MAX_RECORDS: usize = 1_000_000;
 const MAX_VERTICES: usize = 100_000;
@@ -184,7 +184,7 @@ pub(crate) fn attach(
         notes.push(Note {
             severity: Severity::Warning,
             message: format!(
-                "{no_color} extruded 3D bod(ies) have a colour or opacity that could not be read;                  left without a colour"
+                "{no_color} extruded 3D bod(ies) have a color or opacity that could not be read;                  left without a color"
             ),
         });
     }
@@ -317,8 +317,8 @@ fn unpack_within(
     models
 }
 
-/// The model of one body record and whether its colour could be read (always true for a model
-/// file, which has no colour here), or why it was left out.
+/// The model of one body record and whether its color could be read (always true for a model
+/// file, which has no color here), or why it was left out.
 fn model(
     body: &[u8],
     placement: &Placement,
@@ -448,7 +448,7 @@ fn stored_checksum(value: Option<&str>) -> Option<u32> {
         .or_else(|| i32::try_from(v).ok().map(|s| s as u32))
 }
 
-/// A body's colour (`BODYCOLOR3D`, a COLORREF) and opacity (`BODYOPACITY3D`, 1 when missing).
+/// A body's color (`BODYCOLOR3D`, a COLORREF) and opacity (`BODYOPACITY3D`, 1 when missing).
 fn body_color(props: &Properties) -> Option<Color> {
     let opacity = match props.get("BODYOPACITY3D") {
         None => Some(1.0),
@@ -756,7 +756,7 @@ mod tests {
     }
 
     #[test]
-    fn a_body_colour_is_read_with_its_opacity() {
+    fn a_body_color_is_read_with_its_opacity() {
         let color = |text: &str| body_color(&Properties::parse(text.as_bytes()));
         let blue = |opacity| {
             Some(Color {

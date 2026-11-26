@@ -1,5 +1,5 @@
 //! The outlines of pads that are not a plain circle, rectangle or oval: rectangles with chamfered
-//! corners, trapezoids and custom pads. Everything here works in a pad's own frame (centre at the
+//! corners, trapezoids and custom pads. Everything here works in a pad's own frame (center at the
 //! origin, Y up, not turned); [`placed`] moves a contour onto the board.
 //!
 //! The corner and delta conventions come from KiCad's own Gerber export of our `pad-shapes`
@@ -194,7 +194,7 @@ pub fn capsule(a: Point, b: Point, width: f64) -> Contour {
 }
 
 /// A contour of the pad's own frame turned `rotation_deg` counter-clockwise and moved so the
-/// pad's centre is at `at`.
+/// pad's center is at `at`.
 pub fn placed(c: &Contour, at: Point, rotation_deg: f64) -> Contour {
     let (s, k) = rotation_deg.to_radians().sin_cos();
     let map = |p: Point| pt(at.x + p.x * k - p.y * s, at.y + p.x * s + p.y * k);

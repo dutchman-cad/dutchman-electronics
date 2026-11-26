@@ -9,7 +9,7 @@ linked-model: a 3D model the board links to instead of holding
 Made on 2026-11-25 in Altium Designer 26.12.2, by hand.
 
 box-1608.step is the same file as the one embedded in ../one-step-resistor.PcbDoc: my own box
-1.600 x 0.800 x 0.450, centred on its origin in X and Y, from z = 0 to z = 0.450, written by this
+1.600 x 0.800 x 0.450, centered on its origin in X and Y, from z = 0 to z = 0.450, written by this
 repository's board-step crate (6493 bytes, LF line ends).
 
 The board:
@@ -38,7 +38,7 @@ What the file keeps
     IDENTIFIER=98,111,120,45,49,54,48,56
                                    the body's Identifier "box-1608", as character codes
 
-and the same placement as on one-step-resistor: MODEL.2D.X/Y at R1's centre, ROTX, ROTY and
+and the same placement as on one-step-resistor: MODEL.2D.X/Y at R1's center, ROTX, ROTY and
 ROTZ 0, DZ 0. A stream of its own, /ModelsNoEmbed/Data (empty on the boards with embedded
 models), lists the linked model the way /Models/Data lists an embedded one, one record of a
 u32 length and text:

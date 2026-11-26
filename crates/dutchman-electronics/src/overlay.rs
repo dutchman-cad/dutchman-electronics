@@ -6,7 +6,7 @@
 //! overlay are united, every drill is cut out, and masked copper stops where a pad begins. Arcs
 //! are polylines within [`CHORD`] mm. Up to eight overlays come out, for each side: copper under
 //! the mask (`masked`), bare pad copper (`bare`), silkscreen, and the solder mask itself (the
-//! board face less the bare pads, the masked copper and every drill). Each carries its colour from
+//! board face less the bare pads, the masked copper and every drill). Each carries its color from
 //! [`crate::colors`] and a `thickness`: every area is extruded from its `z` away from the board.
 //! Copper starts at the face and is [`COPPER_THICKNESS`] thick, the mask starts there too and is
 //! [`MASK_THICKNESS`] thick (so copper stands proud of it), silkscreen starts on top of the
@@ -196,7 +196,7 @@ fn sweep(start_deg: f64, end_deg: f64) -> f64 {
 
 /// An arc stroke with round ends: the band between `radius - width / 2` and `radius + width /
 /// 2`, with a half circle at each end. A whole circle is a ring (an outline with one hole). An
-/// arc narrower than its stroke (the band would reach the centre) is drawn as round-ended
+/// arc narrower than its stroke (the band would reach the center) is drawn as round-ended
 /// pieces along its polyline instead.
 fn arc_stroke(
     center: Point,
@@ -373,8 +373,8 @@ fn contour(c: &Contour) -> Option<Polygon> {
 /// mask would cover its rim.
 ///
 /// The circumscribed polygon of an arc of step angle `d` (the angle one chord spans) touches the
-/// arc at the chord points `k * d` (both ends included, so it joins its neighbours exactly) and
-/// has its corners where two neighbouring tangents meet: at the middle angles `(k + 1/2) * d`, at
+/// arc at the chord points `k * d` (both ends included, so it joins its neighbors exactly) and
+/// has its corners where two neighboring tangents meet: at the middle angles `(k + 1/2) * d`, at
 /// radius `r / cos(d / 2)`. Each edge lies on a tangent of the circle, so the polygon holds the
 /// arc and strays at most `r * (1 / cos(d / 2) - 1)` from it. [`arc_points`] draws with
 /// `d <= 360 / MIN_CIRCLE_SIDES` = 11.25 degrees (and, once a chord sags less than [`CHORD`],
@@ -420,7 +420,7 @@ fn contour_covering(c: &Contour) -> Option<Polygon> {
                 ..
             } => {
                 let sweep_deg = segment.sweep_deg().unwrap_or(360.0);
-                // The centre is on the left of travel for a counter-clockwise arc, which is the
+                // The center is on the left of travel for a counter-clockwise arc, which is the
                 // region's side when the contour winds counter-clockwise.
                 if (sweep_deg > 0.0) == own_ccw {
                     arc_points_covering(center, radius, start_deg, sweep_deg, &mut ring);
@@ -1084,7 +1084,7 @@ fn overlays_within(
             // The top side stacks up from the face at z = thickness, the bottom down from z = 0.
             let base = if sign > 0.0 { thickness } else { 0.0 };
             let at = |lift: f64| base + sign * lift;
-            // The file's colours for this side, or the defaults.
+            // The file's colors for this side, or the defaults.
             let (mask_file, silk_file, finish_file) = if sign > 0.0 {
                 (
                     &board.appearance.top_solder_mask,

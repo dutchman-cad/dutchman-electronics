@@ -6,7 +6,7 @@
 //! - `parts`: placed instances, `{name, model, transform, notes}`; `name` is the stable
 //!   identity (the board itself is `Board`, each component its designator),
 //! - `overlays`: copper, silkscreen and solder mask as flat areas on the board's faces (see
-//!   `overlay`), each with a colour,
+//!   `overlay`), each with a color,
 //! - a `Plating` part when the board has plated holes: the copper lining them, one tube each, all
 //!   in one STEP file,
 //! - `notes`: everything read but not in the package, as `Info`, `Degraded` or `Dropped`.
@@ -47,7 +47,7 @@ pub const PLATING_PART: &str = "Plating";
 /// The plating's model id and file.
 pub const PLATING_MODEL: &str = "plating";
 pub const PLATING_FILE: &str = "plating.step";
-/// How thick the copper lining a plated hole is, in mm (a common 25 micrometres). Board files do
+/// How thick the copper lining a plated hole is, in mm (a common 25 micrometers). Board files do
 /// not give it, so it is assumed and a note says so.
 pub const PLATING_THICKNESS: f64 = 0.025;
 
@@ -694,7 +694,7 @@ fn components(list: &[Placement], embedded: &[EmbeddedModel], thickness: f64) ->
             "transform": compose(&part_frame(p, thickness), &on_part),
             "notes": part_notes,
         });
-        // An extruded body the file colours; an embedded STEP model keeps its own colours.
+        // An extruded body the file colors; an embedded STEP model keeps its own colors.
         if let Some(color) = &model.color {
             if color.opacity <= 0.0 {
                 placed.notes.push(json!({
@@ -914,7 +914,7 @@ mod tests {
     #[test]
     fn a_bottom_side_part_is_flipped_onto_the_bottom_face() {
         // one-bottom-step-resistor's README: R1 flipped is at (25.4, 15) with rotation 180, and
-        // the off-centre box (x 0 to 1.6 in the model) spans x 23.8 to 25.4, projecting down.
+        // the off-center box (x 0 to 1.6 in the model) spans x 23.8 to 25.4, projecting down.
         let placed = components(&[part("R1", 25.4, 15.0, 180.0, Side::Bottom)], &[], 1.6);
         let t = &placed.parts[0]["transform"];
         assert!(close(apply(t, [0.0, 0.0, 0.0]), [25.4, 15.0, 0.0]));
@@ -1401,13 +1401,13 @@ mod tests {
 
     #[cfg(feature = "altium")]
     #[test]
-    fn overlays_and_the_board_part_carry_their_colours() {
+    fn overlays_and_the_board_part_carry_their_colors() {
         let package = package_of("one-plated-pad");
         let m = &package.manifest;
-        let colour = |name: &str| overlay_named(m, "one-plated-pad", name)["color"].clone();
+        let color = |name: &str| overlay_named(m, "one-plated-pad", name)["color"].clone();
         for side in ["top", "bottom"] {
-            assert_eq!(colour(&format!("Solder mask {side}")), "#247832");
-            assert_eq!(colour(&format!("Copper {side} pads")), "#d4af37");
+            assert_eq!(color(&format!("Solder mask {side}")), "#247832");
+            assert_eq!(color(&format!("Copper {side} pads")), "#d4af37");
         }
         assert_eq!(part_named(m, "Board")["color"], "#c8b27a");
         assert_eq!(part_named(m, "Board")["metallic"], 0.0);
@@ -1438,7 +1438,7 @@ mod tests {
             overlay_named(&silk.manifest, "one-overlay-line", "Silkscreen top")["color"],
             "#fafafa"
         );
-        // An extruded body has the file's colour (Altium's default grey, 128, 128, 128, opaque).
+        // An extruded body has the file's color (Altium's default gray, 128, 128, 128, opaque).
         let resistor = package_of("one-resistor");
         let r1 = part_named(&resistor.manifest, "R1");
         assert_eq!(
@@ -1449,7 +1449,7 @@ mod tests {
 
     #[cfg(feature = "altium")]
     #[test]
-    fn the_files_mask_and_silkscreen_colours_win() {
+    fn the_files_mask_and_silkscreen_colors_win() {
         // README.txt, sixteenth batch: mask 17, 85, 204 and silkscreen 255, 255, 0 on both sides.
         let blue = package_of("one-blue-mask-resistor");
         for side in ["top", "bottom"] {
@@ -1487,7 +1487,7 @@ mod tests {
         yellow_board.graphics = line.graphics.clone();
         let (overlays, _) = crate::overlay::overlays(&yellow_board, &[], 1.6, BOARD_PART);
         assert_eq!(find(&overlays, "Silkscreen top")["color"], "#ffff00");
-        // Silkscreen colours stay at the file's other values on the blue board's side.
+        // Silkscreen colors stay at the file's other values on the blue board's side.
         blue_board.graphics = line.graphics;
         let (overlays, _) = crate::overlay::overlays(&blue_board, &[], 1.6, BOARD_PART);
         assert_eq!(find(&overlays, "Silkscreen top")["color"], "#fafafa");
@@ -1495,7 +1495,7 @@ mod tests {
 
     #[cfg(feature = "altium")]
     #[test]
-    fn the_finish_process_colours_the_bare_pads() {
+    fn the_finish_process_colors_the_bare_pads() {
         // README.txt, seventeenth batch: ENIG on the one board, HASL on the other. The top side
         // of one-resistor holds its two SMD pads; the bottom has none to draw.
         let enig = package_of("one-enig-resistor");
@@ -1584,7 +1584,7 @@ mod tests {
 
     #[cfg(feature = "altium")]
     #[test]
-    fn a_bottom_only_finish_colours_only_the_bottom_pads() {
+    fn a_bottom_only_finish_colors_only_the_bottom_pads() {
         // one-bottom-resistor has its pads on the bottom; give that side HASL and the top nothing.
         let path = format!(
             "{}/../altium-pcbdoc/tests/boards/one-bottom-resistor.PcbDoc",
@@ -1618,7 +1618,7 @@ mod tests {
 
     #[cfg(feature = "altium")]
     #[test]
-    fn a_coloured_extruded_body_gives_its_part_colour_and_opacity() {
+    fn a_colored_extruded_body_gives_its_part_color_and_opacity() {
         // README.txt: R1's body is 32, 128, 224 at opacity 0.5.
         let package = package_of("one-colored-body-resistor");
         let r1 = part_named(&package.manifest, "R1");
@@ -1626,7 +1626,7 @@ mod tests {
         assert_eq!(r1["opacity"], 0.5);
         assert_eq!(r1["metallic"], 0.0);
         assert_eq!(r1["roughness"], 0.6);
-        // An embedded STEP model keeps its own colours.
+        // An embedded STEP model keeps its own colors.
         let step = package_of("one-step-resistor");
         assert!(part_named(&step.manifest, "R1").get("color").is_none());
         assert!(part_named(&step.manifest, "R1").get("opacity").is_none());
@@ -1810,7 +1810,7 @@ mod tests {
             drill: 0.5,
         };
         // A 20 x 10 board with a 4 x 4 cutout from (8, 3). Via 1 is clear; via 2 touches the
-        // board edge (its centre is 0.1 from x = 0, less than its 0.25 radius); via 3 is inside
+        // board edge (its center is 0.1 from x = 0, less than its 0.25 radius); via 3 is inside
         // the cutout. board-step cuts only the first, so only it is plated.
         let board = Board {
             thickness: Some(1.6),
@@ -1951,7 +1951,7 @@ mod tests {
 
     #[cfg(feature = "altium")]
     #[test]
-    fn the_flipped_off_centre_body_lands_where_altium_drew_it() {
+    fn the_flipped_off_center_body_lands_where_altium_drew_it() {
         // one-bottom-extruded-resistor's README: the outline on the board is (23.8, 14.6),
         // (23.8, 15), (25.4, 15.4), (25.4, 14.6), projecting from the bottom. In R1's own frame
         // that body is (1.6, -0.4), (1.6, 0), (0, 0.4), (0, -0.4) (the same as on the top-side
@@ -2055,7 +2055,7 @@ mod tests {
             .sum();
         assert!(holes > 0, "the pour has no holes");
         // The SIG track (25.8, 15) to (30, 15), 0.25 wide, lies in a clearance gap of the GND
-        // pour: its centre is copper only because of the track, and the gap shows on both sides.
+        // pour: its center is copper only because of the track, and the gap shows on both sides.
         assert!(covered(copper, 27.9, 15.0));
         assert!(!covered(copper, 27.9, 15.2));
         assert!(!covered(copper, 27.9, 14.8));

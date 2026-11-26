@@ -116,7 +116,7 @@ fn distance(a: Point, b: Point) -> f64 {
     (a.x - b.x).hypot(a.y - b.y)
 }
 
-/// The point of the circle nearest to `p`; `p` itself when it is the centre.
+/// The point of the circle nearest to `p`; `p` itself when it is the center.
 fn project_on_circle(center: Point, radius: f64, p: Point) -> Point {
     let d = distance(center, p);
     if d == 0.0 {
@@ -222,7 +222,7 @@ fn segments_meet(a0: Point, a1: Point, b0: Point, b1: Point) -> bool {
     !apart(d1, d2) && !apart(d3, d4)
 }
 
-/// True when a closed polygon's edges meet only where neighbours share a corner.
+/// True when a closed polygon's edges meet only where neighbors share a corner.
 fn simple(points: &[Point]) -> bool {
     let n = points.len();
     let edge = |i: usize| {
@@ -234,7 +234,7 @@ fn simple(points: &[Point]) -> bool {
         let Some((a0, a1)) = edge(i) else {
             return false;
         };
-        // Skip the edge itself and its two neighbours, which share a corner with it.
+        // Skip the edge itself and its two neighbors, which share a corner with it.
         for j in i.saturating_add(2)..n {
             if i == 0 && j + 1 == n {
                 continue;
@@ -349,7 +349,7 @@ fn contour_edges(contour: &Contour) -> Result<Vec<Edge2>, String> {
                 clockwise,
             } => {
                 if !finite(center) || !radius.is_finite() || radius <= TOLERANCE {
-                    return Err("an arc has an unusable centre or radius".into());
+                    return Err("an arc has an unusable center or radius".into());
                 }
                 if !start_deg.is_finite() || !end_deg.is_finite() {
                     return Err("an arc has an unusable angle".into());
@@ -481,7 +481,7 @@ fn bounds(points: &[Point]) -> (Point, Point) {
     (lo, hi)
 }
 
-/// A drilled hole: centre and radius.
+/// A drilled hole: center and radius.
 #[derive(Clone, Copy, Debug)]
 struct Drill {
     at: Point,

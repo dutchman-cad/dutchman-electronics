@@ -5,7 +5,7 @@ python3 /work/fixtures/kicad/build_boards.py /work/crates/kicad-pcb/tests/boards
 only places objects at the numbers written below and saves the boards. It is our own code and
 never feeds format knowledge into the reader: the reader learns only from the saved files and the
 numbers in each board's README.txt. KiCad's Y axis points down; the numbers below are the
-coordinates as KiCad shows them (millimetres, relative to the board's own origin at the page
+coordinates as KiCad shows them (millimeters, relative to the board's own origin at the page
 coordinates X0, Y0).
 """
 import os
@@ -305,7 +305,7 @@ def part(b, ref, at, rot, flip, pads, model):
     return fp
 
 
-# 10. model-placements: four parts with an off-centre pad pair each and a model reference, to
+# 10. model-placements: four parts with an off-center pad pair each and a model reference, to
 #     check where a model lands: U1 and U2 on the bottom, U3 and U4 on the top.
 b = new_board()
 outline_rect(b)
