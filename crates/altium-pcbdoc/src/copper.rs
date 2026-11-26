@@ -44,6 +44,15 @@
 //!   `outline-with-hole` and on every SMD pad.
 //!   Bytes 7..9 are the index of the component the pad belongs to (see `components.rs`);
 //!   its designator becomes the pad's owner.
+//! - Pad shapes (`pad-shapes`, checked against the Gerber file Altium wrote for its top copper):
+//!   shape code 3 is an octagon, a rectangle of the pad's size with each corner cut off at 45
+//!   degrees by a quarter of the shorter side (0.25 on a 2.000 x 1.000 pad, 0.375 on 1.500 x
+//!   1.500). A rounded rectangle keeps code 1 (round) in block 4 and has a block 5 of 651 bytes,
+//!   which no other pad on our boards has: 29 `i32` x sizes and 29 `i32` y sizes (bytes 0..232),
+//!   29 shape bytes (1), 32 corner percentages (bytes 564..596), and at the end the top layer's
+//!   shape (byte 640: 9, rounded rectangle), x size, y size (bytes 641..649) and corner percentage
+//!   (byte 649: 50, 25 or 30 as set). The corner radius is that percentage of half the shorter
+//!   side: 0.25 for 50% of a 2.000 x 1.000 pad, 0.125 for 25%, 0.24 for 30% of 1.600 x 1.600.
 //! - Nets (`one-net`): `/Nets6/Data` is a run of records, each a `u32` length and text with
 //!   `NAME=GND`; the n-th record (from 0) is net n. Bytes 3..5 of a track's body are its net
 //!   index: 0 on `one-net`'s track, `ff ff` for no net.
@@ -74,6 +83,13 @@ const FILL_RECORD: u8 = 0x06;
 const MAX_ANGLE_DEG: f64 = 360.0;
 const PAD_BLOCKS: usize = 6;
 const PAD_GEOMETRY_BLOCK: usize = 4;
+/// The pad block with a size, shape and corner per layer (only rounded rectangles have one).
+const PAD_LAYER_TABLE_BLOCK: usize = 5;
+/// Where in that block the top layer's shape is, and its corner percentage.
+const LAYER_TABLE_TOP_SHAPE: usize = 640;
+const LAYER_TABLE_TOP_CORNER: usize = 649;
+/// The shape code of a rounded rectangle in that block.
+const ROUNDED_RECTANGLE: u8 = 9;
 /// The most records read from one stream before the file is treated as hostile.
 const MAX_RECORDS: usize = 10_000_000;
 /// The most layers named in `/Board6/Data` that are looked at.
@@ -345,6 +361,7 @@ pub(crate) fn pads(
         }
         let mut cursor = at + 1;
         let mut geometry: Option<&[u8]> = None;
+        let mut layer_table: &[u8] = &[];
         for block in 0..PAD_BLOCKS {
             let len = read_u32(data, cursor).ok_or("pad block length cut short")?;
             let start = cursor + 4;
@@ -354,6 +371,8 @@ pub(crate) fn pads(
                 .ok_or("pad block is longer than the stream")?;
             if block == PAD_GEOMETRY_BLOCK {
                 geometry = data.get(start..end);
+            } else if block == PAD_LAYER_TABLE_BLOCK {
+                layer_table = data.get(start..end).unwrap_or_default();
             }
             cursor = end;
         }
@@ -389,10 +408,28 @@ pub(crate) fn pads(
         if middle != top || bottom != top || shapes.iter().any(|s| Some(s) != shapes.first()) {
             uneven += 1;
         }
+        let rounded = (layer_table.get(LAYER_TABLE_TOP_SHAPE) == Some(&ROUNDED_RECTANGLE))
+            .then(|| layer_table.get(LAYER_TABLE_TOP_CORNER).copied())
+            .flatten();
         let shape = match shapes.first() {
+            Some(1) if rounded.is_some() => PadShape::RoundedRectangle {
+                // Percent of half the shorter side, as a share of the whole shorter side.
+                radius_ratio: (f64::from(rounded.unwrap_or_default()) / 200.0).clamp(0.0, 0.5),
+            },
             Some(1) if size_x == size_y => PadShape::Round,
             Some(1) => PadShape::Oval,
             Some(2) => PadShape::Rectangle,
+            Some(3) => {
+                items.push(CopperItem::PolygonPad {
+                    layer,
+                    at: at_point,
+                    shapes: vec![octagon(at_point, size_x, size_y, rotation)],
+                    drill: (hole > 0.0).then_some(hole),
+                    plated,
+                    owner: components.owner(g),
+                });
+                continue;
+            }
             other => {
                 notes.push(Note {
                     severity: Severity::Warning,
@@ -623,6 +660,29 @@ pub(crate) fn regions(
         });
     }
     items
+}
+
+/// An octagonal pad: a `size_x` x `size_y` rectangle about `at` with each corner cut off at 45
+/// degrees by a quarter of the shorter side, turned counter-clockwise by `rotation_deg`.
+fn octagon(at: Point, size_x: f64, size_y: f64, rotation_deg: f64) -> Contour {
+    let (a, b) = (size_x / 2.0, size_y / 2.0);
+    let c = size_x.min(size_y) / 4.0;
+    let (sin, cos) = rotation_deg.to_radians().sin_cos();
+    let corners = [
+        (a, -b + c),
+        (a, b - c),
+        (a - c, b),
+        (-a + c, b),
+        (-a, b - c),
+        (-a, -b + c),
+        (-a + c, -b),
+        (a - c, -b),
+    ]
+    .map(|(x, y)| Point {
+        x: at.x + x * cos - y * sin,
+        y: at.y + x * sin + y * cos,
+    });
+    closed(&corners)
 }
 
 /// Joins the points with straight lines into a closed contour.
