@@ -1,5 +1,5 @@
 Original test board made for Dutchman Electronics. Released under CC0 1.0 (public domain): https://creativecommons.org/publicdomain/zero/1.0/
-Exception: the TrueType font files embedded in one-dejavu-text, one-dejavu-bold-text and one-dejavu-italic-text are not CC0; they keep the DejaVu / Bitstream Vera license (LICENSE-DejaVu.txt). Everything else in those three boards is CC0.
+Exception: the TrueType font files embedded in one-dejavu-text, one-dejavu-bold-text, one-dejavu-italic-text and all-features are not CC0; they keep the DejaVu / Bitstream Vera license (LICENSE-DejaVu.txt). Everything else in those four boards is CC0.
 
 (The first line covers every board in this folder: empty-outline, outline-with-hole, one-track,
 one-resistor, one-via, one-plated-pad, one-rotated-pad, one-oval-pad, one-bottom-track,
@@ -822,12 +822,87 @@ four-layer-planes.PcbDoc  (from empty-outline)
     expansion) to 1.824 around a via, 1.916 to 2.424 around the pad, crossed by four spokes
     0.254 wide at 45, 135, 225 and 315 degrees.
 
+All features: where the reader stands (all-features)
+---------------------------------------------------
+A test board of everything the reader handles, on one board, to see where it stands. It is not a
+reference for the look (that is dense-board). Whenever the reader learns something new, add it
+to this board (by hand or by script, from the board as it is now), describe it below and add a
+check to tests/all_features.rs; whatever this board still loses is listed there as the known
+gaps.
+
+Made on 2026-11-26 from a file copy of dense-board.PcbDoc (all of its parts, nets, tracks, vias,
+pours, silkscreen and 3D bodies stay as described there), partly by hand and partly by my own
+scripts, every scripted change read back and logged:
+1. By hand, in Design > Layer Stack Manager: Insert layer below Top Layer > Plane, and Insert
+   layer above Top Layer > Surface Finish, process ENIG from Altium's list. With the stack kept
+   symmetric Altium added two planes and a finish on each face, with its default names and
+   thicknesses:
+
+        Top Overlay           (no thickness)
+        Top Solder            solder resist   0.010
+        Top Surface Finish    ENIG            0.004   "Nickel, Gold", color #FFFFC400
+        Top Layer             copper          0.035
+        Dielectric 2          prepreg         0.071   (2.8 mil)
+        Layer 1               plane           0.035   GND, pull-back 0.508
+        Dielectric 1          FR-4            1.510
+        Layer 2               plane           0.035   +3V3, pull-back 0.508
+        Dielectric 3          prepreg         0.071   (2.8 mil)
+        Bottom Layer          copper          0.035
+        Bottom Surface Finish ENIG            0.004
+        Bottom Solder         solder resist   0.010
+        Bottom Overlay        (no thickness)
+
+2. By script: the plane nets (PLANE1NETNAME=GND, PLANE2NETNAME=+3V3, nets the board already
+   had); the plane rules stay Altium's defaults (clearance 0.508; relief expansion 0.508, air gap
+   0.254, conductor width 0.254, 4 entries).
+3. By script, pad shapes (simple mode, the same on every layer; sizes as in dense-board unless
+   given):
+        U2 pads 1 to 8      rounded rectangle, corner 25% (radius 0.075 on 1.500 x 0.600)
+        J1 pads 2 to 4      octagon (1.700 x 1.700, plated hole 1.000)
+        J2 pad 1            rounded rectangle, corner 30% (radius 0.255 on 1.700 x 1.700)
+        J2 pads 2 to 4      oval 2.200 x 1.700 (round shape, wider than high)
+4. By script, texts on Top Overlay:
+        "DejaVu"    TrueType DejaVu Sans Mono, not bold, not italic, at (31.600, 1.300), height
+                    1.200, rotation 0, no component; box x 31.600 to 35.162, y 1.086 to 2.083
+        ".Comment"  stroke font, owned by U1, at (25.400, 12.700), height 0.800, stroke 0.120;
+                    Altium shows U1's comment, "MCU"
+5. By script, free copper on Top Layer, no net, no component:
+        fill        (35.800, 1.600) to (37.400, 3.200), rotation 0
+        fill        (39.200, 1.700) to (40.800, 3.100), rotation 30 (about its center (40, 2.4))
+        region      triangle (41.800, 1.400), (44.200, 1.400), (43.000, 3.600), KIND 0
+        arc         center (25.000, 3.600), radius 1.000, 0 to 180 degrees, width 0.200
+6. By script, objects on mechanical layers (Mechanical 1, 4 and 13 switched on):
+        Mechanical 1    track (26.000, 0.900) to (44.000, 0.900), width 0.100
+        Mechanical 1    arc center (46.500, 5.500), radius 2.200, 0 to 360 degrees, width 0.100
+        Mechanical 2    text "ASSY", stroke font, at (30.000, 4.000), height 1.000, stroke 0.100
+        Mechanical 4    arc center (46.500, 5.500), radius 1.500, 0 to 360 degrees, width 0.100
+                        (the circle the cutout was made from; it stays on the board)
+        Mechanical 13   region, triangle (21.000, 27.600), (23.000, 27.600), (22.000, 29.000)
+7. By hand: the Mechanical 4 circle selected, Tools > Convert > Create Board Cutout from Selected
+   Primitives: one round board cutout, center (46.500, 5.500), radius 1.500. Then Tools >
+   Polygon Pours > Repour All and Tools > Split Planes > Rebuild Split Planes on All Layers.
+8. By hand, in the 3D view's View Configuration: solder mask, top and bottom, 17, 85, 204
+   (stored as 13391121), opacity 0.6 as before. Silkscreen stays Altium's default.
+A first try put the TrueType text and the free copper over "DUTCHMAN NODE 1"; a second script
+removed them and placed them as above before the board was first saved with the cutout.
+
+Altium embedded Arial on saving as well as DejaVu Sans Mono. After the last save my own tool
+copied every stream into a new file unchanged, except EmbeddedFonts6, which now holds only the
+DejaVu Sans Mono record (Header 1): byte for byte the DejaVu Sans Mono 2.37 file of
+one-dejavu-text, under its own license (see "Embedded TrueType font" above and
+LICENSE-DejaVu.txt). Everything else on this board is CC0 like the others.
+
+What Altium stores for the planes: each plane is one split-plane region, the board outline less
+the pull-back. The cutout is not part of that region: Altium draws the pull-back around the
+cutout (and along the board edge) as tracks on the plane layer.
+
 Paths inside the files
 ----------------------
 Altium writes a few paths from the PC that saved a board into the file. After the last save, I
 blanked their values: each value is overwritten with spaces of exactly the same length, so no
 record or stream size changed and no other byte in the stream moved (one-ttf-text,
-four-layer and small-board also lost their embedded font, see above). The fields are:
+four-layer and small-board also lost their embedded font, and all-features its Arial, see
+above). The fields are:
     Board6 FILENAME                    the board's own save path
     Board6 2DCONFIGFULLFILENAME        the 2D view settings file (it contains the Windows login
                                        and the Altium install ID)
