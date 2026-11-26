@@ -494,29 +494,35 @@ fn a_filled_zone_comes_as_copper_with_its_gap_around_the_via() {
         .copper
         .iter()
         .filter_map(|c| match c {
-            CopperItem::Region { layer, contour, .. } => Some((*layer, contour)),
+            CopperItem::Region {
+                layer,
+                contour,
+                holes,
+            } => Some((*layer, contour, holes)),
             _ => None,
         })
         .collect();
     assert_eq!(regions.len(), 1);
-    let (layer, contour) = regions[0];
+    let (layer, contour, holes) = regions[0];
     assert_eq!(layer, top);
-    // Within the zone's outline (5, 5) to (45, 25), and with points on the gap round the via at
-    // (25, 15): 0.9 away from its centre.
-    let mut near_gap = 0;
-    for s in &contour.segments {
+    // The outer contour is the zone's outline (5, 5) to (45, 25) with its corners rounded off.
+    let (x0, y0, x1, y1) = bounds(contour);
+    assert!(near(x0, 105.0) && near(x1, 145.0) && near(y0, -125.0) && near(y1, -105.0));
+    assert!((area(contour) - 800.0).abs() < 0.05, "{}", area(contour));
+    // One hole: the gap round the via at (25, 15), 0.9 from its centre.
+    assert_eq!(holes.len(), 1);
+    for s in &holes[0].segments {
         let Segment::Line { from, .. } = s else {
             panic!("fills are polygons")
         };
-        assert!(from.x >= 105.0 - 0.001 && from.x <= 145.0 + 0.001);
-        assert!(from.y <= -105.0 + 0.001 && from.y >= -125.0 - 0.001);
         let d = (from.x - 125.0).hypot(from.y + 115.0);
-        if (d - 0.9).abs() < 0.01 {
-            near_gap += 1;
-        }
+        assert!((d - 0.9).abs() < 0.01, "{d}");
     }
-    assert!(near_gap > 8, "{near_gap}");
-    assert!(contour.segments.len() > 30);
+    assert!(
+        (area(&holes[0]) - std::f64::consts::PI * 0.81).abs() < 0.05,
+        "{}",
+        area(&holes[0])
+    );
     // The via of the other net is there too.
     assert!(o
         .board
@@ -543,4 +549,432 @@ fn every_board_is_detected_by_content_and_by_name() {
         n += 1;
     }
     assert!(n >= 9);
+}
+
+/// The area of a contour (Green's theorem, arcs sampled finely).
+fn area(c: &board_model::Contour) -> f64 {
+    let mut ring: Vec<Point> = Vec::new();
+    for s in &c.segments {
+        match *s {
+            Segment::Line { from, .. } => ring.push(from),
+            Segment::Arc {
+                center,
+                radius,
+                start_deg,
+                ..
+            } => {
+                let sweep = s.sweep_deg().unwrap();
+                for k in 0..360 {
+                    let a = (start_deg + sweep * f64::from(k) / 360.0).to_radians();
+                    ring.push(Point {
+                        x: center.x + radius * a.cos(),
+                        y: center.y + radius * a.sin(),
+                    });
+                }
+                // The arc ends where the next piece starts.
+            }
+        }
+    }
+    let n = ring.len();
+    ((0..n)
+        .map(|i| {
+            let (a, b) = (ring[i], ring[(i + 1) % n]);
+            a.x * b.y - b.x * a.y
+        })
+        .sum::<f64>()
+        / 2.0)
+        .abs()
+}
+
+fn nets_ok(o: &ReadOutcome) {
+    assert!(!o.notes.iter().any(|n| n.severity == Severity::Dropped));
+}
+
+#[test]
+fn a_pour_round_a_pad_and_a_via_has_one_hole_for_each() {
+    for name in ["zone-thermal", "k10-zone-thermal"] {
+        let o = board(name);
+        nets_ok(&o);
+        let regions: Vec<_> = o
+            .board
+            .copper
+            .iter()
+            .filter_map(|c| match c {
+                CopperItem::Region { contour, holes, .. } => Some((contour, holes)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(regions.len(), 1, "{name}");
+        let (contour, holes) = regions[0];
+        assert!((area(contour) - 800.0).abs() < 0.05, "{name}");
+        assert_eq!(holes.len(), 2, "{name}");
+        // The via's gap: a disc of radius 0.4 + 0.5, centred on (30, 15).
+        // The pad's gap: a disc of radius 0.8 + 0.5 centred on (15, 15), with the four 0.5 mm
+        // spokes of the thermal relief left as copper, pi * 1.3^2 pi * 1.3^2 less four 0.5 wide spokes running from the drill (radius 0.4): 3.470.
+        let mut found = [false, false];
+        for h in holes {
+            let Segment::Line { from, .. } = h.segments[0] else {
+                panic!("fills are polygons")
+            };
+            let a = area(h);
+            if (from.x - 130.0).hypot(from.y + 115.0) < 1.0 {
+                assert!(
+                    (a - std::f64::consts::PI * 0.81).abs() < 0.05,
+                    "{name}: {a}"
+                );
+                found[0] = true;
+            } else {
+                assert!((from.x - 115.0).hypot(from.y + 115.0) < 1.4, "{name}");
+                assert!((a - 3.470).abs() < 0.05, "{name}: {a}");
+                found[1] = true;
+            }
+        }
+        assert_eq!(found, [true, true], "{name}");
+    }
+}
+
+/// The corners of a polygon pad's one contour, relative to (cx, cy), as written in the README.
+fn corners_of(c: &board_model::Contour, cx: f64, cy: f64) -> Vec<(f64, f64)> {
+    c.segments
+        .iter()
+        .map(|s| match s {
+            Segment::Line { from, .. } => (from.x - cx, from.y - cy),
+            Segment::Arc { .. } => panic!("expected straight edges"),
+        })
+        .collect()
+}
+
+fn has_corners(found: &[(f64, f64)], wanted: &[(f64, f64)]) -> bool {
+    found.len() == wanted.len()
+        && wanted
+            .iter()
+            .all(|w| found.iter().any(|f| near(f.0, w.0) && near(f.1, w.1)))
+}
+
+#[test]
+fn pads_that_are_not_plain_come_with_their_real_shapes() {
+    for name in ["pad-shapes", "k10-pad-shapes"] {
+        let o = board(name);
+        assert!(!notes_contain(&o, "read as rectangles"), "{name}");
+        nets_ok(&o);
+        // The pads sit at model x = 104, 110, ... 146 (the footprint at 125, pads 6 apart),
+        // model y = -115.
+        let cx = |n: usize| 104.0 + 6.0 * n as f64;
+        let cy = -115.0;
+        let plain: Vec<_> = o
+            .board
+            .copper
+            .iter()
+            .filter_map(|c| match c {
+                CopperItem::Pad {
+                    at,
+                    shape,
+                    size_x,
+                    size_y,
+                    rotation_deg,
+                    ..
+                } => Some((*at, *shape, *size_x, *size_y, *rotation_deg)),
+                _ => None,
+            })
+            .collect();
+        let polys: Vec<_> = o
+            .board
+            .copper
+            .iter()
+            .filter_map(|c| match c {
+                CopperItem::PolygonPad {
+                    at,
+                    shapes,
+                    drill,
+                    plated,
+                    owner,
+                    ..
+                } => Some((*at, shapes, *drill, *plated, owner.clone())),
+                _ => None,
+            })
+            .collect();
+        // Pad 1 and pad 7: rounded rectangles 3 x 2, radius ratio 0.25, the second turned 90.
+        assert_eq!(plain.len(), 2, "{name}");
+        for (n, turned) in [(0usize, 0.0), (6, 90.0)] {
+            let (at, shape, sx, sy, rot) =
+                plain.iter().find(|p| near(p.0.x, cx(n))).copied().unwrap();
+            assert!(near(at.y, cy) && near(sx, 3.0) && near(sy, 2.0) && near(rot, turned));
+            let PadShape::RoundedRectangle { radius_ratio } = shape else {
+                panic!("{shape:?}")
+            };
+            assert!(near(radius_ratio, 0.25));
+        }
+        assert_eq!(polys.len(), 6, "{name}");
+        let poly = |n: usize| {
+            polys
+                .iter()
+                .find(|p| near(p.0.x, cx(n)) && near(p.0.y, cy))
+                .unwrap_or_else(|| panic!("no polygon pad {n}"))
+        };
+        // Pads 2, 3, 4: trapezoids, deltas (0, 1), (1, 0), (0.5, 1).
+        for (n, wanted) in [
+            (1, vec![(-2.0, -1.0), (2.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]),
+            (2, vec![(-1.5, -1.5), (1.5, -0.5), (1.5, 0.5), (-1.5, 1.5)]),
+            (
+                3,
+                vec![(-2.0, -1.25), (2.0, -0.75), (1.0, 0.75), (-1.0, 1.25)],
+            ),
+        ] {
+            let (_, shapes, drill, _, _) = poly(n);
+            assert_eq!(shapes.len(), 1);
+            assert!(drill.is_none());
+            assert!(
+                has_corners(&corners_of(&shapes[0], cx(n), cy), &wanted),
+                "{name} pad {n}: {:?}",
+                corners_of(&shapes[0], cx(n), cy)
+            );
+        }
+        // Pad 5: chamfer 0.5 on the top-left and bottom-right, the other two corners round with
+        // radius 0.5: 6 - 2 * 0.125 - 2 * 0.25 * (1 - pi/4).
+        let (_, shapes, _, _, _) = poly(4);
+        assert_eq!(shapes.len(), 1);
+        let exact = 6.0 - 0.25 - 0.5 * (1.0 - std::f64::consts::PI / 4.0);
+        assert!((area(&shapes[0]) - exact).abs() < 0.001, "{name}");
+        let arcs = shapes[0]
+            .segments
+            .iter()
+            .filter(|s| matches!(s, Segment::Arc { radius, .. } if near(*radius, 0.5)))
+            .count();
+        assert_eq!(arcs, 2);
+        // Pad 6: a 1 x 1 anchor and an L of area 3.
+        let (_, shapes, _, _, _) = poly(5);
+        assert_eq!(shapes.len(), 2);
+        assert!(near(area(&shapes[0]), 1.0) && near(area(&shapes[1]), 3.0));
+        assert!(has_corners(
+            &corners_of(&shapes[1], cx(5), cy),
+            &[
+                (0.0, 0.0),
+                (2.0, 0.0),
+                (2.0, -1.0),
+                (1.0, -1.0),
+                (1.0, -2.0),
+                (0.0, -2.0)
+            ]
+        ));
+        // Pad 8: through-hole, circle anchor radius 0.8 and a triangle of area 2.88.
+        let (_, shapes, drill, plated, _) = poly(7);
+        assert_eq!(shapes.len(), 2);
+        assert!(near(drill.unwrap(), 0.8) && *plated);
+        assert!(
+            matches!(shapes[0].segments[..], [Segment::Arc { radius, .. }] if near(radius, 0.8))
+        );
+        assert!((area(&shapes[1]) - 2.88).abs() < 0.001);
+    }
+}
+
+#[test]
+fn a_stackup_kicad_wrote_gives_the_thickness_without_a_note() {
+    for name in ["four-layer-stackup", "k10-four-layer-stackup"] {
+        let o = board(name);
+        // 0.01 + 0.035 + 0.2 + 0.0175 + 1.075 + 0.0175 + 0.2 + 0.035 + 0.01 = 1.6.
+        assert!(near(o.board.thickness.unwrap(), 1.6), "{name}");
+        assert!(!notes_contain(&o, "stack-up adds up"), "{name}");
+        assert_eq!(
+            o.board
+                .layers
+                .iter()
+                .filter(|l| l.kind == LayerKind::Copper)
+                .count(),
+            4
+        );
+    }
+}
+
+/// The polygon pads KiCad's own Gerber export drew (tests/gerber/<board>-<layer>.corners.txt, made
+/// by fixtures/kicad/gerber_corners.py): the pad, its centre and its corners, in board coordinates.
+fn gerber_pads(board: &str, layer: &str) -> Vec<(String, Point, Vec<Point>)> {
+    let path = format!(
+        "{}/tests/gerber/{board}-{layer}.corners.txt",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let mut out = Vec::new();
+    for line in std::fs::read_to_string(path).unwrap().lines() {
+        let parts: Vec<&str> = line.split(" | ").collect();
+        let nums =
+            |s: &str| -> Vec<f64> { s.split([' ', ',']).filter_map(|v| v.parse().ok()).collect() };
+        let c = nums(parts[1]);
+        let pts: Vec<Point> = nums(parts[2])
+            .chunks(2)
+            .map(|q| Point { x: q[0], y: q[1] })
+            .collect();
+        if !pts.is_empty() {
+            out.push((parts[0].trim().to_string(), Point { x: c[0], y: c[1] }, pts));
+        }
+    }
+    out
+}
+
+/// True when `p` lies strictly inside one contour made of straight edges, or of one circle.
+fn inside_contour(c: &board_model::Contour, p: Point) -> bool {
+    if let [Segment::Arc { center, radius, .. }] = c.segments[..] {
+        return (p.x - center.x).hypot(p.y - center.y) < radius - 0.001;
+    }
+    let mut odd = false;
+    for s in &c.segments {
+        if let Segment::Line { from: a, to: b } = s {
+            if (a.y > p.y) != (b.y > p.y) && p.x < a.x + (p.y - a.y) / (b.y - a.y) * (b.x - a.x) {
+                odd = !odd;
+            }
+        }
+    }
+    odd
+}
+
+/// Every polygon pad of the board is drawn by KiCad's Gerber export with the same outline: each
+/// corner of the reader's contours that no other piece of the pad covers is a corner of KiCad's.
+fn check_against_gerber(name: &str, gerber_board: &str) {
+    let o = board(name);
+    let mut checked = [0usize; 2];
+    for item in &o.board.copper {
+        let CopperItem::PolygonPad {
+            layer, at, shapes, ..
+        } = item
+        else {
+            continue;
+        };
+        // A through-hole pad is on every copper layer: KiCad draws it on both sides.
+        let sides: &[(&str, usize)] = match o.board.layers[*layer].name.as_str() {
+            "F.Cu" => &[("F_Cu", 0)],
+            "B.Cu" => &[("B_Cu", 1)],
+            "*.Cu" => &[("F_Cu", 0), ("B_Cu", 1)],
+            other => panic!("{other}"),
+        };
+        for (side, slot) in sides {
+            check_pad(name, gerber_board, side, at, shapes);
+            checked[*slot] += 1;
+        }
+    }
+    let want = |side: &str| gerber_pads(gerber_board, side).len();
+    assert_eq!(checked, [want("F_Cu"), want("B_Cu")], "{name}");
+}
+
+fn check_pad(
+    name: &str,
+    gerber_board: &str,
+    side: &str,
+    at: &Point,
+    shapes: &[board_model::Contour],
+) {
+    {
+        let flashes = gerber_pads(gerber_board, side);
+        let (pad, _, corners) = flashes
+            .iter()
+            .find(|f| near(f.1.x, at.x) && near(f.1.y, at.y))
+            .unwrap_or_else(|| panic!("{name}: no Gerber flash at {at:?}"));
+        for (i, shape) in shapes.iter().enumerate() {
+            for s in &shape.segments {
+                let ends = match *s {
+                    Segment::Line { from, to } => vec![from, to],
+                    Segment::Arc {
+                        center,
+                        radius,
+                        start_deg,
+                        end_deg,
+                        ..
+                    } => {
+                        if s.sweep_deg().unwrap().abs() >= 360.0 {
+                            continue;
+                        }
+                        [start_deg, end_deg]
+                            .iter()
+                            .map(|a| Point {
+                                x: center.x + radius * a.to_radians().cos(),
+                                y: center.y + radius * a.to_radians().sin(),
+                            })
+                            .collect()
+                    }
+                };
+                for p in ends {
+                    let covered = shapes
+                        .iter()
+                        .enumerate()
+                        .any(|(j, other)| j != i && inside_contour(other, p));
+                    if covered {
+                        continue;
+                    }
+                    assert!(
+                        corners.iter().any(|c| near(c.x, p.x) && near(c.y, p.y)),
+                        "{name} pad {pad}: corner {p:?} is not in KiCad's outline {corners:?}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn polygon_pads_have_the_corners_of_kicads_own_gerber_export() {
+    for (name, gerber) in [
+        ("pad-shapes", "pad-shapes"),
+        ("k10-pad-shapes", "pad-shapes"),
+        ("pad-shapes-turned", "pad-shapes-turned"),
+        ("k10-pad-shapes-turned", "pad-shapes-turned"),
+    ] {
+        check_against_gerber(name, gerber);
+    }
+}
+
+#[test]
+fn the_chamfered_pad_has_its_corners_where_the_gerber_has_them() {
+    // pad-shapes pad 5 at (128, -115): chamfer 0.5 on the top-left (cutting (-1.5,0.5) to
+    // (-1,1)) and the bottom-right ((1,-1) to (1.5,-0.5)); the top-right and bottom-left
+    // corners are arcs of radius 0.5 about (1,0.5) and (-1,-0.5).
+    let o = board("pad-shapes");
+    let shape = o
+        .board
+        .copper
+        .iter()
+        .find_map(|c| match c {
+            CopperItem::PolygonPad { at, shapes, .. } if near(at.x, 128.0) => Some(&shapes[0]),
+            _ => None,
+        })
+        .unwrap();
+    let rel = |p: Point| (p.x - 128.0, p.y + 115.0);
+    let lines: Vec<_> = shape
+        .segments
+        .iter()
+        .filter_map(|s| match s {
+            Segment::Line { from, to } => Some((rel(*from), rel(*to))),
+            Segment::Arc { .. } => None,
+        })
+        .collect();
+    // The contour runs counter-clockwise, so a chamfer may be listed in either direction.
+    let same = |p: (f64, f64), q: (f64, f64)| near(p.0, q.0) && near(p.1, q.1);
+    let has = |a: (f64, f64), b: (f64, f64)| {
+        lines
+            .iter()
+            .any(|(f, t)| (same(*f, a) && same(*t, b)) || (same(*f, b) && same(*t, a)))
+    };
+    assert!(has((-1.5, 0.5), (-1.0, 1.0)));
+    assert!(has((1.0, -1.0), (1.5, -0.5)));
+    let arcs: Vec<_> = shape
+        .segments
+        .iter()
+        .filter_map(|s| match s {
+            Segment::Arc {
+                center,
+                radius,
+                start_deg,
+                end_deg,
+                ..
+            } => Some((rel(*center), *radius, *start_deg, *end_deg)),
+            Segment::Line { .. } => None,
+        })
+        .collect();
+    assert_eq!(arcs.len(), 2);
+    assert!(arcs.iter().any(|a| near(a.0 .0, 1.0)
+        && near(a.0 .1, 0.5)
+        && near(a.1, 0.5)
+        && same_angle(a.2, 0.0)
+        && same_angle(a.3, 90.0)));
+    assert!(arcs.iter().any(|a| near(a.0 .0, -1.0)
+        && near(a.0 .1, -0.5)
+        && near(a.1, 0.5)
+        && same_angle(a.2, 180.0)
+        && same_angle(a.3, 270.0)));
 }

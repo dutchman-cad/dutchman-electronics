@@ -501,6 +501,12 @@ fn drills(board: &Board, notes: &mut Vec<Note>) -> Result<Vec<Drill>, StepError>
                 drill: Some(drill),
                 plated,
                 ..
+            }
+            | CopperItem::PolygonPad {
+                at,
+                drill: Some(drill),
+                plated,
+                ..
             } => Some((at, drill, plated)),
             _ => None,
         };

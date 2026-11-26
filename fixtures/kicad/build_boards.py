@@ -315,3 +315,193 @@ part(b, "U2", (25, 15), 270.0, True, asym, {"offset": (-1.0, 0.5, 0.25), "rotate
 part(b, "U3", (38, 15), 0.0, False, asym, {"offset": (0.0, 0.0, 0.0), "rotate": (90.0, 90.0, 0.0)})
 part(b, "U4", (38, 25), 90.0, False, asym, {"offset": (1.5, -1.0, 0.3), "rotate": (90.0, 0.0, 45.0)})
 save(b, "model-placements")
+
+
+def sized_pad(fp, number, at, size, shape, attrib=pcbnew.PAD_ATTRIB_SMD, rot=0.0, drill=None):
+    pad = pcbnew.PAD(fp)
+    pad.SetNumber(number)
+    pad.SetShape(shape)
+    pad.SetAttribute(attrib)
+    pad.SetSize(VECTOR2I(FromMM(size[0]), FromMM(size[1])))
+    if attrib == pcbnew.PAD_ATTRIB_PTH:
+        pad.SetLayerSet(pad.PTHMask())
+        pad.SetDrillSize(VECTOR2I(FromMM(drill), FromMM(drill)))
+    else:
+        pad.SetLayerSet(pad.SMDMask())
+    pad.SetPosition(VECTOR2I(FromMM(at[0]), FromMM(at[1])))
+    if rot:
+        pad.SetOrientationDegrees(rot)
+    fp.Add(pad)
+    return pad
+
+
+# 11. pad-shapes: one footprint (U1, at (25, 15), not turned) with eight pads, left to right at
+#     x = -21, -15, -9, -3, 3, 9, 15, 21 from the footprint's origin (y = 0):
+#     1 roundrect 3 x 2, corner radius ratio 0.25; 2 trapezoid 3 x 2, delta (0, 1);
+#     3 trapezoid 3 x 2, delta (1, 0); 4 trapezoid 3 x 2, delta (0.5, 1);
+#     5 chamfered rectangle 3 x 2, chamfer ratio 0.25 on the top-left and bottom-right corners
+#     (its other corners keep the rounding ratio 0.25); 6 custom, rectangle anchor 1 x 1 plus a
+#     filled L-shaped polygon; 7 roundrect 3 x 2 turned 90 degrees; 8 through-hole custom, circle
+#     anchor 1.6 plus a filled triangle, drill 0.8.
+b = new_board()
+outline_rect(b)
+fp = pcbnew.FOOTPRINT(b)
+fp.SetReference("U1")
+fp.SetFPID(pcbnew.LIB_ID("test", "Shapes"))
+pad = sized_pad(fp, "1", (-21, 0), (3, 2), pcbnew.PAD_SHAPE_ROUNDRECT)
+pad.SetRoundRectRadiusRatio(0.25)
+for number, x, delta in [("2", -15, (0, 1)), ("3", -9, (1, 0)), ("4", -3, (0.5, 1))]:
+    pad = sized_pad(fp, number, (x, 0), (3, 2), pcbnew.PAD_SHAPE_TRAPEZOID)
+    pad.SetDelta(VECTOR2I(FromMM(delta[0]), FromMM(delta[1])))
+pad = sized_pad(fp, "5", (3, 0), (3, 2), pcbnew.PAD_SHAPE_CHAMFERED_RECT)
+pad.SetRoundRectRadiusRatio(0.25)
+pad.SetChamferRectRatio(0.25)
+pad.SetChamferPositions(1 | 8)  # top-left and bottom-right
+pad = sized_pad(fp, "6", (9, 0), (1, 1), pcbnew.PAD_SHAPE_CUSTOM)
+pad.SetAnchorPadShape(pcbnew.F_Cu, pcbnew.PAD_SHAPE_RECT)
+pad.AddPrimitivePoly(
+    pcbnew.F_Cu,
+    [VECTOR2I(FromMM(x), FromMM(y)) for x, y in [(0, 0), (2, 0), (2, 1), (1, 1), (1, 2), (0, 2)]],
+    0,
+    True,
+)
+pad = sized_pad(fp, "7", (15, 0), (3, 2), pcbnew.PAD_SHAPE_ROUNDRECT, rot=90.0)
+pad.SetRoundRectRadiusRatio(0.25)
+pad = sized_pad(
+    fp, "8", (21, 0), (1.6, 1.6), pcbnew.PAD_SHAPE_CUSTOM, pcbnew.PAD_ATTRIB_PTH, drill=0.8
+)
+pad.SetAnchorPadShape(pcbnew.F_Cu, pcbnew.PAD_SHAPE_CIRCLE)
+pad.AddPrimitivePoly(
+    pcbnew.F_Cu,
+    [VECTOR2I(FromMM(x), FromMM(y)) for x, y in [(0, 0), (2.4, 0), (0, 2.4)]],
+    0,
+    True,
+)
+b.Add(fp)
+fp.SetPosition(p(25, 15))
+save(b, "pad-shapes")
+
+# 12. zone-thermal: a GND zone on the top layer, (5, 5) to (45, 25), minimum width 0.25,
+#     clearance 0.5, thermal reliefs (gap 0.5, spokes 0.5 wide), round through-hole pad (1.6,
+#     drill 0.8) on GND at (15, 15), and a SIG via (0.8, drill 0.4) at (30, 15).
+b = new_board()
+outline_rect(b)
+gnd = net(b, "GND")
+sig = net(b, "SIG")
+z = pcbnew.ZONE(b)
+z.SetLayer(pcbnew.F_Cu)
+z.SetNet(gnd)
+z.SetMinThickness(FromMM(0.25))
+z.SetLocalClearance(FromMM(0.5))
+z.SetThermalReliefGap(FromMM(0.5))
+z.SetThermalReliefSpokeWidth(FromMM(0.5))
+z.SetPadConnection(pcbnew.ZONE_CONNECTION_THERMAL)
+b.Add(z)
+ol = z.Outline()
+ol.NewOutline()
+for q in [(5, 5), (45, 5), (45, 25), (5, 25)]:
+    ol.Append(FromMM(X0 + q[0]), FromMM(Y0 + q[1]))
+fp = pcbnew.FOOTPRINT(b)
+fp.SetReference("J1")
+fp.SetFPID(pcbnew.LIB_ID("test", "Pin"))
+pad = sized_pad(fp, "1", (0, 0), (1.6, 1.6), pcbnew.PAD_SHAPE_CIRCLE, pcbnew.PAD_ATTRIB_PTH, drill=0.8)
+pad.SetNet(gnd)
+b.Add(fp)
+fp.SetPosition(p(15, 15))
+v = pcbnew.PCB_VIA(b)
+v.SetPosition(p(30, 15))
+v.SetWidth(FromMM(0.8))
+v.SetDrill(FromMM(0.4))
+v.SetViaType(pcbnew.VIATYPE_THROUGH)
+v.SetNet(sig)
+b.Add(v)
+save(b, "zone-thermal")
+
+# 13. four-layer-stackup: the 50 x 30 mm rectangle, four copper layers, 1.6 mm. The stack-up table
+#     is added afterwards by `add_stackup.py`.
+b = new_board(4, 1.6)
+outline_rect(b)
+save(b, "four-layer-stackup")
+
+
+def custom_l(fp, number, at, rot=0.0):
+    """A custom pad: a 1 x 1 rectangle anchor and an L-shaped filled polygon (as on pad-shapes)."""
+    pad = sized_pad(fp, number, at, (1, 1), pcbnew.PAD_SHAPE_CUSTOM, rot=rot)
+    pad.SetAnchorPadShape(pcbnew.F_Cu, pcbnew.PAD_SHAPE_RECT)
+    pad.AddPrimitivePoly(
+        pcbnew.F_Cu,
+        [VECTOR2I(FromMM(x), FromMM(y)) for x, y in [(0, 0), (2, 0), (2, 1), (1, 1), (1, 2), (0, 2)]],
+        0,
+        True,
+    )
+    return pad
+
+
+def trapezoid(fp, number, at, rot=0.0):
+    pad = sized_pad(fp, number, at, (3, 2), pcbnew.PAD_SHAPE_TRAPEZOID, rot=rot)
+    pad.SetDelta(VECTOR2I(0, FromMM(1)))
+    return pad
+
+
+def chamfered(fp, number, at, rot=0.0):
+    pad = sized_pad(fp, number, at, (3, 2), pcbnew.PAD_SHAPE_CHAMFERED_RECT, rot=rot)
+    pad.SetRoundRectRadiusRatio(0.25)
+    pad.SetChamferRectRatio(0.25)
+    pad.SetChamferPositions(1 | 8)  # top-left and bottom-right
+    return pad
+
+
+# 14. pad-shapes-turned: the pad shapes of pad-shapes with their frames turned and flipped.
+#     U1 (top, at (10, 8), not turned): pad 1 custom L turned 30 at (0, 0); pad 2 custom L turned
+#     90 at (6, 0); pad 3 trapezoid (delta 0 1) turned 90 at (12, 0); pad 4 chamfered turned 30
+#     at (18, 0). U2 (top, at (10, 20), turned 30): pad 1 custom L at (0, 0), pad 2 trapezoid at
+#     (6, 0), pad 3 chamfered at (12, 0), all unturned within the footprint. U3 (bottom, at
+#     (38, 8), not turned): pad 1 custom L at (-6, 0), pad 2 trapezoid at (0, 0), pad 3 chamfered
+#     at (6, 0). U4 (bottom, at (38, 20), turned 90): pad 1 custom L at (-6, 0), pad 2 trapezoid
+#     at (0, 0). Pad sizes and shapes are those of pad-shapes.
+b = new_board()
+outline_rect(b)
+
+
+def footprint(ref, at, rot, flip, make):
+    fp = pcbnew.FOOTPRINT(b)
+    fp.SetReference(ref)
+    fp.SetFPID(pcbnew.LIB_ID("test", "Turned"))
+    make(fp)
+    b.Add(fp)
+    fp.SetPosition(p(*at))
+    if rot:
+        fp.SetOrientationDegrees(rot)
+    if flip:
+        fp.Flip(fp.GetPosition(), False)
+
+
+def u1(fp):
+    custom_l(fp, "1", (0, 0), 30.0)
+    custom_l(fp, "2", (6, 0), 90.0)
+    trapezoid(fp, "3", (12, 0), 90.0)
+    chamfered(fp, "4", (18, 0), 30.0)
+
+
+def u2(fp):
+    custom_l(fp, "1", (0, 0))
+    trapezoid(fp, "2", (6, 0))
+    chamfered(fp, "3", (12, 0))
+
+
+def u3(fp):
+    custom_l(fp, "1", (-6, 0))
+    trapezoid(fp, "2", (0, 0))
+    chamfered(fp, "3", (6, 0))
+
+
+def u4(fp):
+    custom_l(fp, "1", (-6, 0))
+    trapezoid(fp, "2", (0, 0))
+
+
+footprint("U1", (10, 8), 0.0, False, u1)
+footprint("U2", (10, 20), 30.0, False, u2)
+footprint("U3", (38, 8), 0.0, True, u3)
+footprint("U4", (38, 20), 90.0, True, u4)
+save(b, "pad-shapes-turned")

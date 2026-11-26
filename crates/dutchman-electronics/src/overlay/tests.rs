@@ -1702,3 +1702,102 @@ fn the_mask_face_holds_the_true_outline_and_its_holes_stay_open() {
         assert!(!covers(mask, pt.x(), pt.y()), "{pt:?} is under the mask");
     }
 }
+
+#[test]
+fn a_rounded_rectangle_pad_has_its_corners_cut_round() {
+    // 3 x 2 with a radius of a quarter of the short side: 0.5 mm.
+    let pad = CopperItem::Pad {
+        layer: 0,
+        at: p(10.0, 5.0),
+        shape: PadShape::RoundedRectangle { radius_ratio: 0.25 },
+        size_x: 3.0,
+        size_y: 2.0,
+        rotation_deg: 90.0,
+        drill: None,
+        plated: false,
+        owner: None,
+    };
+    let (list, _) = overlays(&board(vec![pad], vec![]), 1.6, "Board");
+    let pads = named(&list, "Copper top pads");
+    let exact = 6.0 - 4.0 * 0.25 * (1.0 - PI / 4.0);
+    assert!((area(pads) - exact).abs() < 0.01, "{}", area(pads));
+    // Turned a quarter: 2 wide and 3 tall, and a corner of the plain rectangle is not covered.
+    assert!(covers(pads, 10.0, 6.4) && !covers(pads, 10.9, 6.4));
+    assert!(covers(pads, 10.9, 5.0) && !covers(pads, 11.1, 5.0));
+}
+
+#[test]
+fn a_polygon_pad_is_the_union_of_its_pieces_with_its_hole_and_a_grown_opening() {
+    // A 1 x 1 square and an L-shaped piece overlapping it by a quarter square: 3.75 mm2, with a
+    // 0.4 mm hole at the centre.
+    let corners = |pts: &[(f64, f64)]| board_model::Contour {
+        segments: pts
+            .iter()
+            .enumerate()
+            .map(|(i, &(x, y))| {
+                let (nx, ny) = pts[(i + 1) % pts.len()];
+                Segment::Line {
+                    from: p(x, y),
+                    to: p(nx, ny),
+                }
+            })
+            .collect(),
+    };
+    let pad = CopperItem::PolygonPad {
+        layer: 0,
+        at: p(10.0, 5.0),
+        shapes: vec![
+            corners(&[(9.5, 4.5), (10.5, 4.5), (10.5, 5.5), (9.5, 5.5)]),
+            corners(&[
+                (10.0, 5.0),
+                (12.0, 5.0),
+                (12.0, 4.0),
+                (11.0, 4.0),
+                (11.0, 3.0),
+                (10.0, 3.0),
+            ]),
+        ],
+        drill: Some(0.4),
+        plated: true,
+        owner: Some("U1".into()),
+    };
+    let mut b = board(vec![pad], vec![]);
+    b.outline.outer = square(0.0, 0.0, 20.0, 10.0);
+    b.solder_mask_expansion = Some(0.25);
+    let (list, _) = overlays(&b, 1.6, "Board");
+    let pads = named(&list, "Copper top pads");
+    let hole = PI * 0.2 * 0.2;
+    assert!((area(pads) - (3.75 - hole)).abs() < 0.01, "{}", area(pads));
+    assert!(covers(pads, 11.5, 4.5) && covers(pads, 10.5, 3.5) && !covers(pads, 11.5, 3.5));
+    assert!(!covers(pads, 10.0, 5.0), "copper over the hole");
+    // The mask opens 0.25 wider than the copper all round: open 0.2 outside the L's end, shut
+    // 0.3 outside it.
+    let mask = named(&list, "Solder mask top");
+    assert!(!covers(mask, 12.2, 4.5) && covers(mask, 12.3, 4.5));
+    assert!(!covers(mask, 10.5, 2.8) && covers(mask, 10.5, 2.7));
+}
+
+#[test]
+fn a_rounded_rectangle_opening_is_the_true_offset_of_the_pad() {
+    // 3 x 2, corner radius 0.5, mask expansion 0.25: the opening is the pad offset by 0.25, whose
+    // corners have radius 0.75. Its area is A + P * e + pi * e^2 with A = 6 - 4 * 0.25 * (1 -
+    // pi/4) = 5.7854 and P = 2 * (3 + 2) - 8 * 0.5 + 2 * pi * 0.5 = 9.1416, so 8.2671; the 20 x 10
+    // board's mask is 200 less that.
+    let pad = CopperItem::Pad {
+        layer: 0,
+        at: p(10.0, 5.0),
+        shape: PadShape::RoundedRectangle { radius_ratio: 0.25 },
+        size_x: 3.0,
+        size_y: 2.0,
+        rotation_deg: 0.0,
+        drill: None,
+        plated: false,
+        owner: None,
+    };
+    let mut b = board(vec![pad], vec![]);
+    b.outline.outer = square(0.0, 0.0, 20.0, 10.0);
+    b.solder_mask_expansion = Some(0.25);
+    let (list, _) = overlays(&b, 1.6, "Board");
+    let mask = area(named(&list, "Solder mask top"));
+    assert!((mask - (200.0 - 8.2671)).abs() < 0.02, "{mask}");
+}
