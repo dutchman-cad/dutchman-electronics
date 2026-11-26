@@ -772,7 +772,7 @@ impl Reader {
             );
         }
         if let Some(ModelRef {
-            source: ModelSource::External { file },
+            source: ModelSource::External { file, .. },
             ..
         }) = &model
         {
@@ -819,7 +819,10 @@ impl Reader {
         }
         Some(ModelRef {
             name,
-            source: ModelSource::External { file },
+            source: ModelSource::External {
+                file,
+                checksum: None,
+            },
             offset,
             rotation_deg,
             color: None,

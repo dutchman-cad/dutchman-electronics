@@ -20,3 +20,6 @@ names.
 `param-project/` is a test project: a `.PrjPcb` with two boards and two parameters, with its own README.txt.
 Altium writes the PC's default printer into a project file (`TargetPrinter=`) and may link its documents by absolute
 paths. Run `privacy-check` on the `.PrjPcb` too: it reports both, and CI checks every project here.
+
+`linked-model/` is a board whose 3D model is linked, not embedded: `box-1608.step` lies next to the board, and
+its README.txt says what the board keeps for it (the file name and Altium's checksum, no folder).

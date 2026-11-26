@@ -277,11 +277,14 @@ fn project_board(path: &Path, _: &[u8], _: Option<&str>) -> Result<Input, String
 
 /// Builds the package for a board file's bytes. `path` gives the extension and, when the file
 /// names no board, the board's name. An Altium board's texts that refer to one of `parameters`
-/// (name, value) or to Altium's special strings get their value.
+/// (name, value) or to Altium's special strings get their value. The board's folder and that
+/// folder's `Models` folder, then `model_folders`, are where linked model files are looked for
+/// (see [`crate::linked`]).
 pub fn build(
     path: &Path,
     bytes: &[u8],
     parameters: &[(String, String)],
+    model_folders: &[PathBuf],
 ) -> Result<Package, String> {
     let extension = path.extension().and_then(|e| e.to_str());
     let head = bytes.get(..bytes.len().min(4096)).unwrap_or_default();
@@ -295,6 +298,13 @@ pub fn build(
     }
     #[cfg(not(feature = "altium"))]
     let _ = parameters;
+
+    let linked_notes = crate::linked::resolve(
+        &mut outcome,
+        format.as_ref(),
+        &crate::linked::folders(path, model_folders),
+    );
+    outcome.notes.extend(linked_notes);
     let board = outcome.board;
     // When there is no outline to make a board from, the reader's own words say why (an older
     // KiCad file, an outline that does not close), so the first Dropped note comes with the
@@ -630,7 +640,7 @@ fn components(list: &[Placement], embedded: &[EmbeddedModel], thickness: f64) ->
                     }
                 },
             },
-            ModelSource::External { file } => {
+            ModelSource::External { file, .. } => {
                 external.push(format!("{name} ({file})"));
                 continue;
             }
@@ -714,7 +724,8 @@ fn components(list: &[Placement], embedded: &[EmbeddedModel], thickness: f64) ->
         ),
         (
             external,
-            "component(s) refer to a 3D model file outside the board and are not in the package",
+            "component(s) link to a 3D model file that was not found or not used (see the \
+             notes on linked model files) and are not in the package",
         ),
         (
             failed,
@@ -961,6 +972,7 @@ mod tests {
             e.source = ModelSource::Embedded { id: "{M}".into() };
             x.source = ModelSource::External {
                 file: "soic8.step".into(),
+                checksum: None,
             };
             f.source = ModelSource::Extruded {
                 outline: rect(0.0, 0.0, 1.0, 1.0),
@@ -981,9 +993,10 @@ mod tests {
         assert_eq!(messages.len(), 4, "{messages:?}");
         assert!(messages[0].ends_with("no 3D model and are not in the package: R1"));
         assert!(messages[1].ends_with("name a 3D model the board does not hold: U1"));
-        assert!(
-            messages[2].ends_with("outside the board and are not in the package: U2 (soic8.step)")
-        );
+        assert!(messages[2].ends_with(
+            "link to a 3D model file that was not found or not used (see the notes on linked \
+             model files) and are not in the package: U2 (soic8.step)"
+        ));
         assert!(messages[3].contains("U3: cannot make the board solid"));
     }
 
@@ -1058,7 +1071,7 @@ mod tests {
             env!("CARGO_MANIFEST_DIR")
         );
         let bytes = std::fs::read(&path).unwrap();
-        build(Path::new(&path), &bytes, &[]).unwrap()
+        build(Path::new(&path), &bytes, &[], &[]).unwrap()
     }
 
     /// Equal to the 0.001 mm the boards' README.txt gives.
@@ -1249,7 +1262,7 @@ mod tests {
                 continue;
             }
             let bytes = std::fs::read(&path).unwrap();
-            let package = build(&path, &bytes, &[]).unwrap();
+            let package = build(&path, &bytes, &[], &[]).unwrap();
             // The board's thickness T: the top face of its STEP solid.
             let (_, step) = package
                 .files
@@ -1917,7 +1930,7 @@ mod tests {
     #[test]
     fn the_one_resistor_board_gives_r1_as_a_part() {
         let bytes = include_bytes!("../../altium-pcbdoc/tests/boards/one-resistor.PcbDoc");
-        let package = build(Path::new("one-resistor.PcbDoc"), bytes, &[]).unwrap();
+        let package = build(Path::new("one-resistor.PcbDoc"), bytes, &[], &[]).unwrap();
         let m = &package.manifest;
         let names: Vec<&str> = m["parts"]
             .as_array()
@@ -1945,7 +1958,13 @@ mod tests {
         // one-offset-extruded-resistor), 0.45 high.
         let bytes =
             include_bytes!("../../altium-pcbdoc/tests/boards/one-bottom-extruded-resistor.PcbDoc");
-        let package = build(Path::new("one-bottom-extruded-resistor.PcbDoc"), bytes, &[]).unwrap();
+        let package = build(
+            Path::new("one-bottom-extruded-resistor.PcbDoc"),
+            bytes,
+            &[],
+            &[],
+        )
+        .unwrap();
         let t = &package.manifest["parts"][1]["transform"];
         let on_board = [
             ([1.6, -0.4, 0.0], [23.8, 14.6, 0.0]),
@@ -1966,7 +1985,7 @@ mod tests {
     #[test]
     fn the_one_bottom_resistor_board_hangs_r1_below_the_board() {
         let bytes = include_bytes!("../../altium-pcbdoc/tests/boards/one-bottom-resistor.PcbDoc");
-        let package = build(Path::new("one-bottom-resistor.PcbDoc"), bytes, &[]).unwrap();
+        let package = build(Path::new("one-bottom-resistor.PcbDoc"), bytes, &[], &[]).unwrap();
         let r1 = &package.manifest["parts"][1];
         assert_eq!(r1["name"], "R1");
         // The README: the box spans x 24.2 to 25.8, y 14.6 to 15.4, 0.45 below the bottom face.
@@ -2060,6 +2079,6 @@ mod tests {
 
     #[test]
     fn a_file_that_is_not_a_board_is_an_error() {
-        assert!(build(Path::new("notes.txt"), b"hello", &[]).is_err());
+        assert!(build(Path::new("notes.txt"), b"hello", &[], &[]).is_err());
     }
 }

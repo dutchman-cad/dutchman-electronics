@@ -3,7 +3,8 @@
 //! `read <file> --out <dir> --json`. `read` also takes `--param NAME=VALUE` (repeatable) for
 //! the texts that refer to project parameters, `--board NAME` (or the link the project lists)
 //! to choose the board of an Altium project (`.PrjPcb`) that holds several, and
-//! `--project FILE` to use a project's parameters for a board passed on its own.
+//! `--project FILE` to use a project's parameters for a board passed on its own, and
+//! `--models <dir>` (repeatable) for folders that hold linked model files.
 //! For people: `formats`, `streams <file>` and
 //! `privacy-check <file> [--watch WORD]... [--all-text]`.
 
@@ -28,6 +29,7 @@ const USAGE: &str = "usage: dutchman-electronics info [--json]
        dutchman-electronics detect <file> [--json]
        dutchman-electronics read <board.PcbDoc|project.PrjPcb> --out <dir> [--json]
                                 [--param NAME=VALUE]... [--board NAME] [--project FILE]
+                                [--models <dir>]...
        dutchman-electronics formats
        dutchman-electronics streams <board.PcbDoc>
        dutchman-electronics privacy-check <board.PcbDoc|project.PrjPcb> [--watch WORD]... [--all-text]";
@@ -182,6 +184,8 @@ struct ReadArgs {
     parameters: Vec<(String, String)>,
     board: Option<String>,
     project: Option<String>,
+    /// Folders to look for linked model files in, after the board's own.
+    models: Vec<std::path::PathBuf>,
 }
 
 /// Parses the words after `read`, or says what is wrong.
@@ -198,6 +202,10 @@ fn read_args(words: &[&str]) -> Result<ReadArgs, String> {
             }
             "--project" => {
                 args.project = Some(rest.next().ok_or("--project needs a file")?.to_string());
+            }
+            "--models" => {
+                let folder = rest.next().ok_or("--models needs a folder")?;
+                args.models.push(std::path::PathBuf::from(folder));
             }
             "--param" => {
                 let given = rest.next().ok_or("--param needs NAME=VALUE")?;
@@ -237,8 +245,9 @@ fn read(args: &ReadArgs) -> ExitCode {
         project: args.project.as_deref().map(std::path::Path::new),
         parameters: &args.parameters,
     };
-    let built = package::open(path, &with)
-        .and_then(|input| package::build(&input.path, &input.bytes, &input.parameters));
+    let built = package::open(path, &with).and_then(|input| {
+        package::build(&input.path, &input.bytes, &input.parameters, &args.models)
+    });
     let written = built.and_then(|p| package::write(std::path::Path::new(out), &p).map(|()| p));
     match (written, json) {
         (Ok(p), true) => {
@@ -331,6 +340,10 @@ mod tests {
             "Note=a=b",
             "--project",
             "q.PrjPcb",
+            "--models",
+            "lib",
+            "--models",
+            "more",
         ])?;
         assert_eq!(
             args,
@@ -344,6 +357,7 @@ mod tests {
                 ],
                 board: Some("b2".into()),
                 project: Some("q.PrjPcb".into()),
+                models: vec!["lib".into(), "more".into()],
             }
         );
         Ok(())
@@ -365,6 +379,7 @@ mod tests {
             &["b.PcbDoc", "c.PcbDoc", "--out", "d"],
             &["b.PcbDoc", "--out"],
             &["b.PcbDoc", "--out", "d", "--project"],
+            &["b.PcbDoc", "--out", "d", "--models"],
         ] {
             assert!(read_args(words).is_err(), "{words:?}");
         }

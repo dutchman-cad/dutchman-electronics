@@ -64,6 +64,17 @@
 //!   has 14712864 and 0.500. The reader hands the colour over for extruded bodies only: a STEP
 //!   model brings its own colours, and its body keeps the grey all the same.
 //! - `/ShapeBasedComponentBodies6/Data` repeats the bodies; see `shape_based.rs`.
+//! - A linked model (the body's Source set to "Link to Model", `linked-model/` with
+//!   `box-1608.step` next to the board) is not in the file: `/Models/Data` is empty and the body
+//!   has `MODEL.EMBED=FALSE`, `MODEL.MODELSOURCE=File` (`Undefined` when embedded),
+//!   `MODEL.NAME=box-1608.step` and a new `MODELID`. `/ModelsNoEmbed/Data` lists it like
+//!   `/Models/Data` lists an embedded one (ID, NAME, CHECKSUM, the rotations), with no stream
+//!   holding the file; it is empty on the boards with embedded models. No folder is kept anywhere
+//!   in the file,
+//!   although Altium's panel showed the full path while the board was open. `MODEL.CHECKSUM` is
+//!   1259363632, the same as for the embedded copy of the same file: see [`checksum`]. So the
+//!   reader hands over the bare name and the checksum, and whoever has the user's folders looks
+//!   for the file.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -93,16 +104,34 @@ pub(crate) struct Stored {
     pub(crate) name: String,
 }
 
+/// A linked model as `/ModelsNoEmbed/Data` lists it: its file name and checksum.
+struct Linked {
+    name: String,
+    checksum: Option<u32>,
+}
+
+/// What a body whose model `/ModelsNoEmbed/Data` does not list falls back to.
+static NOT_LISTED: Linked = Linked {
+    name: String::new(),
+    checksum: None,
+};
+
 /// Reads the component bodies and gives each placed component the model of its first body.
-/// Returns the embedded models `/Models/Data` lists, by ID, for [`unpack`].
+/// Returns the embedded models `/Models/Data` lists, by ID, for [`unpack`]. `linked6` is
+/// `/ModelsNoEmbed/Data`, the list of linked models.
 pub(crate) fn attach(
     bodies6: &[u8],
     models6: Option<&[u8]>,
+    linked6: Option<&[u8]>,
     components: &mut Components,
     notes: &mut Vec<Note>,
 ) -> Result<BTreeMap<String, Stored>, String> {
     let models = match models6 {
         Some(data) => model_streams(data)?,
+        None => BTreeMap::new(),
+    };
+    let linked = match linked6 {
+        Some(data) => linked_models(data)?,
         None => BTreeMap::new(),
     };
     let mut extra = 0usize;
@@ -127,7 +156,7 @@ pub(crate) fn attach(
             extra += 1;
             continue;
         }
-        match model(body, placement, &models) {
+        match model(body, placement, &models, &linked) {
             Ok((m, color_read)) => {
                 if !color_read {
                     no_color += 1;
@@ -179,6 +208,25 @@ fn model_streams(data: &[u8]) -> Result<BTreeMap<String, Stored>, String> {
                 Stored {
                     stream: format!("/Models/{n}"),
                     name: record.get("NAME").unwrap_or_default().trim().to_string(),
+                },
+            );
+        }
+    }
+    Ok(map)
+}
+
+/// The name and checksum of each linked model, by its ID. `/ModelsNoEmbed/Data` has the same
+/// records as `/Models/Data`, with `EMBED=FALSE` and `MODELSOURCE=File`, and no stream holds the
+/// file (`linked-model`).
+fn linked_models(data: &[u8]) -> Result<BTreeMap<String, Linked>, String> {
+    let mut map = BTreeMap::new();
+    for record in text_records(data, "/ModelsNoEmbed/Data")? {
+        if let Some(id) = record.get("ID") {
+            map.insert(
+                id.trim().to_string(),
+                Linked {
+                    name: record.get("NAME").unwrap_or_default().trim().to_string(),
+                    checksum: stored_checksum(record.get("CHECKSUM")),
                 },
             );
         }
@@ -275,6 +323,7 @@ fn model(
     body: &[u8],
     placement: &Placement,
     models: &BTreeMap<String, Stored>,
+    linked: &BTreeMap<String, Linked>,
 ) -> Result<(ModelRef, bool), String> {
     let text_len = read_u32(body, BODY_SKIPPED).ok_or("record cut short")?;
     let text_start = BODY_SKIPPED + 4;
@@ -312,20 +361,32 @@ fn model(
             Ok((model, color_read))
         }
         Some("1") => {
-            let name = props
+            let model_id = props.get("MODELID").map(|id| id.trim().to_string());
+            let listed = model_id
+                .as_ref()
+                .and_then(|id| linked.get(id))
+                .unwrap_or(&NOT_LISTED);
+            let mut name = props
                 .get("MODEL.NAME")
                 .unwrap_or_default()
                 .trim()
                 .to_string();
             let embedded = props.get("MODEL.EMBED").map(str::trim) == Some("TRUE");
-            let id = props
-                .get("MODELID")
-                .map(|id| id.trim().to_string())
-                .filter(|id| models.contains_key(id));
+            let id = model_id.filter(|id| models.contains_key(id));
             let source = match (embedded, id) {
                 (true, Some(id)) => ModelSource::Embedded { id },
                 (true, None) => return Err("embedded model not found in /Models/Data".into()),
-                (false, _) => ModelSource::External { file: name.clone() },
+                (false, _) => {
+                    // The body names the file and its checksum; `/ModelsNoEmbed/Data` repeats
+                    // both, and stands in where the body leaves one out.
+                    if name.is_empty() {
+                        name.clone_from(&listed.name);
+                    }
+                    ModelSource::External {
+                        file: name.clone(),
+                        checksum: stored_checksum(props.get("MODEL.CHECKSUM")).or(listed.checksum),
+                    }
+                }
             };
             let at = Point {
                 x: props.length_mm("MODEL.2D.X")?.ok_or("no MODEL.2D.X")?,
@@ -358,6 +419,33 @@ fn model(
         }
         other => Err(format!("model type {} not read yet", other.unwrap_or("?"))),
     }
+}
+
+/// Altium's checksum of a model file, as `MODEL.CHECKSUM` and `/Models/Data`'s `CHECKSUM` give
+/// it: every byte times its offset in the file, the first byte (offset 0) counted once, summed and
+/// kept to 32 bits. The file's bytes as they are, line ends included.
+///
+/// From our own STEP boxes (see `linked-model/README.txt`): 1259363632 for `box-1608.step` and
+/// 1259260868 for `box-offset.step` (6493 and 6477 bytes, LF line ends), and 1234716065 for a
+/// 490672-byte copy of `box-1608.step` with CR LF line ends and a long comment, whose sum is
+/// about 6.9e12: so the sum wraps at 32 bits, and a CR counts like any byte. Every STEP file starts
+/// with `ISO-10303-21;`, so this does not tell a first byte counted once from a constant 73 ("I").
+pub fn checksum(file: &[u8]) -> u32 {
+    let mut sum = u32::from(file.first().copied().unwrap_or(0));
+    let mut offset = 1u32;
+    for &byte in file.iter().skip(1) {
+        sum = sum.wrapping_add(u32::from(byte).wrapping_mul(offset));
+        offset = offset.wrapping_add(1);
+    }
+    sum
+}
+
+/// A stored checksum (`MODEL.CHECKSUM`): a decimal 32-bit value, read as signed or unsigned.
+fn stored_checksum(value: Option<&str>) -> Option<u32> {
+    let v: i64 = value?.trim().parse().ok()?;
+    u32::try_from(v)
+        .ok()
+        .or_else(|| i32::try_from(v).ok().map(|s| s as u32))
 }
 
 /// A body's colour (`BODYCOLOR3D`, a COLORREF) and opacity (`BODYOPACITY3D`, 1 when missing).
@@ -492,14 +580,87 @@ fn records<'a>(data: &'a [u8], notes: &mut Vec<Note>) -> Result<Vec<&'a [u8]>, S
 mod tests {
     use super::*;
 
+    /// `tests/boards/linked-model/box-1608.step`, the box Altium gave 1259363632.
+    fn box_1608() -> Vec<u8> {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/boards/linked-model/box-1608.step");
+        std::fs::read(path).unwrap_or_default()
+    }
+
+    #[test]
+    fn checksum_is_altiums_for_our_box() {
+        let file = box_1608();
+        assert_eq!(file.len(), 6493);
+        assert_eq!(checksum(&file), 1_259_363_632);
+    }
+
+    /// The large copy linked on the probe board (see `linked-model/README.txt`): `box-1608.step`
+    /// with CR LF line ends and 4000 comment lines after `HEADER;`. Altium gave 1234716065.
+    #[test]
+    fn checksum_wraps_at_32_bits_and_counts_crs() {
+        let text = String::from_utf8(box_1608()).unwrap_or_default();
+        let mut lines: Vec<String> = text.split('\n').map(str::to_string).collect();
+        let header = lines.iter().position(|l| l == "HEADER;").unwrap_or(0);
+        let pad = (0..4000).map(|n| {
+            format!(
+                "/* padding so the file is large: {}*/",
+                format!("{n:06} ").repeat(12)
+            )
+        });
+        lines.splice(header + 1..header + 1, pad);
+        let big = lines.join("\r\n").into_bytes();
+        assert_eq!(big.len(), 490_672);
+        assert_eq!(checksum(&big), 1_234_716_065);
+    }
+
+    #[test]
+    fn checksum_of_tiny_files() {
+        assert_eq!(checksum(b""), 0);
+        assert_eq!(checksum(b"I"), 73);
+        assert_eq!(checksum(b"IS"), 73 + 83);
+        assert_eq!(checksum(b"ISO"), 73 + 83 + 2 * 79);
+    }
+
+    #[test]
+    fn the_linked_model_list_gives_name_and_checksum() -> Result<(), String> {
+        // `/ModelsNoEmbed/Data` of `one-linked-step-resistor`, as Altium wrote it.
+        let text = b"EMBED=FALSE|MODELSOURCE=File|ID={A80E16CD-AB39-46A1-AD50-5C02186E37B5}|\
+                     ROTX=0.000|ROTY=0.000|ROTZ=0.000|DZ=0|CHECKSUM=1259363632|\
+                     NAME=box-1608.step\0";
+        let mut data = (text.len() as u32).to_le_bytes().to_vec();
+        data.extend_from_slice(text);
+        let list = linked_models(&data)?;
+        let entry = list
+            .get("{A80E16CD-AB39-46A1-AD50-5C02186E37B5}")
+            .ok_or("not listed")?;
+        assert_eq!(entry.name, "box-1608.step");
+        assert_eq!(entry.checksum, Some(1_259_363_632));
+        assert!(linked_models(&[]).map_err(|e| e.to_string())?.is_empty());
+        assert!(linked_models(&[0xff, 0xff, 0xff, 0x7f]).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn stored_checksums_read_signed_or_unsigned() {
+        assert_eq!(stored_checksum(Some("1259363632")), Some(1_259_363_632));
+        assert_eq!(stored_checksum(Some(" 4294967295 ")), Some(u32::MAX));
+        assert_eq!(stored_checksum(Some("-1")), Some(u32::MAX));
+        assert_eq!(stored_checksum(Some("-2147483648")), Some(0x8000_0000));
+        assert_eq!(stored_checksum(Some("4294967296")), None);
+        assert_eq!(stored_checksum(Some("-2147483649")), None);
+        assert_eq!(stored_checksum(Some("x")), None);
+        assert_eq!(stored_checksum(None), None);
+    }
+
     #[test]
     fn hostile_streams_are_errors_or_notes_not_panics() {
         let mut components = Components::default();
         let mut notes = Vec::new();
-        assert!(attach(&[BODY_RECORD], None, &mut components, &mut notes).is_err());
+        assert!(attach(&[BODY_RECORD], None, None, &mut components, &mut notes).is_err());
         assert!(attach(
             &[BODY_RECORD, 0xff, 0xff, 0xff, 0x7f],
             None,
+            Some(&[0xff, 0xff, 0xff, 0x7f]),
             &mut components,
             &mut notes
         )
@@ -510,9 +671,9 @@ mod tests {
         let mut data = vec![BODY_RECORD];
         data.extend_from_slice(&(body.len() as u32).to_le_bytes());
         data.extend_from_slice(&body);
-        assert!(attach(&data, None, &mut components, &mut notes).is_ok());
+        assert!(attach(&data, None, None, &mut components, &mut notes).is_ok());
         assert!(notes.iter().any(|n| n.severity == Severity::Dropped));
-        assert!(attach(&[0x42], None, &mut components, &mut notes).is_ok());
+        assert!(attach(&[0x42], None, None, &mut components, &mut notes).is_ok());
     }
 
     fn part(designator: &str, id: &str) -> Placement {

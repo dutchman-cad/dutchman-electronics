@@ -673,3 +673,150 @@ fn the_open_hardware_boards_pass_the_privacy_check() -> Result<(), Box<dyn std::
     }
     Ok(())
 }
+
+/// Reads `board` into a fresh folder, with extra arguments; returns the result and the files
+/// written.
+#[cfg(feature = "altium")]
+fn read_into(
+    name: &str,
+    board: &std::path::Path,
+    extra: &[&str],
+) -> Result<(bool, serde_json::Value, Vec<String>), Box<dyn std::error::Error>> {
+    let out = std::env::temp_dir().join(format!("de-{name}-{}", std::process::id()));
+    let board = board.to_string_lossy();
+    let out_text = out.to_string_lossy();
+    let mut args = vec!["read", board.as_ref(), "--out", out_text.as_ref(), "--json"];
+    args.extend_from_slice(extra);
+    let result = run(&args);
+    let mut files: Vec<String> = std::fs::read_dir(&out)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    files.sort();
+    std::fs::remove_dir_all(&out).ok();
+    let (ok, v) = result?;
+    Ok((ok, v, files))
+}
+
+/// A copy of the linked-model board alone in a fresh folder, without its STEP file.
+#[cfg(feature = "altium")]
+fn lone_linked_board(name: &str) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
+    let dir = std::env::temp_dir().join(format!("de-{name}-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    std::fs::create_dir_all(&dir)?;
+    let board = dir.join("one-linked-step-resistor.PcbDoc");
+    std::fs::copy(
+        test_board("linked-model/one-linked-step-resistor.PcbDoc"),
+        &board,
+    )?;
+    Ok(board)
+}
+
+#[cfg(feature = "altium")]
+#[test]
+fn a_linked_model_next_to_the_board_is_used() -> Result<(), Box<dyn std::error::Error>> {
+    let board = test_board("linked-model/one-linked-step-resistor.PcbDoc");
+    let (ok, v, files) = read_into("linked", &board, &[])?;
+    assert!(ok, "{v}");
+    let r1 = v["parts"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|p| p["name"] == "R1")
+        .ok_or("R1 is not in the package")?;
+    let file = v["models"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|m| m["id"] == r1["model"])
+        .and_then(|m| m["file"].as_str())
+        .ok_or("R1's model is not listed")?;
+    assert!(files.iter().any(|f| f == file), "{files:?}");
+    let notes = messages(&v);
+    assert!(
+        notes.iter().any(|m| m
+            == "1 part(s) link to the model file box-1608.step, which was found with the \
+                board's checksum and is used"),
+        "{notes:?}"
+    );
+    Ok(())
+}
+
+#[cfg(feature = "altium")]
+#[test]
+fn a_linked_model_is_found_in_a_models_folder_given() -> Result<(), Box<dyn std::error::Error>> {
+    let board = lone_linked_board("linked-lone")?;
+    let library = test_board("linked-model");
+    let (ok, v, _) = read_into("linked-lone-out", &board, &[])?;
+    assert!(ok, "{v}");
+    assert!(!v["parts"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .any(|p| p["name"] == "R1"));
+    assert!(
+        messages(&v).iter().any(|m| m.contains(
+            "box-1608.step, which is not in the board's folder, its Models folder or a folder \
+             given with --models"
+        )),
+        "{v}"
+    );
+    let (ok, v, _) = read_into(
+        "linked-lone-models",
+        &board,
+        &["--models", &library.to_string_lossy()],
+    )?;
+    std::fs::remove_dir_all(board.parent().ok_or("no folder")?).ok();
+    assert!(ok, "{v}");
+    assert!(v["parts"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .any(|p| p["name"] == "R1"));
+    Ok(())
+}
+
+#[cfg(feature = "altium")]
+#[test]
+fn a_linked_model_of_the_same_name_but_another_checksum_is_not_used(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let board = lone_linked_board("linked-other")?;
+    let dir = board.parent().ok_or("no folder")?.to_path_buf();
+    let mut step = std::fs::read(test_board("linked-model/box-1608.step"))?;
+    // The same box, one coordinate changed: a different file of the same name.
+    let text = String::from_utf8(step)?.replacen("(-0.8,-0.4,0.)", "(-0.9,-0.4,0.)", 1);
+    step = text.into_bytes();
+    std::fs::create_dir_all(dir.join("Models"))?;
+    std::fs::write(dir.join("Models").join("box-1608.step"), step)?;
+    let (ok, v, _) = read_into("linked-other-out", &board, &[])?;
+    std::fs::remove_dir_all(&dir).ok();
+    assert!(ok, "{v}");
+    assert!(!v["parts"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .any(|p| p["name"] == "R1"));
+    assert!(
+        messages(&v)
+            .iter()
+            .any(|m| m.contains("its checksum is not the board's")),
+        "{v}"
+    );
+    Ok(())
+}
+
+#[cfg(feature = "altium")]
+#[test]
+fn read_refuses_an_option_it_does_not_know() -> Result<(), Box<dyn std::error::Error>> {
+    let out = Command::new(env!("CARGO_BIN_EXE_dutchman-electronics"))
+        .args(["read", "x.PcbDoc", "--out", "o", "--model", "lib"])
+        .output()?;
+    assert_eq!(out.status.code(), Some(2));
+    let out = Command::new(env!("CARGO_BIN_EXE_dutchman-electronics"))
+        .args(["read", "x.PcbDoc", "--json"])
+        .output()?;
+    assert_eq!(out.status.code(), Some(2));
+    Ok(())
+}
