@@ -937,10 +937,12 @@ fn the_chamfered_pad_has_its_corners_where_the_gerber_has_them() {
             Segment::Arc { .. } => None,
         })
         .collect();
+    // The contour runs counter-clockwise, so a chamfer may be listed in either direction.
+    let same = |p: (f64, f64), q: (f64, f64)| near(p.0, q.0) && near(p.1, q.1);
     let has = |a: (f64, f64), b: (f64, f64)| {
-        lines.iter().any(|(f, t)| {
-            near(f.0, a.0) && near(f.1, a.1) && near(t.0, b.0) && near(t.1, b.1)
-        })
+        lines
+            .iter()
+            .any(|(f, t)| (same(*f, a) && same(*t, b)) || (same(*f, b) && same(*t, a)))
     };
     assert!(has((-1.5, 0.5), (-1.0, 1.0)));
     assert!(has((1.0, -1.0), (1.5, -0.5)));
