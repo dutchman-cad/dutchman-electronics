@@ -155,7 +155,7 @@ fn every_board_has_the_same_outline_and_thickness() -> Result<(), Box<dyn std::e
     Ok(())
 }
 
-/// An arc as (centre x, centre y, radius, start, end), angles in degrees.
+/// An arc as (center x, center y, radius, start, end), angles in degrees.
 type ArcXy = (f64, f64, f64, f64, f64);
 
 /// The arcs of a contour, and the number of lines.
@@ -210,7 +210,7 @@ fn chained(contour: &Contour) -> bool {
     })
 }
 
-/// True when the arc (centre, radius, start, end) is the expected one; angles are compared
+/// True when the arc (center, radius, start, end) is the expected one; angles are compared
 /// modulo 360.
 fn same_arc(got: ArcXy, want: ArcXy) -> bool {
     let angle = |a: f64, b: f64| {

@@ -2,12 +2,12 @@
 //! side).
 //!
 //! Worked out from our own CC0 test board `one-resistor` (one component: designator R1, comment
-//! "10k", footprint R0603-TEST, centre (25, 15) mm, rotation 0, top side) by comparing its streams
+//! "10k", footprint R0603-TEST, center (25, 15) mm, rotation 0, top side) by comparing its streams
 //! with `empty-outline`, and from the numbers in its README.txt (see LEGAL.md):
 //!
 //! - `/Components6/Data` is a run of records, each a little-endian `u32` length and then text of
 //!   the form `|KEY=VALUE…` ending in a NUL byte (the framing of `/Board6/Data`). Our board has one
-//!   record, with `X=984.252mil` and `Y=590.5512mil` (the centre, 25 x 15 mm),
+//!   record, with `X=984.252mil` and `Y=590.5512mil` (the center, 25 x 15 mm),
 //!   `ROTATION= 0.00000000000000E+0000` (degrees), `LAYER=TOP` and `PATTERN=R0603-TEST` (the
 //!   footprint). The designator is not in this record. `one-rotated-resistor` has
 //!   `ROTATION= 9.00000000000000E+0001` (90 degrees, counter-clockwise); `one-bottom-resistor`

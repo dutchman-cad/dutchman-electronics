@@ -9,13 +9,13 @@
 //! - the same type byte, the same 18 bytes and the same text, byte for byte;
 //! - then the outline in another form: a `u32` count n and n + 1 vertices of 37 bytes each, the
 //!   last vertex at the first one's place. A vertex is a byte (0 for a straight edge to the next
-//!   vertex, 1 for an arc), x, y, the arc's centre x and y and its radius as `i32` in 1/10000 mil,
+//!   vertex, 1 for an arc), x, y, the arc's center x and y and its radius as `i32` in 1/10000 mil,
 //!   then its start and end angle as `f64` degrees; all of the arc's fields are 0 on a straight
 //!   edge. The arc runs counter-clockwise from its start to its end angle, like an outline arc of
 //!   `/Board6/Data` (see `board.rs`).
 //!
 //! Where every edge is straight, the vertices are the n pairs of `f64` of the plain record. The
-//! round board cutout of `outline-with-arcs` is two half circles here (centre (40, 15) mm,
+//! round board cutout of `outline-with-arcs` is two half circles here (center (40, 15) mm,
 //! radius 2, 0 to 180 and 180 to 360 degrees, the last vertex with byte 0) but a polygon of 35
 //! corners in `/Regions6/Data`. So the reader reads the plain streams, takes the arcs from here
 //! where a record has them, and checks that the rest only repeats the plain records.
@@ -219,7 +219,7 @@ mod tests {
 
     #[test]
     fn a_shape_based_circle_comes_back_as_two_arcs() {
-        // A polygon in the plain record, two half circles (centre (1000, 0), radius 500, in
+        // A polygon in the plain record, two half circles (center (1000, 0), radius 500, in
         // 1/10000 mil) in the copy, listed like `outline-with-arcs`'s cutout.
         let plain = record(&[(500, 0), (1000, 500), (1500, 0)], false);
         let text_end = plain.len() - 4 - 3 * 16;

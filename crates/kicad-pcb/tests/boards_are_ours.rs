@@ -59,14 +59,14 @@ fn no_board_names_a_path_an_address_or_a_computer() {
     }
 }
 
-// Boards made by others under an open licence live in tests/open-hardware, one folder each.
-// Only these folders may carry a licence line other than the CC0 one above, and only one of the
-// licences we accept (CONTRIBUTING.md): CC0-1.0, CC-BY-4.0 and CC-BY-SA-4.0, version 4.0 of the
-// two attribution licences. Each folder holds the board, the licence text as LICENSE-<id>.txt,
-// and a README.txt whose first line is `Openly licensed board by others, not CC0. Licence: <id>,
+// Boards made by others under an open license live in tests/open-hardware, one folder each.
+// Only these folders may carry a license line other than the CC0 one above, and only one of the
+// licenses we accept (CONTRIBUTING.md): CC0-1.0, CC-BY-4.0 and CC-BY-SA-4.0, version 4.0 of the
+// two attribution licenses. Each folder holds the board, the license text as LICENSE-<id>.txt,
+// and a README.txt whose first line is `Openly licensed board by others, not CC0. License: <id>,
 // <url>` and that names the source, the commit and (for BY and BY-SA) the attribution.
 
-/// The licences accepted for boards by others: (id, the URL after the id in the README.txt line).
+/// The licenses accepted for boards by others: (id, the URL after the id in the README.txt line).
 const ACCEPTED: [(&str, &str); 3] = [
     (
         "CC0-1.0",
@@ -79,7 +79,7 @@ const ACCEPTED: [(&str, &str); 3] = [
     ),
 ];
 
-const OPEN_LINE: &str = "Openly licensed board by others, not CC0. Licence: ";
+const OPEN_LINE: &str = "Openly licensed board by others, not CC0. License: ";
 
 fn open_hardware_folders() -> Vec<std::path::PathBuf> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/open-hardware");
@@ -106,24 +106,24 @@ fn there_is_at_least_one_open_hardware_board() {
 }
 
 #[test]
-fn every_open_hardware_folder_names_an_accepted_licence_its_source_and_its_attribution() {
+fn every_open_hardware_folder_names_an_accepted_license_its_source_and_its_attribution() {
     for folder in open_hardware_folders() {
         let name = folder.display();
         assert_eq!(boards_in(&folder).len(), 1, "{name}: exactly one board");
         let readme = std::fs::read_to_string(folder.join("README.txt"))
             .unwrap_or_else(|_| panic!("{name} has no README.txt"));
         let first = readme.lines().next().unwrap_or_default();
-        let licence = first
+        let license = first
             .strip_prefix(OPEN_LINE)
             .unwrap_or_else(|| panic!("{name}/README.txt must start with: {OPEN_LINE}<id>, <url>"));
         let (id, _) = ACCEPTED
             .iter()
-            .find(|(id, url)| licence == format!("{id}, {url}"))
-            .unwrap_or_else(|| panic!("{name}: licence line {licence:?} is not an accepted one"));
-        // The licence text, as the project published it.
+            .find(|(id, url)| license == format!("{id}, {url}"))
+            .unwrap_or_else(|| panic!("{name}: license line {license:?} is not an accepted one"));
+        // The license text, as the project published it.
         let text = std::fs::read_to_string(folder.join(format!("LICENSE-{id}.txt")))
             .unwrap_or_else(|_| panic!("{name} has no LICENSE-{id}.txt"));
-        assert!(text.len() > 1000, "{name}: the licence text looks empty");
+        assert!(text.len() > 1000, "{name}: the license text looks empty");
         // The source and the exact commit the file came from.
         assert!(
             readme.lines().any(|l| l.starts_with("Source: https://")),

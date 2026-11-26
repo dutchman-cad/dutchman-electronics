@@ -41,7 +41,7 @@ use crate::components::{
 };
 use crate::copper::{read_u16, read_u32, CopperLayers};
 
-/// Millimetres per internal unit (1/10000 mil).
+/// Millimeters per internal unit (1/10000 mil).
 const MM_PER_UNIT: f64 = 0.0254 / 10_000.0;
 /// The most records read from `/Texts6/Data` before the file is treated as hostile.
 const MAX_RECORDS: usize = 1_000_000;

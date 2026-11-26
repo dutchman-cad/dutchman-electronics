@@ -7,7 +7,7 @@
 //! LEGAL.md). Coordinates and sizes are little-endian `i32` in 1/10000 mil, absolute (the boards'
 //! origin is at 0, 0).
 //!
-//! The file stores whole units, so a typed length can come out a fraction of a micrometre off
+//! The file stores whole units, so a typed length can come out a fraction of a micrometer off
 //! (50 mm is 19685039.37 units, stored as 19685039, read as 49.99999906 mm). That is the file, not
 //! a rounding bug; tests allow 0.001 mm.
 //!
@@ -19,7 +19,7 @@
 //!   end x, end y and width. `one-bottom-track` differs from `one-track` in the layer byte (32
 //!   instead of 1) and in bytes 41..43, which are not read.
 //! - `/Arcs6/Data` (`one-arc`): records of type `0x01`, a `u32` length, then a body whose byte 0
-//!   is the layer, bytes 3..5 the net index, from byte 13 the centre x and y, at byte 21 the
+//!   is the layer, bytes 3..5 the net index, from byte 13 the center x and y, at byte 21 the
 //!   radius, at bytes 25..33 and 33..41 two `f64` in degrees, and at byte 41 the width. Our arc
 //!   runs from 0 to 90 degrees: bytes 33..41 hold 90.0 (the end angle) and bytes 25..33 hold 0.0.
 //!   `one-overlay-arc` (30 to 300 degrees) confirms that bytes 25..33 are the start angle.
@@ -29,13 +29,13 @@
 //!   of the component a line belongs to (0 for R1's line on `one-resistor-silkscreen`, `ff ff` for
 //!   none), as for pads; its designator becomes the owner.
 //! - `/Vias6/Data` (`one-via`): records of type `0x03`, a `u32` length, then a body whose byte 0
-//!   is the layer (74, Multi-Layer), bytes 3..5 the net index, from byte 13 the centre x and y, at
+//!   is the layer (74, Multi-Layer), bytes 3..5 the net index, from byte 13 the center x and y, at
 //!   byte 21 the diameter and at byte 25 the hole diameter. Bytes 29 and 30 hold 1 and 32: the
 //!   via runs from Top Layer to Bottom Layer, as typed in. A via whose two layer bytes are not the
 //!   top and bottom copper layers is read as a through via, with a warning.
 //! - `/Pads6/Data`: records of type `0x02` followed by six blocks, each a `u32` length and its
 //!   bytes. Block 4 holds the geometry: byte 0 the layer, bytes 3..5 the net index, from byte 13
-//!   the centre x and y, then three (x, y) size pairs (top, middle, bottom), from byte 45 the hole
+//!   the center x and y, then three (x, y) size pairs (top, middle, bottom), from byte 45 the hole
 //!   diameter (0 for a pad without a hole), and at bytes 49..52 the shapes of the three size pairs
 //!   (1 round, 2 rectangle). Bytes 52..60 are the rotation as an `f64` in degrees: 30.0 on
 //!   `one-rotated-pad`, 0.0 on every other pad. Its sizes are stored before rotation (x 2.000,
@@ -50,7 +50,7 @@
 //! - `/Fills6/Data` (`one-fill`): records of type `0x06` and a `u32` length; in the body, byte 0
 //!   is the layer, bytes 3..5 the net index, from byte 13 two corners (x1, y1, x2, y2), then at
 //!   byte 29 the rotation as an `f64` in degrees: 0 on `one-fill`, 30 on `one-rotated-fill`, whose
-//!   bounding box (x 18.17 to 31.83) shows it is turned counter-clockwise about its centre.
+//!   bounding box (x 18.17 to 31.83) shows it is turned counter-clockwise about its center.
 //! - Copper regions (`one-region`) and the copper Altium poured for a polygon (`one-pour`) are
 //!   region records in `/Regions6/Data` (see `board.rs`) with `KIND=0` and the layer in body
 //!   byte 0; poured copper also has `SUBPOLYINDEX=0` (a free region has -1). The pour's own
@@ -63,7 +63,7 @@ use board_model::{
 use crate::board::{OtherRegion, Properties};
 use crate::components::Components;
 
-/// Millimetres per internal unit (1/10000 mil).
+/// Millimeters per internal unit (1/10000 mil).
 const MM_PER_UNIT: f64 = 0.0254 / 10_000.0;
 const TRACK_RECORD: u8 = 0x04;
 const PAD_RECORD: u8 = 0x02;
@@ -530,7 +530,7 @@ pub(crate) fn vias(
 }
 
 /// Reads the fills from `/Fills6/Data` as rectangular copper regions. A rotated fill is the
-/// rectangle of its two corners turned counter-clockwise about its centre (`one-rotated-fill`).
+/// rectangle of its two corners turned counter-clockwise about its center (`one-rotated-fill`).
 pub(crate) fn fills(
     data: &[u8],
     layers: &CopperLayers,
@@ -556,14 +556,14 @@ pub(crate) fn fills(
                 .or_default() += 1;
             continue;
         };
-        let centre = Point {
+        let center = Point {
             x: (a.x + b.x) / 2.0,
             y: (a.y + b.y) / 2.0,
         };
         let (sin, cos) = rotation.to_radians().sin_cos();
         let turn = |p: Point| Point {
-            x: centre.x + (p.x - centre.x) * cos - (p.y - centre.y) * sin,
-            y: centre.y + (p.x - centre.x) * sin + (p.y - centre.y) * cos,
+            x: center.x + (p.x - center.x) * cos - (p.y - center.y) * sin,
+            y: center.y + (p.x - center.x) * sin + (p.y - center.y) * cos,
         };
         let corners = [a, Point { x: b.x, y: a.y }, b, Point { x: a.x, y: b.y }].map(turn);
         items.push(CopperItem::Region {
@@ -698,7 +698,7 @@ fn read_f64(data: &[u8], at: usize) -> Option<f64> {
     Some(f64::from_le_bytes(bytes))
 }
 
-/// An `i32` in 1/10000 mil at `at`, in millimetres.
+/// An `i32` in 1/10000 mil at `at`, in millimeters.
 fn length(data: &[u8], at: usize) -> Result<f64, String> {
     let bytes: [u8; 4] = data
         .get(at..at + 4)

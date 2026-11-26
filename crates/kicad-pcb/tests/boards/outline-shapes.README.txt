@@ -2,9 +2,9 @@ Original test board made for Dutchman Electronics. Released under CC0 1.0 (publi
 
 outline-shapes: an outline of four lines and one arc, and three cutouts.
 
-Made with KiCad 9.0.9 (file version 20241229) by fixtures/kicad/build_boards.py. KiCad shows coordinates in millimetres with Y pointing down; the board's top-left corner is at page position (100, 100), and every number below is relative to that corner (so add 100 to x and y for the page position). The reader gives Y up: model x = 100 + X, model y = -(100 + Y).
+Made with KiCad 9.0.9 (file version 20241229) by fixtures/kicad/build_boards.py. KiCad shows coordinates in millimeters with Y pointing down; the board's top-left corner is at page position (100, 100), and every number below is relative to that corner (so add 100 to x and y for the page position). The reader gives Y up: model x = 100 + X, model y = -(100 + Y).
 
 - Outline: lines (0,0)-(46,0), (50,4)-(50,30), (50,30)-(0,30), (0,30)-(0,0), and one arc from (46,0) through (48.828427, 1.171573) to (50,4): a rounded corner of radius 4 about (46,4).
-- Cutouts: a circle (gr_circle) centred (10,15) with radius 1.5; a rectangle (gr_rect) from (20,10) to (28,14); a polygon (gr_poly) with corners (35,20), (42,20), (38.5,26).
+- Cutouts: a circle (gr_circle) centered (10,15) with radius 1.5; a rectangle (gr_rect) from (20,10) to (28,14); a polygon (gr_poly) with corners (35,20), (42,20), (38.5,26).
 - Area of the outer contour: 50 x 30 minus the corner square, plus its quarter circle: 1500 - 16 + 4 pi = 1496.566 mm2 (the rounded corner loses 16 - 4 pi = 3.434 mm2).
 - Thickness: 1.6.

@@ -1166,7 +1166,7 @@ fn faces_of(o: &Value) -> usize {
 }
 
 #[test]
-fn each_overlay_has_its_z_thickness_and_colour() {
+fn each_overlay_has_its_z_thickness_and_color() {
     // T = 1.6: copper and mask start at the face, silkscreen on top of the mask (T + 0.02).
     let (list, notes) = overlays(&stacked_board(0, 3), 1.6, "Board");
     assert!(notes.is_empty(), "{notes:?}");
@@ -1587,7 +1587,7 @@ fn reversed(c: &Contour) -> Contour {
     }
 }
 
-/// Every point of every arc of `c`, taken `nudge` mm towards the arc's centre, 400 to an arc.
+/// Every point of every arc of `c`, taken `nudge` mm towards the arc's center, 400 to an arc.
 fn arc_samples(c: &Contour, nudge: f64) -> Vec<geo::Point> {
     let mut out = Vec::new();
     for s in &c.segments {
@@ -1656,7 +1656,7 @@ fn the_covering_outline_holds_every_point_of_the_true_corner_arcs() {
 fn the_covering_outline_leaves_a_notch_arc_to_its_chords() {
     use geo::Intersects;
     // A 10 x 10 square with a round notch of radius 2 bitten into its top edge: the arc turns
-    // clockwise round the square, with the notch's centre outside the region, so the polygon
+    // clockwise round the square, with the notch's center outside the region, so the polygon
     // must hold the notch's chords (inscribed in it) and still hold the whole region.
     let c = Contour {
         segments: vec![
@@ -1690,7 +1690,7 @@ fn the_covering_outline_leaves_a_notch_arc_to_its_chords() {
         ],
     };
     let covering = contour_covering(&c).unwrap();
-    // The true region lies on the far side of the notch arc from its centre.
+    // The true region lies on the far side of the notch arc from its center.
     for pt in arc_samples(&c, -1e-9) {
         assert!(covering.intersects(&pt), "{pt:?} is outside");
     }
@@ -1767,7 +1767,7 @@ fn a_rounded_rectangle_pad_has_its_corners_cut_round() {
 #[test]
 fn a_polygon_pad_is_the_union_of_its_pieces_with_its_hole_and_a_grown_opening() {
     // A 1 x 1 square and an L-shaped piece overlapping it by a quarter square: 3.75 mm2, with a
-    // 0.4 mm hole at the centre.
+    // 0.4 mm hole at the center.
     let corners = |pts: &[(f64, f64)]| board_model::Contour {
         segments: pts
             .iter()

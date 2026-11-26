@@ -45,7 +45,7 @@ fn ends(s: &Segment) -> (Point, Point) {
     }
 }
 
-/// The box round the straight ends and arc ends of a contour (the outline's centre line, as
+/// The box round the straight ends and arc ends of a contour (the outline's center line, as
 /// KiCad's own board size ignores the line width).
 fn bounds(c: &Contour) -> (f64, f64, f64, f64) {
     let mut b = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);

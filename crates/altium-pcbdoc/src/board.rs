@@ -8,8 +8,8 @@
 //! - The board shape is a numbered vertex list in that record: `KINDn`, `VXn`, `VYn`, `CXn`,
 //!   `CYn`, `SAn`, `EAn`, `Rn`. The last vertex repeats the first. Lengths are text such as
 //!   `1181.1024mil`, angles text such as ` 1.80000000000000E+0002` (degrees).
-//! - Vertex n starts the edge to vertex n + 1. `KINDn=0` is a straight edge (its centre, radius
-//!   and angles are 0). `KINDn=1` is an arc with centre (`CXn`, `CYn`), radius `Rn`, running
+//! - Vertex n starts the edge to vertex n + 1. `KINDn=0` is a straight edge (its center, radius
+//!   and angles are 0). `KINDn=1` is an arc with center (`CXn`, `CYn`), radius `Rn`, running
 //!   counter-clockwise from `SAn` to `EAn`: on `outline-with-arcs` (a 50 x 30 mm outline with
 //!   3 mm corner arcs) Altium lists the vertices clockwise, so each arc's vertex sits at `EAn`
 //!   and the next one at `SAn`. On `outline-with-notch` the two concave corner arcs of its notch
@@ -37,9 +37,9 @@ use std::f64::consts::TAU;
 
 use board_model::{Contour, Note, Outline, Point, Segment, Severity};
 
-/// Millimetres per mil.
+/// Millimeters per mil.
 const MM_PER_MIL: f64 = 0.0254;
-/// Millimetres per internal unit (1/10000 mil), the unit of binary coordinates.
+/// Millimeters per internal unit (1/10000 mil), the unit of binary coordinates.
 const MM_PER_UNIT: f64 = MM_PER_MIL / 10_000.0;
 /// The most vertices one outline or region may have before the file is treated as hostile.
 const MAX_VERTICES: usize = 100_000;
@@ -79,13 +79,13 @@ impl Properties {
         self.0.get(key).map(String::as_str)
     }
 
-    /// A length such as `1181.1024mil`, in millimetres.
+    /// A length such as `1181.1024mil`, in millimeters.
     pub(crate) fn length_mm(&self, key: &str) -> Result<Option<f64>, String> {
         self.get(key).map(|v| parse_length_mm(key, v)).transpose()
     }
 }
 
-/// Parses a length written as a number followed by `mil` into millimetres.
+/// Parses a length written as a number followed by `mil` into millimeters.
 fn parse_length_mm(key: &str, value: &str) -> Result<f64, String> {
     let number = value
         .trim()
@@ -582,7 +582,7 @@ fn read_f64(data: &[u8], at: usize) -> Option<f64> {
     Some(f64::from_le_bytes(bytes))
 }
 
-/// An internal coordinate (1/10000 mil) in millimetres.
+/// An internal coordinate (1/10000 mil) in millimeters.
 pub(crate) fn unit_to_mm(v: f64) -> Result<f64, String> {
     let mm = v * MM_PER_UNIT;
     if mm.is_finite() && mm.abs() <= MAX_LENGTH_MM {

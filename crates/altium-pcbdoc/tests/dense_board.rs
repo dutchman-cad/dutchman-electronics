@@ -99,7 +99,7 @@ fn its_34_parts_sit_where_the_readme_says() -> Result<(), Box<dyn std::error::Er
 }
 
 #[test]
-fn its_bodies_have_their_colours_and_two_parts_carry_the_step_box(
+fn its_bodies_have_their_colors_and_two_parts_carry_the_step_box(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let out = read()?;
     let color = |r, g, b| {

@@ -2,9 +2,9 @@
 
 Our own code, no KiCad code. KiCad's Gerber export draws a trapezoid ("Outline4P" macro) and a
 chamfered or custom pad ("FreePoly" macro) as a polygon whose corners are given in the pad's own
-frame, with a rotation, and flashes it at the pad's centre. This script reads those and prints, for
-every flash, the pad (reference and number), its centre and the corners in board coordinates (Y up,
-millimetres, the page coordinates KiCad shows with Y negated, the same frame as the reader's).
+frame, with a rotation, and flashes it at the pad's center. This script reads those and prints, for
+every flash, the pad (reference and number), its center and the corners in board coordinates (Y up,
+millimeters, the page coordinates KiCad shows with Y negated, the same frame as the reader's).
 
 Usage: gerber_corners.py file.gbr > file.corners.txt
 """

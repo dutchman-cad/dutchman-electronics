@@ -2,7 +2,7 @@ Original test board made for Dutchman Electronics. Released under CC0 1.0 (publi
 
 four-layer: the 50 x 30 mm rectangle on a four-layer board, 1.2 mm thick.
 
-Made with KiCad 9.0.9 (file version 20241229) by fixtures/kicad/build_boards.py. KiCad shows coordinates in millimetres with Y pointing down; the board's top-left corner is at page position (100, 100), and every number below is relative to that corner (so add 100 to x and y for the page position). The reader gives Y up: model x = 100 + X, model y = -(100 + Y).
+Made with KiCad 9.0.9 (file version 20241229) by fixtures/kicad/build_boards.py. KiCad shows coordinates in millimeters with Y pointing down; the board's top-left corner is at page position (100, 100), and every number below is relative to that corner (so add 100 to x and y for the page position). The reader gives Y up: model x = 100 + X, model y = -(100 + Y).
 
 - Edge.Cuts: one rectangle, corners (0,0) and (50,30).
 - Copper layers, top to bottom: F.Cu, In1.Cu, In2.Cu, B.Cu.

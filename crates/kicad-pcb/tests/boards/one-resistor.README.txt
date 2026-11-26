@@ -2,7 +2,7 @@ Original test board made for Dutchman Electronics. Released under CC0 1.0 (publi
 
 one-resistor: one footprint on the top side with a 3D model reference.
 
-Made with KiCad 9.0.9 (file version 20241229) by fixtures/kicad/build_boards.py. KiCad shows coordinates in millimetres with Y pointing down; the board's top-left corner is at page position (100, 100), and every number below is relative to that corner (so add 100 to x and y for the page position). The reader gives Y up: model x = 100 + X, model y = -(100 + Y).
+Made with KiCad 9.0.9 (file version 20241229) by fixtures/kicad/build_boards.py. KiCad shows coordinates in millimeters with Y pointing down; the board's top-left corner is at page position (100, 100), and every number below is relative to that corner (so add 100 to x and y for the page position). The reader gives Y up: model x = 100 + X, model y = -(100 + Y).
 
 - Footprint test:R_0603, designator R1, value 10k, on F.Cu at (25,15), rotation 0.
 - Pads, both surface-mount rectangles 0.9 x 0.95 on F.Cu, F.Mask and F.Paste: "1" at (24.2,15) and "2" at (25.8,15) (0.8 either side of the footprint origin).

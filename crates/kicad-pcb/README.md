@@ -33,17 +33,17 @@ a note.
   circle), so a contour that sticks out of the biggest one's box is dropped with a note, and a
   cutout is not tested to lie inside the outline's shape.
 - A full circle is one arc with equal start and end angles, as the model defines it.
-- Outline pieces are joined within 5 micrometres (our choice: KiCad gives an arc by three
-  rounded points, which leave its ends about a micrometre off). Only the first 5000 loose
+- Outline pieces are joined within 5 micrometers (our choice: KiCad gives an arc by three
+  rounded points, which leave its ends about a micrometer off). Only the first 5000 loose
   Edge.Cuts pieces are joined; the rest are dropped with a note.
 - Numbers beyond 100 m for a position or 10 m for a size make the item holding them unreadable
   (dropped with a note). A file may hold at most 4 million nodes (about 100 bytes each once
   read).
-- Text widths (0.6 of the height per letter, used to place centred and right-aligned text) and
+- Text widths (0.6 of the height per letter, used to place centered and right-aligned text) and
   the pen width of a text that sets none (0.12 of its height, from KiCad's 0.15 mm pen on a
   1.27 mm text) are our own estimates, not KiCad's metrics.
-- A slotted hole is read as a round hole as wide as the slot's narrow side; a hole set off-centre
-  in its pad is drawn centred (a warning).
+- A slotted hole is read as a round hole as wide as the slot's narrow side; a hole set off-center
+  in its pad is drawn centered (a warning).
 - A zone's fill is one ring in the file, with a zero-width bridge out to each hole. The reader cuts
   the ring into simple loops wherever it passes a vertex twice (the bridges collapse to nothing),
   calls the loops that wind like the biggest one copper and the others holes, and puts each hole in
@@ -82,7 +82,7 @@ and from the boards in `tests/boards`, which we made with KiCad 9.0.9 (the `kica
 container image, a program binary) and our own scripts in `fixtures/kicad`. KiCad's source code
 was not read. Where the documentation is silent (angles of pads and texts inside a rotated
 footprint, the `model` token's `offset`, the order and sign of model rotations, the `*.Cu` pad
-layer) the behaviour comes from those boards and from KiCad's own exports of them.
+layer) the behavior comes from those boards and from KiCad's own exports of them.
 
 ## Tests
 
@@ -97,7 +97,7 @@ yet from text written by hand from the documentation: stack-ups that disagree wi
 thickness, older and newer version numbers, net names written as strings and fills that pinch.
 
 `tests/open-hardware/<board>/` holds larger real-world boards made by others under an open
-Creative Commons licence (CC0, CC-BY 4.0 or CC-BY-SA 4.0), each with its licence text and a
+Creative Commons license (CC0, CC-BY 4.0 or CC-BY-SA 4.0), each with its license text and a
 `README.txt` naming the source, commit, attribution and the numbers KiCad itself gives for the
 board; `tests/open_hardware.rs` checks the reader against those numbers. The rules are in
 CONTRIBUTING.md.

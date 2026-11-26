@@ -2,11 +2,11 @@ Original test board made for Dutchman Electronics. Released under CC0 1.0 (publi
 
 pad-shapes: one footprint with eight pads of the shapes the reader used to read as plain rectangles.
 
-Made with KiCad 9.0.9 (file version 20241229) by fixtures/kicad/build_boards.py. KiCad shows coordinates in millimetres with Y pointing down; the board's top-left corner is at page position (100, 100), and every number below is relative to that corner (so add 100 to x and y for the page position). The reader gives Y up: model x = 100 + X, model y = -(100 + Y).
+Made with KiCad 9.0.9 (file version 20241229) by fixtures/kicad/build_boards.py. KiCad shows coordinates in millimeters with Y pointing down; the board's top-left corner is at page position (100, 100), and every number below is relative to that corner (so add 100 to x and y for the page position). The reader gives Y up: model x = 100 + X, model y = -(100 + Y).
 
-- Footprint test:Shapes, designator U1, on F.Cu at (25,15), not turned. Every pad is on F.Cu, F.Mask and F.Paste (surface mount) except pad 8. Pad positions below are relative to the footprint, so the model centre of pad n is x = 100 + 25 + dx, y = -115.
+- Footprint test:Shapes, designator U1, on F.Cu at (25,15), not turned. Every pad is on F.Cu, F.Mask and F.Paste (surface mount) except pad 8. Pad positions below are relative to the footprint, so the model center of pad n is x = 100 + 25 + dx, y = -115.
 - Pad 1 at dx = -21: roundrect 3 x 2, roundrect_rratio 0.25, so a corner radius of 0.25 * 2 = 0.5. Read as PadShape::RoundedRectangle, ratio 0.25.
-- Pad 2 at dx = -15: trapezoid 3 x 2, rect_delta (0 1). The top edge (the one at the top of the screen) is 2 wide (3 - 1), the bottom edge 4 wide (3 + 1). Corners relative to the centre in the model (Y up): (-2,-1), (2,-1), (1,1), (-1,1). Area 6.
+- Pad 2 at dx = -15: trapezoid 3 x 2, rect_delta (0 1). The top edge (the one at the top of the screen) is 2 wide (3 - 1), the bottom edge 4 wide (3 + 1). Corners relative to the center in the model (Y up): (-2,-1), (2,-1), (1,1), (-1,1). Area 6.
 - Pad 3 at dx = -9: trapezoid 3 x 2, rect_delta (1 0). The left edge is 3 tall (2 + 1), the right edge 1 tall (2 - 1). Corners: (-1.5,-1.5), (1.5,-0.5), (1.5,0.5), (-1.5,1.5). Area 6.
 - Pad 4 at dx = -3: trapezoid 3 x 2, rect_delta (0.5 1). Corners: (-2,-1.25), (2,-0.75), (1,0.75), (-1,1.25). The two deltas add.
 - Pad 5 at dx = 3: roundrect 3 x 2 with chamfer_ratio 0.25 on the top-left and bottom-right corners, roundrect_rratio 0.25. The chamfered corners are cut 0.5 along each edge; the other two corners are rounded with radius 0.5. Area 6 - 2 * 0.125 - 2 * 0.25 * (1 - pi/4) = 5.6427.

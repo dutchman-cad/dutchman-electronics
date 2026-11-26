@@ -1,5 +1,5 @@
 Original test board made for Dutchman Electronics. Released under CC0 1.0 (public domain): https://creativecommons.org/publicdomain/zero/1.0/
-Exception: the TrueType font files embedded in one-dejavu-text, one-dejavu-bold-text and one-dejavu-italic-text are not CC0; they keep the DejaVu / Bitstream Vera licence (LICENSE-DejaVu.txt). Everything else in those three boards is CC0.
+Exception: the TrueType font files embedded in one-dejavu-text, one-dejavu-bold-text and one-dejavu-italic-text are not CC0; they keep the DejaVu / Bitstream Vera license (LICENSE-DejaVu.txt). Everything else in those three boards is CC0.
 
 (The first line covers every board in this folder: empty-outline, outline-with-hole, one-track,
 one-resistor, one-via, one-plated-pad, one-rotated-pad, one-oval-pad, one-bottom-track,
@@ -13,7 +13,7 @@ The first four boards (empty-outline, outline-with-hole, one-track, one-resistor
 hand on 2026-11-23 with typed or grid-snapped coordinates (snap grid 1 mm); the other six were
 made by a script on 2026-11-24 (see "Scripted boards" below). Every number below is exact.
 
-All numbers are in millimetres, as Altium shows them in its mm display. Coordinates are relative
+All numbers are in millimeters, as Altium shows them in its mm display. Coordinates are relative
 to the origin marker Altium puts on a new PCB; the board's lower-left corner sits on that origin.
 X to the right, Y up.
 
@@ -44,7 +44,7 @@ outline-with-hole.PcbDoc
 Same board shape and stack as empty-outline, plus:
 
 1. One unplated hole, made as a free pad:
-       centre (10.000, 15.000), rotation 0
+       center (10.000, 15.000), rotation 0
        hole: round, diameter 3.000, not plated
        pad: round, 3.000 x 3.000 on all layers (same as the hole, so no copper ring)
        layer Multi-Layer, designator "1", no net (Altium names its template c300hn300)
@@ -68,18 +68,18 @@ one-resistor.PcbDoc
 -------------------
 Same board shape and stack as empty-outline (a file copy of it), plus one component:
     designator R1, comment "10k", footprint R0603-TEST
-    centre (25.000, 15.000), rotation 0, on the top side
+    center (25.000, 15.000), rotation 0, on the top side
     no nets, no tracks
 
 Footprint R0603-TEST (I drew it myself; numbers relative to the footprint origin, which is the
-component centre):
-    pad 1: Top Layer only (SMD), rectangle 0.800 x 1.000, centre (-0.800, 0)
-    pad 2: Top Layer only (SMD), rectangle 0.800 x 1.000, centre (+0.800, 0)
+component center):
+    pad 1: Top Layer only (SMD), rectangle 0.800 x 1.000, center (-0.800, 0)
+    pad 2: Top Layer only (SMD), rectangle 0.800 x 1.000, center (+0.800, 0)
     3D body: an extruded box I drew myself (no STEP file, nothing downloaded),
         outline corners (-0.8, -0.4), (0.8, -0.4), (0.8, 0.4), (-0.8, 0.4): 1.600 x 0.800
         standoff 0, overall height 0.450 (from the board's top surface up)
         Altium layer "Top 3D Body"
-So on the board the pads are centred at (24.2, 15) and (25.8, 15), and the box spans
+So on the board the pads are centered at (24.2, 15) and (25.8, 15), and the box spans
 x 24.2 to 25.8, y 14.6 to 15.4, z 0 to 0.45 above the top surface.
 
 The "R1" designator text is on Top Overlay where Altium put it by default; its position is not
@@ -95,22 +95,22 @@ numbers below, then saved. The script read every number back from Altium and log
 matches the numbers here. None of these objects has a net or belongs to a component.
 
 one-via.PcbDoc
-    one via, centre (25.000, 15.000), diameter 1.000, hole 0.500
+    one via, center (25.000, 15.000), diameter 1.000, hole 0.500
     from Top Layer to Bottom Layer (a through via)
 
 one-plated-pad.PcbDoc
     one free pad, layer Multi-Layer, designator "1", rotation 0
-    centre (25.000, 15.000), round, 2.000 x 2.000 on top, middle and bottom
+    center (25.000, 15.000), round, 2.000 x 2.000 on top, middle and bottom
     hole: round, diameter 1.000, plated
 
 one-rotated-pad.PcbDoc
     one free pad, layer Top Layer only (SMD), designator "1", no hole
-    centre (25.000, 15.000), rectangle 2.000 x 1.000 (X x Y before rotation)
+    center (25.000, 15.000), rectangle 2.000 x 1.000 (X x Y before rotation)
     rotation 30 degrees (counter-clockwise)
 
 one-oval-pad.PcbDoc
     one free pad, layer Top Layer only (SMD), designator "1", no hole, rotation 0
-    centre (25.000, 15.000), Altium shape "Round" with 2.000 x 1.000, which Altium draws as an
+    center (25.000, 15.000), Altium shape "Round" with 2.000 x 1.000, which Altium draws as an
     oval (a slot shape, 2.000 long along X, 1.000 wide)
 
 one-bottom-track.PcbDoc
@@ -120,7 +120,7 @@ one-bottom-track.PcbDoc
 
 one-arc.PcbDoc
     one arc (a curved track), layer Top Layer
-    centre (25.000, 15.000), radius 5.000, width 0.500
+    center (25.000, 15.000), radius 5.000, width 0.500
     from 0 degrees to 90 degrees, counter-clockwise: it starts at (30, 15) and ends at (25, 20)
 
 
@@ -179,7 +179,7 @@ Scripted board with a STEP model: one-step-resistor
 Made on 2026-11-24 by my own script, from a file copy of one-resistor.PcbDoc: R1 keeps its
 place (25.000, 15.000), rotation 0, top side, footprint R0603-TEST and its pads. Its extruded
 box was removed and replaced by a 3D body that holds a STEP model, embedded in the board file.
-The STEP model (box-1608.step) is my own: a box 1.600 x 0.800 x 0.450, centred on its origin in
+The STEP model (box-1608.step) is my own: a box 1.600 x 0.800 x 0.450, centered on its origin in
 X and Y, from z = 0 to z = 0.450, written by this repository's board-step crate (CC0 like the
 board). Altium was given no rotation and no standoff; the script read back the body's extent:
 x 24.2 to 25.8, y 14.6 to 15.4, height 0.450 above the top surface.
@@ -190,12 +190,12 @@ Made on 2026-11-24 by my own script, each from a file copy of a board above with
 change; the script read every number back and logged it.
 
 one-rotated-resistor.PcbDoc  (from one-resistor)
-    R1 rotated to 90 degrees (counter-clockwise) about its centre, which stays at (25, 15);
+    R1 rotated to 90 degrees (counter-clockwise) about its center, which stays at (25, 15);
     still on the top side. Its pads moved with it:
         pad 1 at (25.000, 14.200), pad 2 at (25.000, 15.800), both with rotation 90
     Its extruded box turned with it: x 24.6 to 25.4, y 14.2 to 15.8, still 0.450 high.
 one-bottom-resistor.PcbDoc  (from one-resistor)
-    R1 flipped to the bottom side, centre still (25, 15). Altium itself then shows R1 with
+    R1 flipped to the bottom side, center still (25, 15). Altium itself then shows R1 with
     rotation 180 (I set only the side). Its pads are on Bottom Layer and mirrored:
         pad 1 at (25.800, 15.000), pad 2 at (24.200, 15.000), both with rotation 180
     Its extruded box went to the bottom side too (Altium marks it as projecting from the bottom):
@@ -204,17 +204,17 @@ one-net.PcbDoc  (from one-track)
     the track (Top Layer, (10, 15) to (20, 15), width 0.500) now belongs to a net named "GND";
     nothing else has a net.
 
-Scripted boards, fifth batch: an off-centre STEP model, rotated and flipped; a rotated fill;
+Scripted boards, fifth batch: an off-center STEP model, rotated and flipped; a rotated fill;
 TrueType text
 -------------------------------------------------------------------------------------------
 Made on 2026-11-24 by my own script; every number was read back and logged.
 
 The STEP model box-offset.step is my own, written by this repository's board-step crate (CC0
 like the boards): a box 1.600 x 0.800 x 0.450 that lies on the +X side of its origin, x 0 to
-1.6, y -0.4 to 0.4, z 0 to 0.45. Being off-centre, it shows how Altium turns and flips models.
+1.6, y -0.4 to 0.4, z 0 to 0.45. Being off-center, it shows how Altium turns and flips models.
 
 one-offset-step-resistor.PcbDoc  (from one-resistor)
-    R1's extruded box replaced by a 3D body holding box-offset.step, its origin on R1's centre
+    R1's extruded box replaced by a 3D body holding box-offset.step, its origin on R1's center
     (25, 15), embedded in the board. Top side, rotation 0. The body spans x 25 to 26.6,
     y 14.6 to 15.4, height 0.450.
 one-rotated-step-resistor.PcbDoc  (the same, then R1 rotated to 90 degrees)
@@ -222,12 +222,12 @@ one-rotated-step-resistor.PcbDoc  (the same, then R1 rotated to 90 degrees)
     25.4, y 15 to 16.6: the +X box turned onto +Y.
 one-bottom-step-resistor.PcbDoc  (the same as one-offset-step-resistor, then R1 flipped)
     Altium turns a part about the middle of everything it holds, model included, so flipping
-    R1 to the bottom moved its centre to (25.400, 15.000) and gave it rotation 180 (I set only
+    R1 to the bottom moved its center to (25.400, 15.000) and gave it rotation 180 (I set only
     the side). Pads on Bottom Layer at (26.2, 15) and (24.6, 15), rotation 180. The body spans
     x 23.8 to 25.4, y 14.6 to 15.4, height 0.450, projecting from the bottom.
 one-rotated-fill.PcbDoc  (from empty-outline)
     the fill of one-fill (corners (20, 10) and (30, 20) before rotation) with rotation 30
-    degrees, counter-clockwise about its centre (25, 15); its bounding box is x 18.170 to
+    degrees, counter-clockwise about its center (25, 15); its bounding box is x 18.170 to
     31.830, y 8.170 to 21.830.
 
 one-ttf-text.PcbDoc  (from empty-outline)
@@ -242,18 +242,18 @@ one-ttf-text.PcbDoc  (from empty-outline)
     Designer 26.12.2 opens it normally and draws the text with the Arial font installed on the
     PC.
 
-Scripted boards, sixth batch: an off-centre extruded body, top and flipped
+Scripted boards, sixth batch: an off-center extruded body, top and flipped
 --------------------------------------------------------------------------
 Made on 2026-11-24 by my own script, each from a file copy of one-resistor.PcbDoc with R1's
 extruded box given a new outline; every number was read back and logged. The outline is
-lopsided in X and in Y, so a flip shows its mirror axis: about R1's centre it is
+lopsided in X and in Y, so a flip shows its mirror axis: about R1's center it is
 (0, -0.4), (1.6, -0.4), (1.6, 0), (0, 0.4), from standoff 0 up to 0.450.
 
 one-offset-extruded-resistor.PcbDoc
     R1 at (25, 15), rotation 0, top side. The body's outline is (26.6, 14.6), (26.6, 15),
     (25, 15.4), (25, 14.6); its box x 25 to 26.6, y 14.6 to 15.4, height 0.450.
 one-bottom-extruded-resistor.PcbDoc  (the same, then R1 flipped to the bottom)
-    Altium turns a part about the middle of everything it holds, so R1's centre moved to
+    Altium turns a part about the middle of everything it holds, so R1's center moved to
     (25.400, 15.000) and it shows rotation 180 (I set only the side). The body's outline is
     (23.8, 14.6), (23.8, 15), (25.4, 15.4), (25.4, 14.6), projecting from the bottom: the +X
     lobe went to -X, the slanted edge kept its Y.
@@ -267,12 +267,12 @@ footprint R0603-TEST, pads at (34.2, 15) and (35.8, 15). Both STEP models are my
 by this repository's board-step crate (see the fifth batch).
 
 shared-step-model.PcbDoc
-    R2 got a copy of R1's 3D body: the same embedded box-1608.step, centred on R2 (body x 34.2
+    R2 got a copy of R1's 3D body: the same embedded box-1608.step, centered on R2 (body x 34.2
     to 35.8, y 14.6 to 15.4, height 0.450). The board holds the model once: one record in
     Models/Data and one stream Models/0, and both bodies name the same MODELID.
 two-step-models.PcbDoc
     R2 got a new 3D body holding the embedded box-offset.step instead, its origin on R2's
-    centre (body x 35 to 36.6, y 14.6 to 15.4, height 0.450). R1 keeps box-1608.step. The
+    center (body x 35 to 36.6, y 14.6 to 15.4, height 0.450). R1 keeps box-1608.step. The
     board holds two models: record 0 of Models/Data is box-offset.step, stored in Models/0 (x 0
     to 1.6 once unpacked), and record 1 is box-1608.step, stored in Models/1 (x -0.8 to 0.8).
     So the n-th record (from 0) is stored in Models/n; Altium put the newer model first.
@@ -282,10 +282,10 @@ Scripted boards, eighth batch: a STEP model turned on its part; bottom-side part
 Made on 2026-11-24 by my own script; every number was read back and logged.
 
 The first three are made from one-resistor. R1's extruded box was replaced by a 3D body holding
-the embedded box-offset.step (fifth batch), its origin first put 0.7 above R1's centre. Then the
+the embedded box-offset.step (fifth batch), its origin first put 0.7 above R1's center. Then the
 model was turned 30 degrees on the part: R1 was turned to 30 degrees with its body, the body
 was taken off R1, R1 was turned back to 0 and the body put back. On the part the model's origin
-is then at (-0.350, 0.606) from R1's centre (the point (0, 0.7) turned by 30 degrees), and the
+is then at (-0.350, 0.606) from R1's center (the point (0, 0.7) turned by 30 degrees), and the
 model is turned 30 degrees counter-clockwise.
 
 one-turned-step-resistor.PcbDoc
@@ -311,7 +311,7 @@ object added; every number was read back and logged. No net on any of them.
 one-overlay-line.PcbDoc  (from empty-outline)
     a line on Top Overlay from (10, 10) to (20, 10), width 0.200
 one-overlay-arc.PcbDoc  (from empty-outline)
-    an arc on Top Overlay, centre (25, 15), radius 3.000, from 30 to 300 degrees
+    an arc on Top Overlay, center (25, 15), radius 3.000, from 30 to 300 degrees
     (counter-clockwise), width 0.200
 one-bottom-overlay-line.PcbDoc  (from empty-outline)
     a line on Bottom Overlay from (30, 20) to (40, 25), width 0.150
@@ -357,10 +357,10 @@ outline-with-arcs.PcbDoc
     radius 3.000:
         straight edges  (3, 0) to (47, 0), (50, 3) to (50, 27), (47, 30) to (3, 30),
                         (0, 27) to (0, 3)
-        corner arcs     centre (47, 3) from 270 to 360 degrees, centre (47, 27) from 0 to 90,
-                        centre (3, 27) from 90 to 180, centre (3, 3) from 180 to 270
+        corner arcs     center (47, 3) from 270 to 360 degrees, center (47, 27) from 0 to 90,
+                        center (3, 27) from 90 to 180, center (3, 3) from 180 to 270
                         (counter-clockwise)
-    One round board cutout: centre (40, 15), radius 2.000.
+    One round board cutout: center (40, 15), radius 2.000.
     Nothing else is on the board; the layer stack and thickness are those of empty-outline.
 
 Twelfth board: four copper layers
@@ -421,10 +421,10 @@ script then removed the helpers and saved.
 outline-with-notch.PcbDoc
     The 50 x 30 rectangle of empty-outline with a 10 x 10 notch in its top edge, x 20 to 30,
     down to y 20. The notch's corners are rounded:
-        at its mouth (convex)   centre (19, 29), radius 1.000, from 0 to 90 degrees
-                                centre (31, 29), radius 1.000, from 90 to 180 degrees
-        at its bottom (concave) centre (22, 22), radius 2.000, from 180 to 270 degrees
-                                centre (28, 22), radius 2.000, from 270 to 360 degrees
+        at its mouth (convex)   center (19, 29), radius 1.000, from 0 to 90 degrees
+                                center (31, 29), radius 1.000, from 90 to 180 degrees
+        at its bottom (concave) center (22, 22), radius 2.000, from 180 to 270 degrees
+                                center (28, 22), radius 2.000, from 270 to 360 degrees
                                 (all counter-clockwise)
     Straight edges: (0, 0) to (50, 0), (50, 0) to (50, 30), (50, 30) to (31, 30),
     (30, 29) to (30, 22), (28, 20) to (22, 20), (20, 22) to (20, 29), (19, 30) to (0, 30) and
@@ -438,9 +438,9 @@ although the board has no text; it was removed the same way as for one-ttf-text 
 
 small-board.PcbDoc
     Parts (R2 and R3 are copies of R1 with its pads, extruded body and silkscreen line):
-        R1  centre (25, 15), rotation 0, top side (as on one-resistor-silkscreen)
-        R2  centre (13, 22), rotation 0, top side
-        R3  centre (37, 8), copied to (37, 8) and then flipped: rotation 180, bottom side;
+        R1  center (25, 15), rotation 0, top side (as on one-resistor-silkscreen)
+        R2  center (13, 22), rotation 0, top side
+        R3  center (37, 8), copied to (37, 8) and then flipped: rotation 180, bottom side;
             its pads at (37.8, 8) (pad 1) and (36.2, 8) (pad 2), its silkscreen line on Bottom
             Overlay from (36, 8.8) to (38, 8.8)
     Nets:
@@ -458,16 +458,16 @@ small-board.PcbDoc
     with thermal-relief spokes. The edges of those cuts come from Altium's rules, so they are not
     among the numbers here.
     Silkscreen (not owned by a part): a line on Top Overlay (5, 27) to (45, 27), width 0.200, and
-    an arc on Top Overlay, centre (40, 18), radius 3.000, from 0 to 270 degrees
+    an arc on Top Overlay, center (40, 18), radius 3.000, from 0 to 270 degrees
     (counter-clockwise), width 0.200, both over the top pour; a line on Bottom Overlay
     (10, 4) to (40, 4), width 0.150, over the bottom pour.
 
-Sixteenth batch: solder mask and silkscreen colours
+Sixteenth batch: solder mask and silkscreen colors
 ---------------------------------------------------
 Made on 2026-11-24 by hand, each from a file copy of one-resistor.PcbDoc: in the 3D view, the
-View Configuration panel, one board colour changed, then the board was saved. Altium keeps these
-colours with the board in the 3DCONFIGURATION setting of /Board6/Data (they are how its own 3D
-view draws the board). Colours below are red, green, blue from 0 to 255; nothing else changed.
+View Configuration panel, one board color changed, then the board was saved. Altium keeps these
+colors with the board in the 3DCONFIGURATION setting of /Board6/Data (they are how its own 3D
+view draws the board). Colors below are red, green, blue from 0 to 255; nothing else changed.
 
     Altium's defaults (one-resistor and every board before this batch):
         solder mask, top and bottom   36, 120, 50   at opacity 0.6
@@ -483,29 +483,29 @@ Seventeenth batch: surface finish
 Made on 2026-11-24 by hand, each from a file copy of one-resistor.PcbDoc: in Design > Layer Stack
 Manager, right-click Top Layer, Insert layer above, Surface Finish; with the stack kept
 symmetric Altium added the same finish below Bottom Layer. The finish's Process was picked from
-Altium's own list, which filled in its material, colour and thickness; then the stack and the
+Altium's own list, which filled in its material, color and thickness; then the stack and the
 board were saved. Altium shows the finish layers in the stack and counts them in its total
 thickness; they are not among the stack's layers in the plain /Board6/Data keys.
 
 one-enig-resistor.PcbDoc
-    Top Surface Finish and Bottom Surface Finish: process ENIG, material "Nickel, Gold", colour
+    Top Surface Finish and Bottom Surface Finish: process ENIG, material "Nickel, Gold", color
     #FFFFC400 (opaque; red 255, green 196, blue 0), thickness 0.004. Altium's total thickness:
     1.608.
 one-hasl-resistor.PcbDoc
-    Top Surface Finish and Bottom Surface Finish: process HASL, material "PbSn", colour
+    Top Surface Finish and Bottom Surface Finish: process HASL, material "PbSn", color
     #FFF2F2F2 (opaque; 242, 242, 242), thickness 0.020. Altium's total thickness: 1.640.
 
-3D body colour and opacity
+3D body color and opacity
 --------------------------
 Made on 2026-11-25 by my own script, from a file copy of one-resistor.PcbDoc: R1's extruded box
-was given another colour and opacity, read back and logged, and the board saved. Nothing else
+was given another color and opacity, read back and logged, and the board saved. Nothing else
 was changed on purpose.
 
 one-colored-body-resistor.PcbDoc
-    R1's extruded body: colour red 32, green 128, blue 224, opacity 0.5. Before the change it
+    R1's extruded body: color red 32, green 128, blue 224, opacity 0.5. Before the change it
     had Altium's default, red 128, green 128, blue 128, opacity 1, like every body on the boards
     above, extruded or STEP. The box itself is the one of one-resistor: 1.600 x 0.800, height
-    0.450, centred on R1 at (25, 15).
+    0.450, centered on R1 at (25, 15).
     On saving, Altium gave the body a new random model ID and left out the footprint library
     field that was blanked on one-resistor (see "Paths inside the files").
 
@@ -521,13 +521,13 @@ below.
 
 dense-board.PcbDoc
     Outline: that of outline-with-arcs (50 x 30, corners rounded to radius 3.000) without its
-    round cutout. Two layers, 1.600 thick, the stack and colours of empty-outline.
+    round cutout. Two layers, 1.600 thick, the stack and colors of empty-outline.
     Rules set on the board: track width 0.150 to 0.500 (0.200 preferred) on both copper layers,
     hole size up to 3.500. Everything else is Altium's default (clearance 0.254).
     Mounting holes: two free pads, round 5.000, plated hole 3.200, no net, at (4.5, 4.5) and
     (45.5, 25.5).
 
-    Footprints (pads relative to the part's centre, before rotation; all SMD pads rectangular on
+    Footprints (pads relative to the part's center, before rotation; all SMD pads rectangular on
     one copper layer, through-hole pads plated, hole 1.000):
         R0603-DN: 2 pads 0.800 x 1.000 at x -0.800 and +0.800 (resistor, 0603)
         C0603-DN: the same pads (capacitor, 0603)
@@ -538,16 +538,16 @@ dense-board.PcbDoc
         SOIC8-DN: pads 1.500 x 0.600, pitch 1.270: 1 to 4 at x -2.700, y 1.905 down to -1.905; 5 to
             8 at x 2.700, y -1.905 up to 1.905
         TQFP32-DN: pads 1.450 x 0.500 (0.500 x 1.450 on the top and bottom rows), pitch 0.800,
-            centres 4.200 from the middle: 1 to 8 down the left side from y 2.800, 9 to 16 along the
+            centers 4.200 from the middle: 1 to 8 down the left side from y 2.800, 9 to 16 along the
             bottom from x -2.800, 17 to 24 up the right side, 25 to 32 along the top from x 2.800
         HDR1X4-DN: 4 through-hole pads 1.700 (pad 1 square, the others round) at x 0, y 3.810 down
             to -3.810, pitch 2.540
 
-    Parts (centre, rotation and side as Altium shows them; a bottom part was placed on top and
+    Parts (center, rotation and side as Altium shows them; a bottom part was placed on top and
     flipped, which Altium turns to 180). Body: an extruded box over the footprint, standoff 0,
-    colour and height as given, opacity 1; R3 and R4 instead each have the STEP model box-1608.step
+    color and height as given, opacity 1; R3 and R4 instead each have the STEP model box-1608.step
     of one-step-resistor, embedded twice (the script gave each part the file on its own).
-        designator  footprint   value    centre            rotation  side    body
+        designator  footprint   value    center            rotation  side    body
         J1          HDR1X4-DN   PWR/I2C  ( 3.500, 15.000)      0     top     RGB (20, 20, 20), height 2.500
         J2          HDR1X4-DN   ANALOG   (46.500, 15.000)      0     top     RGB (20, 20, 20), height 2.500
         U1          TQFP32-DN   MCU      (27.000, 15.000)      0     top     RGB (30, 30, 30), height 1.200
@@ -644,10 +644,10 @@ Bold" / "DejaVu Sans Mono" / "Bold" and "DejaVu Sans Mono Oblique" / "DejaVu San
     DejaVuSansMono-Oblique.ttf  742097840c541870e8d6dc5c9b37bb1ceeea6c0dedd1d475faf903ef9df734b0
 No other font is embedded.
 
-The embedded font files are not CC0. They keep their own licence: the Bitstream Vera fonts
-licence, with the DejaVu changes in the public domain (the font names
+The embedded font files are not CC0. They keep their own license: the Bitstream Vera fonts
+license, with the DejaVu changes in the public domain (the font names
 http://dejavu.sourceforge.net/wiki/index.php/License). It allows the fonts to be copied and
-passed on as long as the copyright and trademark notices and the licence go with them; each font
+passed on as long as the copyright and trademark notices and the license go with them; each font
 file carries them in its own name table, which Altium keeps unchanged, and LICENSE-DejaVu.txt
 in this folder holds the same text. Everything else in these three boards is CC0 like the
 others.

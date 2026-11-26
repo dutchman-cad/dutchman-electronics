@@ -1,4 +1,4 @@
-//! An off-centre STEP model on a part that is turned or flipped, and a rotated fill, checked
+//! An off-center STEP model on a part that is turned or flipped, and a rotated fill, checked
 //! against the numbers in tests/boards/README.txt (to 0.001 mm, as AGENTS.md asks).
 
 use altium_pcbdoc::Altium;
@@ -88,7 +88,7 @@ fn the_offset_step_model_on_a_part_turned_90_degrees() -> Result<(), Box<dyn std
 
 #[test]
 fn the_offset_step_model_on_a_flipped_part() -> Result<(), Box<dyn std::error::Error>> {
-    // Flipping moved R1's centre to (25.4, 15) and gave it rotation 180 (see README.txt).
+    // Flipping moved R1's center to (25.4, 15) and gave it rotation 180 (see README.txt).
     check_r1(
         "one-bottom-step-resistor.PcbDoc",
         (25.4, 15.0),
@@ -98,7 +98,7 @@ fn the_offset_step_model_on_a_flipped_part() -> Result<(), Box<dyn std::error::E
 }
 
 #[test]
-fn the_rotated_fill_is_turned_30_degrees_about_its_centre() -> Result<(), Box<dyn std::error::Error>>
+fn the_rotated_fill_is_turned_30_degrees_about_its_center() -> Result<(), Box<dyn std::error::Error>>
 {
     let out = read("one-rotated-fill.PcbDoc")?;
     let [CopperItem::Region { contour, .. }] = out.board.copper.as_slice() else {
@@ -145,7 +145,7 @@ fn the_rotated_fill_is_turned_30_degrees_about_its_centre() -> Result<(), Box<dy
     Ok(())
 }
 
-/// Checks R1's turned, off-centre STEP model on one of the eighth-batch boards: on the part it is
+/// Checks R1's turned, off-center STEP model on one of the eighth-batch boards: on the part it is
 /// always at (-0.350, 0.606), turned 30 degrees.
 fn check_turned_model(
     name: &str,
@@ -203,7 +203,7 @@ fn a_model_turned_on_a_top_side_part() -> Result<(), Box<dyn std::error::Error>>
 
 #[test]
 fn a_model_turned_on_a_flipped_part_keeps_its_place() -> Result<(), Box<dyn std::error::Error>> {
-    // Flipping moved R1's centre to (25.036, 15) and gave it rotation 180 (see README.txt).
+    // Flipping moved R1's center to (25.036, 15) and gave it rotation 180 (see README.txt).
     check_turned_model(
         "one-bottom-turned-step-resistor.PcbDoc",
         (25.0356, 15.0),
@@ -225,7 +225,7 @@ fn a_model_turned_on_a_flipped_part_at_90_keeps_its_place() -> Result<(), Box<dy
 
 /// Checks R1's tilted STEP model on one of the tenth- or thirteenth-batch boards: in the part's
 /// own frame it is tilted by `tilt` (degrees about X and Y), turned `turn` about Z, its origin at
-/// `offset` from R1's centre, with no warning.
+/// `offset` from R1's center, with no warning.
 fn check_tilted_model(
     name: &str,
     at: (f64, f64),

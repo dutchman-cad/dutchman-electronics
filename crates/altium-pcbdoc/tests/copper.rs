@@ -80,7 +80,7 @@ fn the_hole_is_an_unplated_3_mm_pad_on_all_layers() -> Result<(), Box<dyn std::e
 #[test]
 fn the_resistor_has_two_0_8_by_1_0_smd_pads() -> Result<(), Box<dyn std::error::Error>> {
     let out = read("one-resistor.PcbDoc")?;
-    let mut centres = Vec::new();
+    let mut centers = Vec::new();
     for item in &out.board.copper {
         let CopperItem::Pad {
             layer,
@@ -101,17 +101,17 @@ fn the_resistor_has_two_0_8_by_1_0_smd_pads() -> Result<(), Box<dyn std::error::
             "{size_x} x {size_y}"
         );
         assert_eq!(*drill, None);
-        centres.push((at.x, at.y));
+        centers.push((at.x, at.y));
     }
-    centres.sort_by(|a, b| a.0.total_cmp(&b.0));
-    assert_eq!(centres.len(), 2, "{centres:?}");
+    centers.sort_by(|a, b| a.0.total_cmp(&b.0));
+    assert_eq!(centers.len(), 2, "{centers:?}");
     assert!(
-        near(centres[0].0, 24.2) && near(centres[0].1, 15.0),
-        "{centres:?}"
+        near(centers[0].0, 24.2) && near(centers[0].1, 15.0),
+        "{centers:?}"
     );
     assert!(
-        near(centres[1].0, 25.8) && near(centres[1].1, 15.0),
-        "{centres:?}"
+        near(centers[1].0, 25.8) && near(centers[1].1, 15.0),
+        "{centers:?}"
     );
     Ok(())
 }

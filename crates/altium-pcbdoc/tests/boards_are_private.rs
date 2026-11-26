@@ -59,7 +59,7 @@ fn committed_boards_carry_the_declaration() -> Result<(), Box<dyn std::error::Er
 }
 
 /// The second line of tests/boards/README.txt names the boards whose embedded font files are not
-/// CC0 (they keep their own licence, LICENSE-DejaVu.txt). It must name exactly the boards that
+/// CC0 (they keep their own license, LICENSE-DejaVu.txt). It must name exactly the boards that
 /// hand over an embedded font, so a new board with a font cannot slip past the exception.
 #[test]
 fn the_font_exception_names_every_board_with_an_embedded_font(
