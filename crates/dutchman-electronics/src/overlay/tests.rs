@@ -1701,6 +1701,8 @@ fn the_mask_face_holds_the_true_outline_and_its_holes_stay_open() {
     for pt in arc_samples(&b.outline.cutouts[0], 1e-6) {
         assert!(!covers(mask, pt.x(), pt.y()), "{pt:?} is under the mask");
     }
+}
+
 #[test]
 fn a_rounded_rectangle_pad_has_its_corners_cut_round() {
     // 3 x 2 with a radius of a quarter of the short side: 0.5 mm.
