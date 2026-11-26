@@ -942,6 +942,73 @@ Saving embedded Arial again in one-ttf-text, one-via, small-board and param-proj
 (none of their texts uses it); it was removed the same way as before (see "Paths inside the
 files"). The DejaVu boards and all-features keep only their DejaVu Sans Mono file.
 
+Vias and stroke fonts (vias-tenting, vias-tented-rule, vias-sizes, vias-blind-buried, stroke-fonts)
+---------------------------------------------------------------------------------------------------
+Made on 2026-11-26 by my own script, partly by hand where noted; every via and text was read back
+and logged. vias-tenting, vias-sizes and stroke-fonts are file copies of empty-outline,
+vias-tented-rule of vias-sizes, vias-blind-buried of four-layer (its track and via stay). All of
+them carry the 0.1 mm mask expansion rule (see "Solder mask expansion"). Each via has a label on
+Top Overlay (stroke font, height 0.800, stroke 0.120) just above it, naming its variant. All vias
+have no net.
+
+vias-tenting.PcbDoc
+    Five vias, diameter 0.600, hole 0.300, Top Layer to Bottom Layer, at y 15.000:
+        x       label   solder mask (in the via's Properties panel, by hand)
+        8.000   RULE    by the rule: open on both sides, expansion 0.1
+        16.000  TOP     Manual, Tented on top only (expansion 0.1 on the open bottom)
+        24.000  BOT     Manual, Tented on the bottom only
+        32.000  BOTH    Manual, Tented on both sides
+        40.000  M0.2    Manual, 0.200 on both sides, not tented
+    The board's rule says ISTENTINGTOP=FALSE. Setting tenting or a manual expansion by script did
+    not work in Altium 26.12.2 (tenting did not stick, and setting the expansion stopped the
+    scripting engine), so these were set by hand; the script read them back afterwards.
+
+vias-tented-rule.PcbDoc  (from vias-sizes)
+    The five vias of vias-sizes. By hand, in Design > Rules, the SolderMaskExpansion rule's Tented
+    box ticked (top and bottom linked); the rule then reads ISTENTINGTOP=TRUE, EXPANSION=3.937mil.
+    Altium reads every via back as tented on both sides, and reports each via's mask expansion as
+    minus its diameter (-0.6 for the 0.6 mm via).
+
+vias-sizes.PcbDoc
+    Five vias, Top Layer to Bottom Layer, open (the rule), at y 15.000:
+        x       diameter / hole   label
+        8.000   0.400 / 0.200     0.4/0.2
+        16.000  0.600 / 0.300     0.6/0.3
+        24.000  0.800 / 0.400     0.8/0.4
+        32.000  1.000 / 0.500     1.0/0.5
+        41.000  1.500 / 0.800     1.5/0.8
+
+vias-blind-buried.PcbDoc  (from four-layer)
+    Besides four-layer's own through via at (30, 15), four vias, diameter 0.600, hole 0.300, at
+    y 25.000, open (the rule):
+        x       from          to             label
+        10.000  Top Layer     Layer 1        T-L1   (blind)
+        20.000  Layer 2       Bottom Layer   L2-B   (blind)
+        30.000  Layer 1       Layer 2        L1-L2  (buried)
+        40.000  Top Layer     Layer 2        T-L2   (blind, through one inner layer)
+    Layer 1 and Layer 2 are Altium's Mid Layer 1 and Mid Layer 2. No via types were defined in the
+    Layer Stack Manager; Altium accepted the spans as set and reads them back.
+
+stroke-fonts.PcbDoc
+    Nine texts on Top Overlay, stroke font, height 1.200, stroke 0.150, rotation 0, not mirrored,
+    no component, each anchored at x 2.000, in Altium's three stroke fonts (the font set by
+    script; Altium names them Default, Sans Serif and Serif and numbers them 1, 2 and 3):
+        y       font         text                               box (x, y to x, y)
+        26.000  Default      ABCDEFGHIJKLMNOPQRSTUVWXYZ         1.850, 25.850 to 32.740, 27.350
+        23.500  Default      abcdefghijklmnopqrstuvwxyz         1.850, 22.950 to 32.140, 24.850
+        21.000  Default      0123456789 .,:;-+=/()[]#%&*?!      1.850, 20.450 to 34.340, 22.550
+        17.000  Sans Serif   ABCDEFGHIJKLMNOPQRSTUVWXYZ         1.850, 16.736 to 29.218, 18.350
+        14.500  Sans Serif   abcdefghijklmnopqrstuvwxyz         1.850, 13.950 to 24.711, 15.907
+        12.000  Sans Serif   0123456789 .,:;-+=/()[]#%&*?!      1.850, 11.450 to 28.030, 13.578
+        8.000   Serif        ABCDEFGHIJKLMNOPQRSTUVWXYZ         1.850, 7.564 to 31.075, 9.350
+        5.500   Serif        abcdefghijklmnopqrstuvwxyz         1.850, 4.950 to 28.133, 6.850
+        3.000   Serif        0123456789 .,:;-+=/()[]#%&*?!      1.850, 2.450 to 26.790, 4.578
+    Default is monospaced; Sans Serif and Serif are proportional. Altium draws Sans Serif's "[]"
+    as a single box.
+
+Saving embedded Arial in the four via boards (none of their texts uses it); it was removed as
+before (see "Paths inside the files").
+
 Paths inside the files
 ----------------------
 Altium writes a few paths from the PC that saved a board into the file. After the last save, I
