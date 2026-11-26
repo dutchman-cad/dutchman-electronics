@@ -4,7 +4,8 @@
 //! the texts that refer to project parameters, `--board NAME` (or the link the project lists)
 //! to choose the board of an Altium project (`.PrjPcb`) that holds several, and
 //! `--project FILE` to use a project's parameters for a board passed on its own, and
-//! `--models <dir>` (repeatable) for folders that hold linked model files.
+//! `--models <dir>` (repeatable) for folders that hold linked model files, and `--copper all` to
+//! draw inner copper layers too (the default, `--copper outer`, draws the top and bottom only).
 //! For people: `formats`, `streams <file>` and
 //! `privacy-check <file> [--watch WORD]... [--all-text]`.
 
@@ -29,7 +30,7 @@ const USAGE: &str = "usage: dutchman-electronics info [--json]
        dutchman-electronics detect <file> [--json]
        dutchman-electronics read <board.PcbDoc|project.PrjPcb> --out <dir> [--json]
                                 [--param NAME=VALUE]... [--board NAME] [--project FILE]
-                                [--models <dir>]...
+                                [--models <dir>]... [--copper outer|all]
        dutchman-electronics formats
        dutchman-electronics streams <board.PcbDoc>
        dutchman-electronics privacy-check <board.PcbDoc|project.PrjPcb> [--watch WORD]... [--all-text]";
@@ -186,6 +187,8 @@ struct ReadArgs {
     project: Option<String>,
     /// Folders to look for linked model files in, after the board's own.
     models: Vec<std::path::PathBuf>,
+    /// Which copper layers get overlays.
+    copper: dutchman_electronics::overlay::Copper,
 }
 
 /// Parses the words after `read`, or says what is wrong.
@@ -202,6 +205,13 @@ fn read_args(words: &[&str]) -> Result<ReadArgs, String> {
             }
             "--project" => {
                 args.project = Some(rest.next().ok_or("--project needs a file")?.to_string());
+            }
+            "--copper" => {
+                args.copper = match rest.next().copied() {
+                    Some("outer") => dutchman_electronics::overlay::Copper::Outer,
+                    Some("all") => dutchman_electronics::overlay::Copper::All,
+                    _ => return Err("--copper needs outer or all".into()),
+                };
             }
             "--models" => {
                 let folder = rest.next().ok_or("--models needs a folder")?;
@@ -246,7 +256,13 @@ fn read(args: &ReadArgs) -> ExitCode {
         parameters: &args.parameters,
     };
     let built = package::open(path, &with).and_then(|input| {
-        package::build(&input.path, &input.bytes, &input.parameters, &args.models)
+        package::build(
+            &input.path,
+            &input.bytes,
+            &input.parameters,
+            &args.models,
+            args.copper,
+        )
     });
     let written = built.and_then(|p| package::write(std::path::Path::new(out), &p).map(|()| p));
     match (written, json) {
@@ -344,6 +360,8 @@ mod tests {
             "lib",
             "--models",
             "more",
+            "--copper",
+            "all",
         ])?;
         assert_eq!(
             args,
@@ -358,6 +376,7 @@ mod tests {
                 board: Some("b2".into()),
                 project: Some("q.PrjPcb".into()),
                 models: vec!["lib".into(), "more".into()],
+                copper: dutchman_electronics::overlay::Copper::All,
             }
         );
         Ok(())
@@ -380,6 +399,8 @@ mod tests {
             &["b.PcbDoc", "--out"],
             &["b.PcbDoc", "--out", "d", "--project"],
             &["b.PcbDoc", "--out", "d", "--models"],
+            &["b.PcbDoc", "--out", "d", "--copper"],
+            &["b.PcbDoc", "--out", "d", "--copper", "inner"],
         ] {
             assert!(read_args(words).is_err(), "{words:?}");
         }

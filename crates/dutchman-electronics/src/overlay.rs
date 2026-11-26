@@ -14,6 +14,12 @@
 //! side mirrors the top. Past [`MAX_SOLID_FACES`] the largest overlays are drawn flat, and a note
 //! says which.
 //!
+//! Copper on inner layers lies inside the board and is left out by default. With [`Copper::All`]
+//! each inner copper layer whose place in the stack is known gets an overlay of its own (side
+//! `inner`): its tracks, arcs, pours and texts, every via and every drilled pad through it, with
+//! every drill cut out, at its height in the stack and its own copper thickness, extruded upward
+//! from its lower face, in plain copper colour and with no mask.
+//!
 //! This module knows the neutral board model only, nothing about any input format.
 
 use std::f64::consts::PI;
@@ -28,9 +34,19 @@ use geo::{BooleanOps, Coord, LineString, MultiPolygon, Polygon};
 use serde_json::{json, Value};
 
 use crate::colors::{
-    hex, masked_copper, pad_look, Finish, COPPER_MASKED_COLOR, MASK_COLOR, MASK_FINISH,
-    MASK_OPACITY, SILKSCREEN_COLOR, SILKSCREEN_FINISH,
+    hex, masked_copper, pad_look, Finish, COPPER_COLOR, COPPER_FINISH, COPPER_MASKED_COLOR,
+    MASK_COLOR, MASK_FINISH, MASK_OPACITY, SILKSCREEN_COLOR, SILKSCREEN_FINISH,
 };
+
+/// Which copper layers get overlays.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Copper {
+    /// The top and bottom copper only: inner copper lies inside the board.
+    #[default]
+    Outer,
+    /// Every copper layer whose place in the stack is known, inner ones too.
+    All,
+}
 
 /// The most an arc's polyline strays from the true arc, in mm.
 pub const CHORD: f64 = 0.02;
@@ -696,18 +712,20 @@ fn mask_outline(board: &Board) -> (Option<MultiPolygon>, Pile, usize, usize) {
 /// The overlays of a board whose substrate is `thickness` thick (its top face at z = thickness,
 /// its bottom at z = 0, in the frame of the part named `board_part`), and notes on what was left
 /// out. `fonts` are the TrueType files the board embeds, which texts in those fonts are drawn
-/// with.
+/// with. `copper` says whether inner copper layers get overlays too.
 pub fn overlays(
     board: &Board,
     fonts: &[EmbeddedFont],
     thickness: f64,
     board_part: &str,
+    copper: Copper,
 ) -> (Vec<Value>, Vec<Value>) {
     overlays_within(
         board,
         fonts,
         thickness,
         board_part,
+        copper,
         MAX_TEXT_SEGMENTS,
         MAX_HOLE_VERTICES,
         MAX_SOLID_FACES,
@@ -717,11 +735,13 @@ pub fn overlays(
 /// [`overlays`] with `text_budget` as the most text segments and outline points drawn (a
 /// parameter so a test can use a small one), `hole_budget` as the most hole vertices cut from
 /// copper regions and `face_budget` as the most faces the overlays' solids have together.
+#[allow(clippy::too_many_arguments)]
 fn overlays_within(
     board: &Board,
     fonts: &[EmbeddedFont],
     thickness: f64,
     board_part: &str,
+    copper: Copper,
     text_budget: usize,
     hole_budget: usize,
     face_budget: usize,
@@ -741,16 +761,30 @@ fn overlays_within(
     // Where a copper item's layer puts it.
     enum On {
         Face(Side),
-        /// A copper layer that belongs to neither face: inner copper, or (for a drilled pad)
-        /// both faces.
+        /// An inner copper layer whose place in the stack is known, by layer index.
+        Inner(usize),
+        /// A layer that stands for all copper (Multi-Layer), or inner copper with no place.
         Through,
         /// No such layer, or not a copper layer.
         Unusable,
     }
     let on = |i: usize| match board.layers.get(i) {
-        Some(l) if l.kind == LayerKind::Copper => l.side.map_or(On::Through, On::Face),
+        Some(l) if l.kind == LayerKind::Copper => match (l.side, l.position) {
+            (Some(side), _) => On::Face(side),
+            (None, Some(_)) => On::Inner(i),
+            (None, None) => On::Through,
+        },
         _ => On::Unusable,
     };
+    // The inner layers that get overlays (none unless asked for), and their piles.
+    let inner_layers: Vec<usize> = if copper == Copper::All {
+        (0..board.layers.len())
+            .filter(|&i| matches!(on(i), On::Inner(_)))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let mut inner_piles: Vec<Pile> = inner_layers.iter().map(|_| Pile::default()).collect();
     let mut faces = (top, bottom);
     // Real fabs open the mask a little wider than each pad. Vias are tented: no opening.
     let expansion = board
@@ -817,6 +851,9 @@ fn overlays_within(
                 } => {
                     match circle(*at, diameter / 2.0) {
                         Some(ring) => {
+                            for pile in &mut inner_piles {
+                                pile.polygons.push(ring.clone());
+                            }
                             faces.0.masked.polygons.push(ring.clone());
                             faces.1.masked.polygons.push(ring);
                             via_holes.add(circle(*at, drill / 2.0), &mut unusable);
@@ -891,8 +928,24 @@ fn overlays_within(
         let sides: &[Side] = match (on(layer), bare && drill.is_some()) {
             (On::Face(Side::Top), _) => &[Side::Top],
             (On::Face(Side::Bottom), _) => &[Side::Bottom],
-            // A drilled pad on a copper layer of neither face goes through: it is on both.
-            (On::Through, true) => &[Side::Top, Side::Bottom],
+            // A drilled pad goes through every copper layer.
+            (On::Through | On::Inner(_), true) => {
+                for pile in &mut inner_piles {
+                    pile.polygons.extend(shapes.iter().cloned());
+                }
+                &[Side::Top, Side::Bottom]
+            }
+            (On::Inner(i), false) => {
+                match inner_layers
+                    .iter()
+                    .position(|&l| l == i)
+                    .and_then(|k| inner_piles.get_mut(k))
+                {
+                    Some(pile) => pile.polygons.extend(shapes),
+                    None => inner = inner.saturating_add(1),
+                }
+                continue;
+            }
             (On::Through, false) => {
                 inner = inner.saturating_add(1);
                 continue;
@@ -930,8 +983,17 @@ fn overlays_within(
             Some((LayerKind::Copper, Some(Side::Top))) => &mut top.masked,
             Some((LayerKind::Copper, Some(Side::Bottom))) => &mut bottom.masked,
             Some((LayerKind::Copper, None)) => {
-                inner = inner.saturating_add(1);
-                continue;
+                match inner_layers
+                    .iter()
+                    .position(|&l| l == t.layer)
+                    .and_then(|k| inner_piles.get_mut(k))
+                {
+                    Some(pile) => pile,
+                    None => {
+                        inner = inner.saturating_add(1);
+                        continue;
+                    }
+                }
             }
             _ => {
                 texts.other_layers = texts.other_layers.saturating_add(1);
@@ -1193,6 +1255,30 @@ fn overlays_within(
                     )
                 });
             }
+        }
+        // Each inner layer at its height in the stack, drills and via holes cut out.
+        for (&i, pile) in inner_layers.iter().zip(&inner_piles) {
+            let (Some(layer), Some(place)) = (
+                board.layers.get(i),
+                board.layers.get(i).and_then(|l| l.position),
+            ) else {
+                continue;
+            };
+            let t = place.thickness.clamp(0.0, thickness);
+            let z = (thickness - place.depth - t).clamp(0.0, (thickness - t).max(0.0));
+            built.push(Built {
+                name: format!("Copper {}", layer.name),
+                kind: "copper",
+                finish: None,
+                side: "inner",
+                z,
+                flat_z: z + t / 2.0,
+                thickness: Some(t),
+                shape: pile.union().difference(&drilled).difference(&via_drilled),
+                color: COPPER_COLOR.to_string(),
+                finish_look: COPPER_FINISH,
+                opacity: None,
+            });
         }
         built
     }));

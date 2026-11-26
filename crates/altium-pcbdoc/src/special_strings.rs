@@ -185,6 +185,7 @@ mod tests {
             name: name.into(),
             kind,
             side: Some(Side::Top),
+            position: None,
         };
         Board {
             layers: vec![

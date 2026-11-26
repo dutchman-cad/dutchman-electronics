@@ -285,6 +285,7 @@ pub fn build(
     bytes: &[u8],
     parameters: &[(String, String)],
     model_folders: &[PathBuf],
+    copper: crate::overlay::Copper,
 ) -> Result<Package, String> {
     let extension = path.extension().and_then(|e| e.to_str());
     let head = bytes.get(..bytes.len().min(4096)).unwrap_or_default();
@@ -378,7 +379,7 @@ pub fn build(
         files.push((PLATING_FILE.to_string(), text.into_bytes()));
     }
     let (overlays, overlay_notes) =
-        crate::overlay::overlays(&board, &outcome.fonts, step.thickness, BOARD_PART);
+        crate::overlay::overlays(&board, &outcome.fonts, step.thickness, BOARD_PART, copper);
     notes.extend(overlay_notes);
     let manifest = json!({
         "schema": PARTS_SCHEMA,
@@ -1071,7 +1072,14 @@ mod tests {
             env!("CARGO_MANIFEST_DIR")
         );
         let bytes = std::fs::read(&path).unwrap();
-        build(Path::new(&path), &bytes, &[], &[]).unwrap()
+        build(
+            Path::new(&path),
+            &bytes,
+            &[],
+            &[],
+            crate::overlay::Copper::Outer,
+        )
+        .unwrap()
     }
 
     /// Equal to the 0.001 mm the boards' README.txt gives.
@@ -1262,7 +1270,7 @@ mod tests {
                 continue;
             }
             let bytes = std::fs::read(&path).unwrap();
-            let package = build(&path, &bytes, &[], &[]).unwrap();
+            let package = build(&path, &bytes, &[], &[], crate::overlay::Copper::Outer).unwrap();
             // The board's thickness T: the top face of its STEP solid.
             let (_, step) = package
                 .files
@@ -1474,7 +1482,13 @@ mod tests {
         assert!(!track.copper.is_empty() && !line.graphics.is_empty());
         let mut blue_board = read("one-blue-mask-resistor");
         blue_board.copper = track.copper.clone();
-        let (overlays, _) = crate::overlay::overlays(&blue_board, &[], 1.6, BOARD_PART);
+        let (overlays, _) = crate::overlay::overlays(
+            &blue_board,
+            &[],
+            1.6,
+            BOARD_PART,
+            crate::overlay::Copper::Outer,
+        );
         let find = |list: &[Value], name: &str| {
             list.iter()
                 .find(|o| o["name"] == name)
@@ -1485,11 +1499,23 @@ mod tests {
         assert_eq!(find(&overlays, "Copper top")["color"], "#1862ec");
         let mut yellow_board = read("one-yellow-silkscreen-resistor");
         yellow_board.graphics = line.graphics.clone();
-        let (overlays, _) = crate::overlay::overlays(&yellow_board, &[], 1.6, BOARD_PART);
+        let (overlays, _) = crate::overlay::overlays(
+            &yellow_board,
+            &[],
+            1.6,
+            BOARD_PART,
+            crate::overlay::Copper::Outer,
+        );
         assert_eq!(find(&overlays, "Silkscreen top")["color"], "#ffff00");
         // Silkscreen colors stay at the file's other values on the blue board's side.
         blue_board.graphics = line.graphics;
-        let (overlays, _) = crate::overlay::overlays(&blue_board, &[], 1.6, BOARD_PART);
+        let (overlays, _) = crate::overlay::overlays(
+            &blue_board,
+            &[],
+            1.6,
+            BOARD_PART,
+            crate::overlay::Copper::Outer,
+        );
         assert_eq!(find(&overlays, "Silkscreen top")["color"], "#fafafa");
     }
 
@@ -1598,7 +1624,8 @@ mod tests {
             .board;
         board.appearance.top_finish = None;
         board.appearance.bottom_finish = finish("HASL");
-        let (overlays, _) = crate::overlay::overlays(&board, &[], 1.6, BOARD_PART);
+        let (overlays, _) =
+            crate::overlay::overlays(&board, &[], 1.6, BOARD_PART, crate::overlay::Copper::Outer);
         let pads = overlays
             .iter()
             .find(|o| o["name"] == "Copper bottom pads")
@@ -1608,7 +1635,8 @@ mod tests {
         assert!(overlays.iter().all(|o| o["name"] != "Copper top pads"));
         // The same board with no finish keeps the gold default.
         board.appearance.bottom_finish = None;
-        let (overlays, _) = crate::overlay::overlays(&board, &[], 1.6, BOARD_PART);
+        let (overlays, _) =
+            crate::overlay::overlays(&board, &[], 1.6, BOARD_PART, crate::overlay::Copper::Outer);
         let pads = overlays
             .iter()
             .find(|o| o["name"] == "Copper bottom pads")
@@ -1790,6 +1818,92 @@ mod tests {
                 .all(|r| (r - 0.5).abs() < 1e-3 || (r - 0.475).abs() < 1e-3),
             "{radii:?}"
         );
+    }
+
+    #[cfg(feature = "altium")]
+    #[test]
+    fn inner_copper_layers_are_drawn_only_when_asked_for() {
+        // four-layer: a track on Layer 1 from (10, 10) to (20, 10) and one on Layer 2 from
+        // (10, 20) to (20, 20), both 0.25 wide, and a via at (30, 15), 0.6 across with a 0.3 hole.
+        let path = format!(
+            "{}/../altium-pcbdoc/tests/boards/four-layer.PcbDoc",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let bytes = std::fs::read(&path).unwrap();
+        let read = |copper| build(Path::new(&path), &bytes, &[], &[], copper).unwrap();
+        let messages = |m: &Value| -> Vec<String> {
+            m["notes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|n| n["message"].as_str().unwrap().to_string())
+                .collect()
+        };
+        let inner_overlays = |m: &Value| -> Vec<Value> {
+            m["overlays"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|o| o["side"] == "inner")
+                .cloned()
+                .collect()
+        };
+        // By default the inner layers are left out, as before, with the note.
+        let outer = read(crate::overlay::Copper::Outer);
+        assert!(inner_overlays(&outer.manifest).is_empty());
+        assert!(messages(&outer.manifest)
+            .iter()
+            .any(|m| m.contains("on inner layers are left out")));
+        // Asked for, each inner layer is an overlay at its place in the stack.
+        let all = read(crate::overlay::Copper::All);
+        let m = &all.manifest;
+        assert!(!messages(m)
+            .iter()
+            .any(|m| m.contains("on inner layers are left out")));
+        let inner = inner_overlays(m);
+        let names: Vec<&str> = inner.iter().map(|o| o["name"].as_str().unwrap()).collect();
+        assert_eq!(names, ["Copper Layer 1", "Copper Layer 2"]);
+        let t = 1.6 + 2.0 * 0.035 + 2.0 * 2.8 * 0.0254;
+        let mil = 2.8 * 0.0254;
+        for (o, depth, track_y) in [
+            (&inner[0], 0.010 + 0.035 + mil, 10.0),
+            (&inner[1], 0.010 + 0.035 + mil + 0.035 + 1.510, 20.0),
+        ] {
+            assert_eq!(o["kind"], "copper");
+            assert_eq!(o["color"], crate::colors::COPPER_COLOR);
+            let z = o["z"].as_f64().unwrap();
+            assert!((z - (t - depth - 0.035)).abs() < 0.001, "{o}");
+            assert!((o["thickness"].as_f64().unwrap() - 0.035).abs() < 0.001);
+            // The track and the via's ring, the via's hole cut out of the ring.
+            let areas = o["areas"].as_array().unwrap();
+            assert_eq!(areas.len(), 2, "{o}");
+            let ys = |a: &Value| -> (f64, f64) {
+                let pts = a["outer"].as_array().unwrap();
+                let y: Vec<f64> = pts.iter().map(|p| p[1].as_f64().unwrap()).collect();
+                (
+                    y.iter().copied().fold(f64::MAX, f64::min),
+                    y.iter().copied().fold(f64::MIN, f64::max),
+                )
+            };
+            assert!(areas.iter().any(|a| {
+                let (lo, hi) = ys(a);
+                (lo - (track_y - 0.125)).abs() < 0.001 && (hi - (track_y + 0.125)).abs() < 0.001
+            }));
+            assert!(areas
+                .iter()
+                .any(|a| a["holes"].as_array().is_some_and(|h| h.len() == 1)));
+        }
+        // The outer copper is the same either way.
+        let others = |m: &Value| -> Vec<Value> {
+            m["overlays"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|o| o["side"] != "inner")
+                .cloned()
+                .collect()
+        };
+        assert_eq!(others(&outer.manifest), others(m));
     }
 
     #[test]
@@ -1974,7 +2088,14 @@ mod tests {
     #[test]
     fn the_one_resistor_board_gives_r1_as_a_part() {
         let bytes = include_bytes!("../../altium-pcbdoc/tests/boards/one-resistor.PcbDoc");
-        let package = build(Path::new("one-resistor.PcbDoc"), bytes, &[], &[]).unwrap();
+        let package = build(
+            Path::new("one-resistor.PcbDoc"),
+            bytes,
+            &[],
+            &[],
+            crate::overlay::Copper::Outer,
+        )
+        .unwrap();
         let m = &package.manifest;
         let names: Vec<&str> = m["parts"]
             .as_array()
@@ -2007,6 +2128,7 @@ mod tests {
             bytes,
             &[],
             &[],
+            crate::overlay::Copper::Outer,
         )
         .unwrap();
         let t = &package.manifest["parts"][1]["transform"];
@@ -2029,7 +2151,14 @@ mod tests {
     #[test]
     fn the_one_bottom_resistor_board_hangs_r1_below_the_board() {
         let bytes = include_bytes!("../../altium-pcbdoc/tests/boards/one-bottom-resistor.PcbDoc");
-        let package = build(Path::new("one-bottom-resistor.PcbDoc"), bytes, &[], &[]).unwrap();
+        let package = build(
+            Path::new("one-bottom-resistor.PcbDoc"),
+            bytes,
+            &[],
+            &[],
+            crate::overlay::Copper::Outer,
+        )
+        .unwrap();
         let r1 = &package.manifest["parts"][1];
         assert_eq!(r1["name"], "R1");
         // The README: the box spans x 24.2 to 25.8, y 14.6 to 15.4, 0.45 below the bottom face.
@@ -2123,6 +2252,13 @@ mod tests {
 
     #[test]
     fn a_file_that_is_not_a_board_is_an_error() {
-        assert!(build(Path::new("notes.txt"), b"hello", &[], &[]).is_err());
+        assert!(build(
+            Path::new("notes.txt"),
+            b"hello",
+            &[],
+            &[],
+            crate::overlay::Copper::Outer
+        )
+        .is_err());
     }
 }

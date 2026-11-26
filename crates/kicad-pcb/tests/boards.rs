@@ -978,3 +978,49 @@ fn the_chamfered_pad_has_its_corners_where_the_gerber_has_them() {
         && same_angle(a.2, 180.0)
         && same_angle(a.3, 270.0)));
 }
+
+/// Where each copper layer lies: from the stack-up where the file has one (four-layer-stackup's
+/// README.txt), otherwise spread evenly through the thickness, with a note.
+#[test]
+fn copper_layers_get_their_place_in_the_stack() {
+    let place = |o: &board_model::ReadOutcome| -> Vec<(String, f64, f64)> {
+        o.board
+            .layers
+            .iter()
+            .filter(|l| l.kind == LayerKind::Copper)
+            .map(|l| {
+                let p = l.position.expect("a copper layer of the stack has a place");
+                (l.name.clone(), p.depth, p.thickness)
+            })
+            .collect()
+    };
+    for name in ["four-layer-stackup", "k10-four-layer-stackup"] {
+        let o = board(name);
+        // F.Mask 0.01, F.Cu 0.035, prepreg 0.2, In1.Cu 0.0175, core 1.075, In2.Cu 0.0175,
+        // prepreg 0.2, B.Cu 0.035.
+        let want = [
+            ("F.Cu", 0.01, 0.035),
+            ("In1.Cu", 0.245, 0.0175),
+            ("In2.Cu", 1.3375, 0.0175),
+            ("B.Cu", 1.555, 0.035),
+        ];
+        let got = place(&o);
+        assert_eq!(got.len(), want.len(), "{name}: {got:?}");
+        for (g, w) in got.iter().zip(want) {
+            assert!(
+                g.0 == w.0 && near(g.1, w.1) && near(g.2, w.2),
+                "{name}: {got:?}"
+            );
+        }
+        assert!(!notes_contain(&o, "placed evenly"), "{name}");
+    }
+    // four-layer has no stack-up: 1.2 mm thick, the four copper layers 0.035 thick from the top
+    // face to the bottom one, evenly.
+    let o = board("four-layer");
+    let got = place(&o);
+    let step = (1.2 - 0.035) / 3.0;
+    for (n, g) in got.iter().enumerate() {
+        assert!(near(g.1, step * n as f64) && near(g.2, 0.035), "{got:?}");
+    }
+    assert!(notes_contain(&o, "placed evenly through the thickness"));
+}

@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use board_model::{
     Board, Contour, CopperItem, Graphic, Layer, LayerKind, ModelRef, ModelSource, Note, PadShape,
-    Placement, Point, ReadOutcome, Segment, Severity, Side, Text, TextFont,
+    Placement, Point, ReadOutcome, Segment, Severity, Side, StackPosition, Text, TextFont,
 };
 
 use crate::geom::{arc_through, circle_segment, place, pts_contour, split_fill, Frame};
@@ -148,6 +148,7 @@ impl Reader {
             name: ALL_COPPER.into(),
             kind: LayerKind::Copper,
             side: None,
+            position: None,
         });
         let i = self.layers.len() - 1;
         self.by_name.insert(ALL_COPPER.into(), i);
@@ -1162,6 +1163,7 @@ fn read_layers(root: &Node) -> Vec<Layer> {
                     name: name.to_string(),
                     kind,
                     side,
+                    position: None,
                 },
             ));
         }
@@ -1211,6 +1213,73 @@ fn read_thickness(root: &Node, tally: &mut Tally) -> Option<f64> {
         }
         (Some(s), None) => Some(s),
         (None, g) => g,
+    }
+}
+
+/// The copper thickness assumed for a layer the stack-up does not give, in mm (1 oz).
+const DEFAULT_COPPER_THICKNESS: f64 = 0.035;
+
+/// Gives each copper layer of the stack its [`StackPosition`]: from the stack-up, adding up the
+/// thicknesses above it as [`read_thickness`] does, or, when the file has no stack-up, spread
+/// evenly from the top face to the bottom one (with a note when there are inner layers).
+fn place_copper(root: &Node, layers: &mut [Layer], thickness: Option<f64>, tally: &mut Tally) {
+    let stackup = root.child("setup").and_then(|s| s.child("stackup"));
+    let mut depth = 0.0;
+    let mut placed: HashMap<String, StackPosition> = HashMap::new();
+    for layer in stackup.map(|s| s.children("layer")).into_iter().flatten() {
+        let name = layer.str_at(0).unwrap_or("");
+        let copper = name.ends_with(".Cu");
+        if !(copper || name.ends_with(".Mask") || name.starts_with("dielectric")) {
+            continue;
+        }
+        let own = layer.child("thickness").and_then(|t| t.num(0));
+        let subs = layer
+            .children("addsublayer")
+            .filter_map(|a| a.child("thickness").and_then(|t| t.num(0)));
+        let total = own.into_iter().chain(subs).sum::<f64>().max(0.0);
+        if copper {
+            let thickness = if total > 0.0 {
+                total
+            } else {
+                DEFAULT_COPPER_THICKNESS
+            };
+            placed.insert(name.to_string(), StackPosition { depth, thickness });
+        }
+        depth += total;
+    }
+    let copper: Vec<usize> = layers
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| l.kind == LayerKind::Copper && l.name != ALL_COPPER)
+        .map(|(i, _)| i)
+        .collect();
+    if !placed.is_empty() {
+        for &i in &copper {
+            if let Some(l) = layers.get_mut(i) {
+                l.position = placed.get(&l.name).copied();
+            }
+        }
+        return;
+    }
+    let (Some(total), true) = (thickness, copper.len() >= 2) else {
+        return;
+    };
+    let span = (total - DEFAULT_COPPER_THICKNESS).max(0.0);
+    let last = (copper.len() - 1) as f64;
+    for (n, &i) in copper.iter().enumerate() {
+        if let Some(l) = layers.get_mut(i) {
+            l.position = Some(StackPosition {
+                depth: span * n as f64 / last,
+                thickness: DEFAULT_COPPER_THICKNESS,
+            });
+        }
+    }
+    if copper.len() > 2 {
+        tally.add(
+            Severity::Info,
+            "board(s) with no stack-up: the inner copper layers are placed evenly through the \
+             thickness",
+        );
     }
 }
 
@@ -1265,7 +1334,9 @@ pub fn read(mut root: Node) -> ReadOutcome {
         };
     }
 
-    let layers = read_layers(root);
+    let mut layers = read_layers(root);
+    let thickness = read_thickness(root, &mut tally);
+    place_copper(root, &mut layers, thickness, &mut tally);
     let by_name = layers
         .iter()
         .enumerate()
@@ -1277,7 +1348,6 @@ pub fn read(mut root: Node) -> ReadOutcome {
             nets.insert(id as i64, name.to_string());
         }
     }
-    let thickness = read_thickness(root, &mut tally);
     // `pad_to_mask_clearance`: how far the solder mask opens past each pad's edge.
     let mask_expansion = root
         .child("setup")
