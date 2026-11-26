@@ -903,13 +903,37 @@ What Altium stores for the planes: each plane is one split-plane region, the boa
 the pull-back. The cutout is not part of that region: Altium draws the pull-back around the
 cutout (and along the board edge) as tracks on the plane layer.
 
+Solder mask expansion (mask-expansion-0, -0-05, -0-15, -0-2; every board re-saved)
+----------------------------------------------------------------------------------
+Made on 2026-11-26 by my own script; the rule was read back and logged before and after the
+change. Every board here had one solder mask expansion rule (Design > Rules > Manufacturing >
+Solder Mask Expansion), Altium's own record in /Rules6/Data: RULEKIND=SolderMaskExpansion,
+NAME=SolderMaskExpansion, SCOPE1EXPRESSION=All, SCOPE2EXPRESSION=All, ENABLED=TRUE,
+PRIORITY=1, EXPANSION=0mil. So far every board opened its mask exactly at the pad's edge.
+
+1. Every board in this folder, its subfolders included, was opened in Altium, its rule's
+   expansion set to 0.100 mm (Altium writes EXPANSION=3.937mil), saved and closed; nothing else
+   was changed on purpose. A board copied from any of them now starts with 0.1 mm. The one
+   exception is linked-model/one-linked-step-resistor: saved again (with box-1608.step beside
+   it), Altium dropped its link to the model (MODEL.NAME became empty and the checksum
+   changed), so it was kept as it was, with 0mil.
+2. Four new boards, each a file copy of one-resistor.PcbDoc with the rule set as below (nothing
+   else changed; R1's two bare pads of 0.800 x 1.000 at (24.200, 15.000) and (25.800, 15.000)):
+        mask-expansion-0.PcbDoc       0.000 mm   EXPANSION=0mil
+        mask-expansion-0-05.PcbDoc    0.050 mm   EXPANSION=1.9685mil
+        mask-expansion-0-15.PcbDoc    0.150 mm   EXPANSION=5.9055mil
+        mask-expansion-0-2.PcbDoc     0.200 mm   EXPANSION=7.874mil
+Saving embedded Arial again in one-ttf-text, one-via, small-board and param-project/param-board
+(none of their texts uses it); it was removed the same way as before (see "Paths inside the
+files"). The DejaVu boards and all-features keep only their DejaVu Sans Mono file.
+
 Paths inside the files
 ----------------------
 Altium writes a few paths from the PC that saved a board into the file. After the last save, I
 blanked their values: each value is overwritten with spaces of exactly the same length, so no
 record or stream size changed and no other byte in the stream moved (one-ttf-text,
-four-layer and small-board also lost their embedded font, and all-features its Arial, see
-above). The fields are:
+four-layer and small-board also lost their embedded font, and all-features its Arial, and the
+boards re-saved for the mask expansion rule lost the Arial that saving put back, see above). The fields are:
     Board6 FILENAME                    the board's own save path
     Board6 2DCONFIGFULLFILENAME        the 2D view settings file (it contains the Windows login
                                        and the Altium install ID)

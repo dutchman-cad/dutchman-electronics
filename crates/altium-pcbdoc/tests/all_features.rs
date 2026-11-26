@@ -145,6 +145,14 @@ fn the_solder_mask_is_blue_on_both_faces() -> Result<(), Box<dyn std::error::Err
 }
 
 #[test]
+fn the_solder_mask_opens_0_1_mm_round_each_pad() -> Result<(), Box<dyn std::error::Error>> {
+    let out = read()?;
+    let e = out.board.solder_mask_expansion.ok_or("no mask expansion")?;
+    assert!(near(e, 0.1), "{e}");
+    Ok(())
+}
+
+#[test]
 fn the_board_has_one_round_cutout() -> Result<(), Box<dyn std::error::Error>> {
     let out = read()?;
     let [cutout] = out.board.outline.cutouts.as_slice() else {
