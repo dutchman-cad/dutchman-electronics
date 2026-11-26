@@ -7,7 +7,7 @@ use super::*;
 
 /// [`super::overlays`] for a board with no embedded fonts.
 fn overlays(board: &Board, thickness: f64, board_part: &str) -> (Vec<Value>, Vec<Value>) {
-    super::overlays(board, &[], thickness, board_part)
+    super::overlays(board, &[], thickness, board_part, Copper::Outer)
 }
 
 /// [`super::overlays_within`] for a board with no embedded fonts.
@@ -24,6 +24,7 @@ fn overlays_within(
         &[],
         thickness,
         board_part,
+        Copper::Outer,
         text_budget,
         hole_budget,
         face_budget,
@@ -39,6 +40,7 @@ fn layers() -> Vec<Layer> {
         name: name.into(),
         kind,
         side,
+        position: None,
     };
     vec![
         l("Top Layer", LayerKind::Copper, Some(Side::Top)),
@@ -795,6 +797,7 @@ fn the_bottom_side_is_expanded_and_clipped_the_same_way() {
         name: "Bottom Overlay".into(),
         kind: LayerKind::Silkscreen,
         side: Some(Side::Bottom),
+        position: None,
     });
     b.outline.outer = square(0.0, -5.0, 20.0, 5.0);
     let (list, _) = overlays(&b, 1.6, "Board");
@@ -1142,6 +1145,7 @@ fn stacked_board(copper: usize, silk: usize) -> Board {
         name: "Bottom Overlay".into(),
         kind: LayerKind::Silkscreen,
         side: Some(Side::Bottom),
+        position: None,
     });
     b.outline.outer = square(0.0, 0.0, 20.0, 10.0);
     b
@@ -1363,7 +1367,7 @@ fn dejavu_texts_fill_the_boxes_altium_reports() {
     ] {
         let (b, fonts) = read_board(name);
         assert_eq!(b.texts.len(), 1, "{name}");
-        let (list, notes) = super::overlays(&b, &fonts, 1.6, "Board");
+        let (list, notes) = super::overlays(&b, &fonts, 1.6, "Board", Copper::Outer);
         let got = bounds(named(&list, "Silkscreen top"));
         eprintln!("{name}: {got:?} against {want:?}");
         let pairs = [
@@ -1389,7 +1393,7 @@ fn dejavu_texts_fill_the_boxes_altium_reports() {
 fn a_hole_in_a_letter_stays_a_hole() {
     // "O" is a ring: one area with one hole.
     let (b, fonts) = dejavu_board("O", 0.0, false);
-    let (list, _) = super::overlays(&b, &fonts, 1.6, "Board");
+    let (list, _) = super::overlays(&b, &fonts, 1.6, "Board", Copper::Outer);
     let o = named(&list, "Silkscreen top");
     let areas = o["areas"].as_array().unwrap();
     assert_eq!(areas.len(), 1);
@@ -1397,7 +1401,7 @@ fn a_hole_in_a_letter_stays_a_hole() {
     assert!(area(o) < ring_area(&areas[0]["outer"]) * 0.8);
     // "B" has two holes.
     let (b, fonts) = dejavu_board("B", 0.0, false);
-    let (list, _) = super::overlays(&b, &fonts, 1.6, "Board");
+    let (list, _) = super::overlays(&b, &fonts, 1.6, "Board", Copper::Outer);
     let o = named(&list, "Silkscreen top");
     let areas = o["areas"].as_array().unwrap();
     assert_eq!(areas.len(), 1);
@@ -1409,7 +1413,7 @@ fn a_hole_in_a_letter_stays_a_hole() {
 fn a_mirrored_text_runs_left_and_a_turned_one_runs_up() {
     let flat = {
         let (b, fonts) = dejavu_board("DejaVu", 0.0, false);
-        let (list, _) = super::overlays(&b, &fonts, 1.6, "Board");
+        let (list, _) = super::overlays(&b, &fonts, 1.6, "Board", Copper::Outer);
         bounds(named(&list, "Silkscreen top"))
     };
     let height = flat.3 - flat.1;
@@ -1419,9 +1423,10 @@ fn a_mirrored_text_runs_left_and_a_turned_one_runs_up() {
         name: "Bottom Overlay".into(),
         kind: LayerKind::Silkscreen,
         side: Some(Side::Bottom),
+        position: None,
     });
     b.texts[0].layer = b.layers.len() - 1;
-    let (list, _) = super::overlays(&b, &fonts, 1.6, "Board");
+    let (list, _) = super::overlays(&b, &fonts, 1.6, "Board", Copper::Outer);
     let m = bounds(named(&list, "Silkscreen bottom"));
     assert!((m.2 - (10.0 - (flat.0 - 10.0))).abs() < 1e-5, "{m:?}");
     assert!((m.0 - (10.0 - (flat.2 - 10.0))).abs() < 1e-5, "{m:?}");
@@ -1432,7 +1437,7 @@ fn a_mirrored_text_runs_left_and_a_turned_one_runs_up() {
     // Turned 90 degrees counter-clockwise: the text runs up from the position and its letters
     // stand to the left of it (local (x, y) lands at (10 - y, 10 + x)).
     let (b, fonts) = dejavu_board("DejaVu", 90.0, false);
-    let (list, _) = super::overlays(&b, &fonts, 1.6, "Board");
+    let (list, _) = super::overlays(&b, &fonts, 1.6, "Board", Copper::Outer);
     let t = bounds(named(&list, "Silkscreen top"));
     assert!(
         (t.1 - flat.0).abs() < 1e-5 && (t.3 - flat.2).abs() < 1e-5,
@@ -1448,7 +1453,7 @@ fn a_mirrored_text_runs_left_and_a_turned_one_runs_up() {
 fn a_font_that_does_not_parse_falls_back_to_strokes_with_a_note() {
     let (b, mut fonts) = dejavu_board("DejaVu", 0.0, false);
     fonts[0].data = b"this is not a font".to_vec();
-    let (list, notes) = super::overlays(&b, &fonts, 1.6, "Board");
+    let (list, notes) = super::overlays(&b, &fonts, 1.6, "Board", Copper::Outer);
     assert!(area(named(&list, "Silkscreen top")) > 0.0);
     let m = messages(&notes);
     assert!(
@@ -1468,7 +1473,7 @@ fn a_font_the_board_does_not_embed_falls_back_to_strokes_with_a_note() {
         bold: false,
         italic: false,
     };
-    let (list, notes) = super::overlays(&b, &fonts, 1.6, "Board");
+    let (list, notes) = super::overlays(&b, &fonts, 1.6, "Board", Copper::Outer);
     assert!(area(named(&list, "Silkscreen top")) > 0.0);
     let m = messages(&notes);
     assert!(
@@ -1489,6 +1494,7 @@ fn outline_points_count_against_the_text_budget() {
         &fonts,
         1.6,
         "Board",
+        Copper::Outer,
         20,
         MAX_HOLE_VERTICES,
         MAX_SOLID_FACES,
@@ -1505,6 +1511,7 @@ fn outline_points_count_against_the_text_budget() {
         &fonts,
         1.6,
         "Board",
+        Copper::Outer,
         150,
         MAX_HOLE_VERTICES,
         MAX_SOLID_FACES,
@@ -1523,7 +1530,7 @@ fn outline_points_count_against_the_text_budget() {
 fn a_character_the_font_lacks_is_noted() {
     // U+0E01 (Thai) is not in DejaVu Sans Mono; it draws as the .notdef glyph.
     let (b, fonts) = dejavu_board("A\u{0e01}", 0.0, false);
-    let (list, notes) = super::overlays(&b, &fonts, 1.6, "Board");
+    let (list, notes) = super::overlays(&b, &fonts, 1.6, "Board", Copper::Outer);
     assert!(area(named(&list, "Silkscreen top")) > 0.0);
     assert!(
         messages(&notes)

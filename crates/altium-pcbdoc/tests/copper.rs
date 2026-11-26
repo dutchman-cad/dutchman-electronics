@@ -504,3 +504,43 @@ fn small_board_pours_hand_over_their_holes() -> Result<(), Box<dyn std::error::E
     assert!(warnings.is_empty(), "{warnings:?}");
     Ok(())
 }
+
+/// Where each copper layer of four-layer lies, from its V9 stack (tests/boards/README.txt): Top
+/// Solder 0.010, Top Layer 0.035, a dielectric of 2.8 mil, Layer 1 0.035, FR-4 1.510, Layer 2
+/// 0.035, a dielectric of 2.8 mil, Bottom Layer 0.035. Multi-Layer stands for all copper and has
+/// no place.
+#[test]
+fn four_layers_copper_has_its_place_in_the_stack() -> Result<(), Box<dyn std::error::Error>> {
+    let out = read("four-layer.PcbDoc")?;
+    let mil = 2.8 * 0.0254;
+    let want = [
+        ("Top Layer", 0.010),
+        ("Layer 1", 0.010 + 0.035 + mil),
+        ("Layer 2", 0.010 + 0.035 + mil + 0.035 + 1.510),
+        (
+            "Bottom Layer",
+            0.010 + 0.035 + mil + 0.035 + 1.510 + 0.035 + mil,
+        ),
+    ];
+    for (name, depth) in want {
+        let layer = out
+            .board
+            .layers
+            .iter()
+            .find(|l| l.name == name)
+            .ok_or(name)?;
+        let place = layer.position.ok_or(name)?;
+        assert!(
+            near(place.depth, depth) && near(place.thickness, 0.035),
+            "{name}: {place:?}"
+        );
+    }
+    let multi = out
+        .board
+        .layers
+        .iter()
+        .find(|l| l.name == "Multi-Layer")
+        .ok_or("no Multi-Layer")?;
+    assert_eq!(multi.position, None);
+    Ok(())
+}

@@ -58,6 +58,7 @@
 
 use board_model::{
     Contour, CopperItem, Graphic, Layer, LayerKind, Note, PadShape, Point, Segment, Severity, Side,
+    StackPosition,
 };
 
 use crate::board::{OtherRegion, Properties};
@@ -94,14 +95,33 @@ pub(crate) struct CopperLayers {
 
 impl CopperLayers {
     pub(crate) fn new(board: &Properties) -> Self {
-        // Copper layer names in stack order, from the V9 stack (a layer with COPTHICK is copper).
+        // Copper layer names in stack order, from the V9 stack (a layer with COPTHICK is copper),
+        // with where each lies: the stack's thicknesses above it added up, and its own.
         let mut copper_names = Vec::new();
+        let mut positions: Vec<Option<StackPosition>> = Vec::new();
+        let mut depth = Some(0.0);
         for n in 0..10_000usize {
             let Some(name) = board.get(&format!("V9_STACK_LAYER{n}_NAME")) else {
                 break;
             };
+            let length = |part: &str| {
+                board
+                    .length_mm(&format!("V9_STACK_LAYER{n}_{part}"))
+                    .ok()
+                    .flatten()
+            };
+            let dielectric = length("DIELHEIGHT").unwrap_or(0.0);
             if board.get(&format!("V9_STACK_LAYER{n}_COPTHICK")).is_some() {
+                let thickness = length("COPTHICK");
                 copper_names.push(name.to_string());
+                positions.push(
+                    depth
+                        .zip(thickness)
+                        .map(|(depth, thickness)| StackPosition { depth, thickness }),
+                );
+                depth = depth.zip(thickness).map(|(d, t)| d + t + dielectric);
+            } else {
+                depth = depth.map(|d| d + dielectric);
             }
         }
         let side_of = |name: &str| -> Option<Side> {
@@ -129,10 +149,19 @@ impl CopperLayers {
                 if let Some(slot) = by_number.get_mut(usize::from(n)) {
                     *slot = Some(layers.len());
                 }
+                let position = if multi {
+                    None
+                } else {
+                    copper_names
+                        .iter()
+                        .position(|c| c == name)
+                        .and_then(|i| positions.get(i).copied().flatten())
+                };
                 layers.push(Layer {
                     name: name.to_string(),
                     kind: LayerKind::Copper,
                     side: if multi { None } else { side_of(name) },
+                    position,
                 });
             }
         }
@@ -185,6 +214,7 @@ impl CopperLayers {
             name,
             kind: LayerKind::Silkscreen,
             side,
+            position: None,
         });
         Some(self.layers.len() - 1)
     }

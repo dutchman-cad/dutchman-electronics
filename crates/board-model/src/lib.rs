@@ -51,6 +51,21 @@ pub struct Layer {
     pub kind: LayerKind,
     /// `None` for inner copper layers and layers that belong to neither face.
     pub side: Option<Side>,
+    /// Where a copper layer of the stack lies in the board, when the reader knows: from the
+    /// file's stack-up, or spread evenly through the thickness when the file has none (a note
+    /// then says so). `None` for other layers, and for a layer that stands for all copper at once
+    /// (Altium's Multi-Layer, KiCad's `*.Cu`).
+    pub position: Option<StackPosition>,
+}
+
+/// Where a copper layer lies in the board's stack.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StackPosition {
+    /// How far the layer's upper face lies below the top of the stack (the board's top face,
+    /// z = [`Board::thickness`]), in mm.
+    pub depth: f64,
+    /// The copper's thickness, in mm.
+    pub thickness: f64,
 }
 
 /// One piece of a contour.
