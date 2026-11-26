@@ -1907,6 +1907,50 @@ mod tests {
     }
 
     #[test]
+    fn planes_are_drawn_with_their_clearances_and_reliefs_but_no_via_pads() {
+        // four-layer-planes: Layer 1 (GND) is one region, Layer 2 is split at x = 25 into a VCC
+        // half and a half without a net. Vias at (10, 10) GND, (10, 20) VCC and (35, 20) without
+        // a net, and a GND pad at (40, 10).
+        let path = format!(
+            "{}/../altium-pcbdoc/tests/boards/four-layer-planes.PcbDoc",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let bytes = std::fs::read(&path).unwrap();
+        let read = |copper| build(Path::new(&path), &bytes, &[], &[], copper).unwrap();
+        let inner = |m: &Value| -> Vec<Value> {
+            m["overlays"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|o| o["side"] == "inner")
+                .cloned()
+                .collect()
+        };
+        assert!(inner(&read(crate::overlay::Copper::Outer).manifest).is_empty());
+        let all = read(crate::overlay::Copper::All);
+        let planes = inner(&all.manifest);
+        let names: Vec<&str> = planes.iter().map(|o| o["name"].as_str().unwrap()).collect();
+        assert_eq!(names, ["Copper Layer 1", "Copper Layer 2"]);
+        let holes = |o: &Value| -> Vec<usize> {
+            let mut h: Vec<usize> = o["areas"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|a| a["holes"].as_array().unwrap().len())
+                .collect();
+            h.sort_unstable();
+            h
+        };
+        // Layer 1 is one piece of copper: two reliefs of four pieces of air each, two clearances,
+        // and the holes of the GND via and pad inside their reliefs. No via keeps a ring of its
+        // own inside its clearance.
+        assert_eq!(holes(&planes[0]), [12], "{}", planes[0]);
+        // Layer 2: the VCC half has the VCC via's relief, its hole and the GND via's clearance;
+        // the other half only the clearances of the via and the pad on it.
+        assert_eq!(holes(&planes[1]), [2, 6], "{}", planes[1]);
+    }
+
+    #[test]
     fn no_component_takes_the_plating_part_name() {
         let placed = components(
             &[

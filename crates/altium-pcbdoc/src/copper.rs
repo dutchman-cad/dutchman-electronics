@@ -64,6 +64,14 @@
 //!   region records in `/Regions6/Data` (see `board.rs`) with `KIND=0` and the layer in body
 //!   byte 0; poured copper also has `SUBPOLYINDEX=0` (a free region has -1). The pour's own
 //!   definition in `/Polygons6/Data` is not needed for its copper.
+//! - Internal planes (`four-layer-planes`): its two plane layers are layer bytes 39 and 40
+//!   (`LAYER39NAME=Layer 1`, `LAYER40NAME=Layer 2`), in the V9 stack like signal layers, with a
+//!   `COPTHICK` and also a `PULLBACKDISTANCE`. A plane is copper wherever nothing is drawn, so
+//!   what lies on it is where copper is left out: Altium drew the pull-back from the board edge as
+//!   four tracks on each plane layer, 1.016 wide (twice the 0.508 pull-back) along the edges,
+//!   and the split line we drew is a track too. The copper itself is in `/Polygons6/Data` (see
+//!   `planes.rs`), which already leaves the pull-back and the split out, so tracks on a plane
+//!   layer are not drawn. Bytes 39 to 54 are taken to be the 16 planes Altium offers.
 
 use board_model::{
     Contour, CopperItem, Graphic, Layer, LayerKind, Note, PadShape, Point, Segment, Severity, Side,
@@ -96,6 +104,18 @@ const MAX_RECORDS: usize = 10_000_000;
 /// The most layers named in `/Board6/Data` that are looked at.
 const MAX_LAYER_NUMBER: u8 = u8::MAX;
 const NO_NET: u16 = 0xffff;
+/// The layer bytes of Altium's internal planes (Internal Plane 1 to 16).
+const INTERNAL_PLANES: std::ops::RangeInclusive<u8> = 39..=54;
+
+/// A hole drilled through the board (a via's, or a through-hole pad's), with the net of its via
+/// or pad, for the planes it passes through (see `planes.rs`).
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Drill {
+    pub at: Point,
+    /// The hole diameter.
+    pub hole: f64,
+    pub net: Option<String>,
+}
 
 /// The copper layers of a board, built from `/Board6/Data`.
 pub(crate) struct CopperLayers {
@@ -175,7 +195,11 @@ impl CopperLayers {
                 };
                 layers.push(Layer {
                     name: name.to_string(),
-                    kind: LayerKind::Copper,
+                    kind: if INTERNAL_PLANES.contains(&n) {
+                        LayerKind::Plane
+                    } else {
+                        LayerKind::Copper
+                    },
                     side: if multi { None } else { side_of(name) },
                     position,
                 });
@@ -248,8 +272,25 @@ impl CopperLayers {
         }
     }
 
+    /// The index in `layers` of a copper layer that is not a plane.
     fn copper_index(&self, number: u8) -> Option<usize> {
+        if INTERNAL_PLANES.contains(&number) {
+            return None;
+        }
         self.by_number.get(usize::from(number)).copied().flatten()
+    }
+
+    /// The index in `layers` of an internal plane layer of the stack.
+    pub(crate) fn plane_index(&self, number: u8) -> Option<usize> {
+        if !INTERNAL_PLANES.contains(&number) {
+            return None;
+        }
+        self.by_number.get(usize::from(number)).copied().flatten()
+    }
+
+    /// The net named by index `index` of `/Nets6/Data`.
+    pub(crate) fn net_name(&self, index: usize) -> Option<&str> {
+        self.nets.get(index).map(String::as_str)
     }
 
     fn name(&self, number: u8) -> String {
@@ -272,10 +313,41 @@ struct Skipped {
     unnamed_net: usize,
     /// Items left out because an angle in them is not a real angle.
     bad_angle: usize,
+    /// Items on an internal plane layer, by layer name.
+    on_plane: std::collections::BTreeMap<String, usize>,
+    /// Whether the items on a plane are lines, which there mark where copper is left out and are
+    /// already in the plane's split-plane regions; anything else on a plane is not read yet.
+    plane_lines: bool,
 }
 
 impl Skipped {
+    /// Counts an item on plane layer `number`, or returns false when that is not a plane layer.
+    fn on_plane(&mut self, layers: &CopperLayers, number: u8) -> bool {
+        if layers.plane_index(number).is_none() {
+            return false;
+        }
+        *self.on_plane.entry(layers.name(number)).or_default() += 1;
+        true
+    }
+
     fn into_notes(self, what: &str, notes: &mut Vec<Note>) {
+        for (layer, count) in self.on_plane {
+            notes.push(if self.plane_lines {
+                Note {
+                    severity: Severity::Info,
+                    message: format!(
+                        "{count} {what} on plane layer {layer} are not drawn: on a plane they \
+                         mark where copper is left out (the pull-back from the board edge, split \
+                         lines), which its split-plane regions already show"
+                    ),
+                }
+            } else {
+                Note {
+                    severity: Severity::Dropped,
+                    message: format!("{count} {what} on plane layer {layer} not read yet"),
+                }
+            });
+        }
         for (layer, count) in self.off_copper {
             notes.push(Note {
                 severity: Severity::Dropped,
@@ -324,7 +396,10 @@ pub(crate) fn tracks(
     notes: &mut Vec<Note>,
 ) -> Result<Vec<CopperItem>, String> {
     let mut items = Vec::new();
-    let mut skipped = Skipped::default();
+    let mut skipped = Skipped {
+        plane_lines: true,
+        ..Skipped::default()
+    };
     for body in records(data, TRACK_RECORD, "/Tracks6/Data", notes)? {
         let layer_number = *body.first().ok_or("track record is empty")?;
         let from = point(body, 13)?;
@@ -334,6 +409,9 @@ pub(crate) fn tracks(
             skipped.unnamed_net += 1;
             None
         });
+        if skipped.on_plane(layers, layer_number) {
+            continue;
+        }
         if let Some(layer) = layers.copper_index(layer_number) {
             items.push(CopperItem::Track {
                 layer,
@@ -361,11 +439,12 @@ pub(crate) fn tracks(
     Ok(items)
 }
 
-/// Reads the pads from `/Pads6/Data`.
+/// Reads the pads from `/Pads6/Data`. Each through-hole pad's hole also goes into `drills`.
 pub(crate) fn pads(
     data: &[u8],
     layers: &CopperLayers,
     components: &Components,
+    drills: &mut Vec<Drill>,
     notes: &mut Vec<Note>,
 ) -> Result<Vec<CopperItem>, String> {
     let mut items = Vec::new();
@@ -427,6 +506,13 @@ pub(crate) fn pads(
             (length(g, 37)?, length(g, 41)?),
         ];
         let hole = length(g, 45)?;
+        if hole > 0.0 {
+            drills.push(Drill {
+                at: at_point,
+                hole,
+                net: layers.net(g).ok().flatten(),
+            });
+        }
         let shapes = g.get(49..52).ok_or("pad shapes cut short")?;
         let Some(rotation) = angle(g, 52)? else {
             skipped.bad_angle += 1;
@@ -521,6 +607,9 @@ pub(crate) fn arcs(
             skipped.unnamed_net += 1;
             None
         });
+        if skipped.on_plane(layers, layer_number) {
+            continue;
+        }
         let Some(layer) = layers.copper_index(layer_number) else {
             match layers.overlay_layer(layer_number) {
                 Some(layer) => graphics.push(Graphic::Arc {
@@ -555,10 +644,12 @@ pub(crate) fn arcs(
     Ok(items)
 }
 
-/// Reads the vias from `/Vias6/Data`. Every via is read as running through the whole board.
+/// Reads the vias from `/Vias6/Data`. Every via is read as running through the whole board, and
+/// its hole also goes into `drills`.
 pub(crate) fn vias(
     data: &[u8],
     layers: &CopperLayers,
+    drills: &mut Vec<Drill>,
     notes: &mut Vec<Note>,
 ) -> Result<Vec<CopperItem>, String> {
     let mut items = Vec::new();
@@ -577,6 +668,11 @@ pub(crate) fn vias(
         if read_u16(body, 3) != Some(NO_NET) {
             skipped.with_net += 1;
         }
+        drills.push(Drill {
+            at,
+            hole: drill,
+            net: layers.net(body).ok().flatten(),
+        });
         items.push(CopperItem::Via {
             at,
             diameter,
@@ -615,6 +711,9 @@ pub(crate) fn fills(
         };
         if read_u16(body, 3) != Some(NO_NET) {
             skipped.with_net += 1;
+        }
+        if skipped.on_plane(layers, layer_number) {
+            continue;
         }
         let Some(layer) = layers.copper_index(layer_number) else {
             *skipped
@@ -889,7 +988,10 @@ mod tests {
             b[30] = 74;
         });
         let mut notes = Vec::new();
-        assert_eq!(vias(&data, &l, &mut notes).unwrap().len(), 1);
+        assert_eq!(
+            vias(&data, &l, &mut Vec::new(), &mut notes).unwrap().len(),
+            1
+        );
         assert_eq!(notes.len(), 1);
         assert_eq!(notes[0].severity, Severity::Warning);
     }
@@ -942,10 +1044,17 @@ mod tests {
             &mut notes
         )
         .is_err());
-        assert!(pads(&[PAD_RECORD, 0xff, 0xff, 0xff, 0x7f], &l, &none, &mut notes).is_err());
+        assert!(pads(
+            &[PAD_RECORD, 0xff, 0xff, 0xff, 0x7f],
+            &l,
+            &none,
+            &mut Vec::new(),
+            &mut notes
+        )
+        .is_err());
         let mut few_blocks = vec![PAD_RECORD];
         few_blocks.extend_from_slice(&0u32.to_le_bytes());
-        assert!(pads(&few_blocks, &l, &none, &mut notes).is_err());
+        assert!(pads(&few_blocks, &l, &none, &mut Vec::new(), &mut notes).is_err());
         assert!(arcs(
             &record(ARC_RECORD, 40, |_| ()),
             &mut m,
@@ -954,7 +1063,13 @@ mod tests {
             &mut notes
         )
         .is_err());
-        assert!(vias(&record(VIA_RECORD, 30, |_| ()), &l, &mut notes).is_err());
+        assert!(vias(
+            &record(VIA_RECORD, 30, |_| ()),
+            &l,
+            &mut Vec::new(),
+            &mut notes
+        )
+        .is_err());
         assert!(arcs(
             &[ARC_RECORD, 0xff, 0xff, 0xff, 0x7f],
             &mut m,
@@ -963,7 +1078,7 @@ mod tests {
             &mut notes
         )
         .is_err());
-        assert!(vias(&[VIA_RECORD, 1, 0, 0, 0], &l, &mut notes).is_err());
+        assert!(vias(&[VIA_RECORD, 1, 0, 0, 0], &l, &mut Vec::new(), &mut notes).is_err());
         assert!(fills(&[FILL_RECORD, 0xff, 0xff, 0xff, 0x7f], &l, &mut notes).is_err());
         assert!(fills(&[FILL_RECORD, 2, 0, 0, 0, 1, 0], &l, &mut notes).is_err());
         assert!(tracks(&[0x42], &mut m, &none, &mut g, &mut notes)

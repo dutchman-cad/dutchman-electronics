@@ -36,6 +36,10 @@ pub enum Side {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LayerKind {
     Copper,
+    /// An internal plane: an inner copper layer that is copper wherever nothing is drawn (often
+    /// a ground or supply). Its copper comes as [`CopperItem::Region`]s, with holes where it is
+    /// cut away around vias and through-hole pads; vias and pads have no pad of their own on it.
+    Plane,
     Silkscreen,
     SolderMask,
     Paste,
