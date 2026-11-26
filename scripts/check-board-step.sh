@@ -6,8 +6,9 @@
 # requires: cadmpeg `check` OK, and SolidCraft, both on importing the STEP and on reopening the
 # design it saved from it, sees one closed body whose box is the board's outline size by its
 # thickness to 0.001 mm, with no feature error. The CC0 boards of both formats share a 50 x 30 mm
-# outline (see their README.txt) of 1.6 mm thickness (four-layer: Altium 1.8122 mm, KiCad 1.2 mm);
-# the open-hardware boards have the sizes KiCad gives, in their README.txt.
+# outline (see their README.txt) of 1.6 mm thickness (Altium four-layer and four-layer-planes:
+# 1.8122 mm; KiCad four-layer: 1.2 mm); the open-hardware boards have the sizes KiCad gives, in
+# their README.txt.
 # Each component model the package writes (model-*.step) must pass cadmpeg `check` and, on import
 # and on reopening its saved design, be as many closed bodies with a volume as the file has solids
 # (one for an extruded body; a STEP model the board embeds may hold several).
@@ -33,7 +34,7 @@ for board in "${boards[@]}"; do
   echo "== $name"
   # The outline's width and height, and the thickness, in mm.
   case "$name" in
-    altium-four-layer) width=50; height=30; thickness=1.8122 ;;
+    altium-four-layer|altium-four-layer-planes) width=50; height=30; thickness=1.8122 ;;
     kicad-four-layer|kicad-k10-four-layer) width=50; height=30; thickness=1.2 ;;
     open-GB-CARTPP-XC) width=80; height=55; thickness=1.0 ;;
     open-Franzininho-DIY) width=51.0675; height=30.03; thickness=1.6 ;;

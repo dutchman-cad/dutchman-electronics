@@ -769,11 +769,13 @@ fn overlays_within(
         Unusable,
     }
     let on = |i: usize| match board.layers.get(i) {
-        Some(l) if l.kind == LayerKind::Copper => match (l.side, l.position) {
-            (Some(side), _) => On::Face(side),
-            (None, Some(_)) => On::Inner(i),
-            (None, None) => On::Through,
-        },
+        Some(l) if matches!(l.kind, LayerKind::Copper | LayerKind::Plane) => {
+            match (l.side, l.position) {
+                (Some(side), _) => On::Face(side),
+                (None, Some(_)) => On::Inner(i),
+                (None, None) => On::Through,
+            }
+        }
         _ => On::Unusable,
     };
     // The inner layers that get overlays (none unless asked for), and their piles.
@@ -785,6 +787,17 @@ fn overlays_within(
         Vec::new()
     };
     let mut inner_piles: Vec<Pile> = inner_layers.iter().map(|_| Pile::default()).collect();
+    // Vias and drilled pads have a pad on each inner signal layer, but none on a plane, which
+    // has its clearances and reliefs instead.
+    let takes_pads: Vec<bool> = inner_layers
+        .iter()
+        .map(|&i| {
+            board
+                .layers
+                .get(i)
+                .is_some_and(|l| l.kind != LayerKind::Plane)
+        })
+        .collect();
     let mut faces = (top, bottom);
     // Real fabs open the mask a little wider than each pad. Vias are tented: no opening.
     let expansion = board
@@ -851,7 +864,11 @@ fn overlays_within(
                 } => {
                     match circle(*at, diameter / 2.0) {
                         Some(ring) => {
-                            for pile in &mut inner_piles {
+                            for (pile, _) in inner_piles
+                                .iter_mut()
+                                .zip(&takes_pads)
+                                .filter(|(_, takes)| **takes)
+                            {
                                 pile.polygons.push(ring.clone());
                             }
                             faces.0.masked.polygons.push(ring.clone());
@@ -930,7 +947,11 @@ fn overlays_within(
             (On::Face(Side::Bottom), _) => &[Side::Bottom],
             // A drilled pad goes through every copper layer.
             (On::Through | On::Inner(_), true) => {
-                for pile in &mut inner_piles {
+                for (pile, _) in inner_piles
+                    .iter_mut()
+                    .zip(&takes_pads)
+                    .filter(|(_, takes)| **takes)
+                {
                     pile.polygons.extend(shapes.iter().cloned());
                 }
                 &[Side::Top, Side::Bottom]

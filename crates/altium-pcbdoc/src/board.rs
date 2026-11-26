@@ -140,6 +140,16 @@ const ARC_END_TOLERANCE: f64 = 0.001;
 /// The board shape from the `KINDn`/`VXn`/`VYn` vertex list, with `CXn`/`CYn`/`Rn`/`SAn`/`EAn`
 /// for the arcs.
 pub(crate) fn outline(board: &Properties, notes: &mut Vec<Note>) -> Result<Contour, String> {
+    vertex_contour(board, "the board outline", notes)
+}
+
+/// A closed contour from a `KINDn`/`VXn`/`VYn` vertex list like the board shape's (also used for
+/// the split-plane regions of `/Polygons6/Data`). `what` names it in errors and notes.
+pub(crate) fn vertex_contour(
+    board: &Properties,
+    what: &str,
+    notes: &mut Vec<Note>,
+) -> Result<Contour, String> {
     let mut vertices = Vec::new();
     let mut unknown = 0usize;
     for i in 0..=MAX_VERTICES {
@@ -147,16 +157,14 @@ pub(crate) fn outline(board: &Properties, notes: &mut Vec<Note>) -> Result<Conto
             break;
         };
         if i == MAX_VERTICES {
-            return Err(format!(
-                "the board outline has more than {MAX_VERTICES} vertices"
-            ));
+            return Err(format!("{what} has more than {MAX_VERTICES} vertices"));
         }
         let at = match (
             board.length_mm(&format!("VX{i}"))?,
             board.length_mm(&format!("VY{i}"))?,
         ) {
             (Some(x), Some(y)) => Point { x, y },
-            _ => return Err(format!("outline vertex {i} has no VX{i}/VY{i}")),
+            _ => return Err(format!("{what}: vertex {i} has no VX{i}/VY{i}")),
         };
         let arc = match kind.trim() {
             "0" => None,
@@ -172,8 +180,8 @@ pub(crate) fn outline(board: &Properties, notes: &mut Vec<Note>) -> Result<Conto
         notes.push(Note {
             severity: Severity::Warning,
             message: format!(
-                "{unknown} board outline edge(s) have an unknown KIND (not 0 or 1); read as \
-                 straight lines"
+                "{unknown} edge(s) of {what} have an unknown KIND (not 0 or 1); read as straight \
+                 lines"
             ),
         });
     }
@@ -181,10 +189,10 @@ pub(crate) fn outline(board: &Properties, notes: &mut Vec<Note>) -> Result<Conto
     let corners = distinct(&vertices).len();
     if corners < 3 && !(has_arcs && corners >= 1) {
         return Err(format!(
-            "the board outline has {corners} vertices; a board needs at least 3"
+            "{what} has {corners} vertices; a closed shape needs at least 3"
         ));
     }
-    Ok(contour("the board outline", &vertices, notes))
+    Ok(contour(what, &vertices, notes))
 }
 
 /// The arc of outline vertex `i`.

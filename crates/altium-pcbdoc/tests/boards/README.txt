@@ -765,6 +765,63 @@ pad-shapes.PcbDoc  (from empty-outline)
     6    (20.000, 24.000)    Multi-Layer  1.600 x 1.600  0         rounded rectangle  30%: radius 0.240
     Pad 6 has a round plated hole of 0.800; the others have none.
 
+Scripted board: two internal planes (four-layer-planes)
+------------------------------------------------------
+Made on 2026-11-26 from a file copy of empty-outline.PcbDoc. By hand, in Design > Layer Stack
+Manager: Add > Insert layer below Top Layer > Plane, count 1. With the stack kept symmetric,
+Altium added two plane layers, each with a thin prepreg next to it, with its default names and
+thicknesses, as for four-layer (see the twelfth board). The rest by my own scripts, each change
+read back and logged:
+1. Two nets, GND and VCC. Layer 1 got the net GND and Layer 2 the net VCC as plane nets
+   (PLANE1NETNAME=GND, PLANE2NETNAME=VCC). Altium's default pull-back of 0.508 (20 mil) was kept.
+2. The vias, pad and split line below, then the nets of the vias and the pad.
+3. The net of each split-plane region (Altium had made the regions before the nets existed, so
+   they had none): all of Layer 1 GND, the part of Layer 2 left of the split line VCC, the part
+   right of it left without a net.
+4. The plane clearance rule set to 0.300 instead of Altium's default 0.508, so it differs from
+   the relief expansion.
+By hand, Tools > Split Planes > Rebuild Split Planes on All Layers after steps 3 and 4 (without
+it Altium did not connect any via to a plane), and a save. Altium's Gerber files of the two
+planes (made only to check the numbers below, not kept) match them.
+
+four-layer-planes.PcbDoc  (from empty-outline)
+    Layer stack (total 1.812, the same thicknesses as four-layer):
+
+        Top Overlay      (no thickness)
+        Top Solder       solder resist   0.010
+        Top Layer        copper          0.035
+        Dielectric 2     prepreg         0.071   (2.8 mil)
+        Layer 1          plane           0.035   GND, pull-back 0.508
+        Dielectric 1     FR-4            1.510
+        Layer 2          plane           0.035   VCC, pull-back 0.508
+        Dielectric 3     prepreg         0.071   (2.8 mil)
+        Bottom Layer     copper          0.035
+        Bottom Solder    solder resist   0.010
+        Bottom Overlay   (no thickness)
+
+    Vias, from Top Layer to Bottom Layer, diameter 0.600, hole 0.300:
+        (10.000, 10.000)   GND
+        (10.000, 20.000)   VCC
+        (35.000, 20.000)   no net
+    Pad "1" (no component) at (40.000, 10.000), Multi-Layer, round 1.600, hole 0.900, plated,
+    GND.
+    Split line on Layer 2: a track from (25.000, 0.000) to (25.000, 30.000), width 0.500.
+
+    Design rules (the only plane rules, both for every object):
+        Plane clearance    0.300
+        Plane connect      relief, expansion 0.508, air gap 0.254, conductor width 0.254,
+                           4 entries
+
+    What Altium shows and writes for the planes:
+        Layer 1 (GND)              one region; thermal reliefs on the GND via and the GND pad,
+                                   clearances around the other two vias
+        Layer 2, left of x = 25    VCC; a relief on the VCC via, a clearance around the GND via
+        Layer 2, right of x = 25   no net; clearances around the via at (35, 20) and the pad
+    Round clearances, from the Gerber files: 0.900 across around a via (its hole plus twice the
+    clearance), 1.500 around the pad. Reliefs: air from 1.316 across (the hole plus twice the
+    expansion) to 1.824 around a via, 1.916 to 2.424 around the pad, crossed by four spokes
+    0.254 wide at 45, 135, 225 and 315 degrees.
+
 Paths inside the files
 ----------------------
 Altium writes a few paths from the PC that saved a board into the file. After the last save, I

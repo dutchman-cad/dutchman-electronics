@@ -18,6 +18,7 @@ mod components;
 mod copper;
 mod fonts;
 mod models;
+mod planes;
 pub mod privacy;
 pub mod project;
 mod shape_based;
@@ -223,6 +224,7 @@ impl InputFormat for Altium {
         }
         let mut copper = Vec::new();
         let mut graphics = Vec::new();
+        let mut drills = Vec::new();
         if let Some(data) = &tracks6 {
             copper.extend(
                 copper::tracks(data, &mut layers, &components, &mut graphics, &mut notes)
@@ -237,20 +239,35 @@ impl InputFormat for Altium {
         }
         if let Some(data) = &pads6 {
             copper.extend(
-                copper::pads(data, &layers, &components, &mut notes).map_err(ReadError::Invalid)?,
+                copper::pads(data, &layers, &components, &mut drills, &mut notes)
+                    .map_err(ReadError::Invalid)?,
             );
         }
         if let Some(data) = &vias6 {
-            copper.extend(copper::vias(data, &layers, &mut notes).map_err(ReadError::Invalid)?);
+            copper.extend(
+                copper::vias(data, &layers, &mut drills, &mut notes).map_err(ReadError::Invalid)?,
+            );
         }
         if let Some(data) = &fills6 {
             copper.extend(copper::fills(data, &layers, &mut notes).map_err(ReadError::Invalid)?);
         }
         copper.extend(copper::regions(&shape.other_regions, &layers, &mut notes));
-        if streams
-            .iter()
-            .any(|s| s.path == "/Polygons6/Data" && s.len > 0)
-        {
+        let polygons6 = read_stream(&mut container, "/Polygons6/Data")?;
+        let mut pours = 0usize;
+        if let Some(data) = polygons6.as_deref().filter(|d| !d.is_empty()) {
+            let rules6 = read_stream(&mut container, "/Rules6/Data")?;
+            let mut rule_notes = Vec::new();
+            let rules =
+                planes::rules(rules6.as_deref(), &mut rule_notes).map_err(ReadError::Invalid)?;
+            let planes = planes::read(data, &layers, &drills, &rules, &mut notes)
+                .map_err(ReadError::Invalid)?;
+            if !planes.copper.is_empty() {
+                notes.extend(rule_notes);
+            }
+            copper.extend(planes.copper);
+            pours = planes.others;
+        }
+        if pours > 0 {
             notes.push(Note {
                 severity: Severity::Info,
                 message: "polygon pour settings (/Polygons6/Data) are not read; the copper each \
