@@ -764,6 +764,7 @@ pad-shapes.PcbDoc  (from empty-outline)
     5    (40.000, 24.000)    Top Layer    1.500 x 1.500  0         octagon            corners cut 0.375
     6    (20.000, 24.000)    Multi-Layer  1.600 x 1.600  0         rounded rectangle  30%: radius 0.240
     Pad 6 has a round plated hole of 0.800; the others have none.
+
 Scripted board: two internal planes (four-layer-planes)
 ------------------------------------------------------
 Made on 2026-11-26 from a file copy of empty-outline.PcbDoc. By hand, in Design > Layer Stack
