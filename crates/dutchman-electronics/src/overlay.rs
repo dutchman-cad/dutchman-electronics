@@ -1298,10 +1298,28 @@ fn overlays_within(
                 opacity: None,
             });
         }
-        built
+        // Fewer points, the same outlines within THIN, and no slivers without surface (#126).
+        let mut slivers = Vec::new();
+        for b in &mut built {
+            let (shape, n) = thin::thin(&b.shape, thin::THIN);
+            b.shape = shape;
+            if n > 0 {
+                slivers.push((b.name.clone(), n));
+            }
+        }
+        (built, slivers)
     }));
     match built {
-        Ok(mut built) => {
+        Ok((mut built, slivers)) => {
+            for (name, n) in slivers {
+                notes.push(json!({
+                    "severity": "Info",
+                    "message": format!(
+                        "{name}: {n} sliver(s) under {} mm2, with no surface to draw, are left out",
+                        thin::MIN_AREA
+                    ),
+                }));
+            }
             built.retain(|b| !b.shape.0.is_empty());
             for name in fit_faces(&mut built, face_budget) {
                 notes.push(json!({
@@ -1453,6 +1471,7 @@ fn overlays_within(
 }
 
 mod text;
+mod thin;
 
 #[cfg(test)]
 mod tests;
