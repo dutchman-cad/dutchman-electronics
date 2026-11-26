@@ -844,9 +844,22 @@ fn overlays_within(
                     drill,
                     ..
                 } => {
+                    // The opening is the pad grown by `expansion` on every side, so a rounded
+                    // corner's radius grows by `expansion` too (not in proportion to the size).
+                    let open_shape = match *shape {
+                        PadShape::RoundedRectangle { radius_ratio } => {
+                            let short = size_x.min(*size_y);
+                            let bigger = short + 2.0 * expansion;
+                            PadShape::RoundedRectangle {
+                                radius_ratio: (radius_ratio.clamp(0.0, 0.5) * short + expansion)
+                                    / bigger,
+                            }
+                        }
+                        other => other,
+                    };
                     opened = pad(
                         *at,
-                        *shape,
+                        open_shape,
                         *size_x + 2.0 * expansion,
                         *size_y + 2.0 * expansion,
                         *rotation_deg,

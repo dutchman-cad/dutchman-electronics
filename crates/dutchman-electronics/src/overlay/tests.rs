@@ -1774,3 +1774,28 @@ fn a_polygon_pad_is_the_union_of_its_pieces_with_its_hole_and_a_grown_opening() 
     assert!(!covers(mask, 12.2, 4.5) && covers(mask, 12.3, 4.5));
     assert!(!covers(mask, 10.5, 2.8) && covers(mask, 10.5, 2.7));
 }
+
+#[test]
+fn a_rounded_rectangle_opening_is_the_true_offset_of_the_pad() {
+    // 3 x 2, corner radius 0.5, mask expansion 0.25: the opening is the pad offset by 0.25, whose
+    // corners have radius 0.75. Its area is A + P * e + pi * e^2 with A = 6 - 4 * 0.25 * (1 -
+    // pi/4) = 5.7854 and P = 2 * (3 + 2) - 8 * 0.5 + 2 * pi * 0.5 = 9.1416, so 8.2671; the 20 x 10
+    // board's mask is 200 less that.
+    let pad = CopperItem::Pad {
+        layer: 0,
+        at: p(10.0, 5.0),
+        shape: PadShape::RoundedRectangle { radius_ratio: 0.25 },
+        size_x: 3.0,
+        size_y: 2.0,
+        rotation_deg: 0.0,
+        drill: None,
+        plated: false,
+        owner: None,
+    };
+    let mut b = board(vec![pad], vec![]);
+    b.outline.outer = square(0.0, 0.0, 20.0, 10.0);
+    b.solder_mask_expansion = Some(0.25);
+    let (list, _) = overlays(&b, 1.6, "Board");
+    let mask = area(named(&list, "Solder mask top"));
+    assert!((mask - (200.0 - 8.2671)).abs() < 0.02, "{mask}");
+}
