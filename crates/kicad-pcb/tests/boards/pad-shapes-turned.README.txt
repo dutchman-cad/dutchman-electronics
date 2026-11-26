@@ -1,0 +1,12 @@
+Original test board made for Dutchman Electronics. Released under CC0 1.0 (public domain): https://creativecommons.org/publicdomain/zero/1.0/
+
+pad-shapes-turned: the pad shapes of pad-shapes with their pads turned, their footprints turned, and on the bottom side.
+
+Made with KiCad 9.0.9 (file version 20241229) by fixtures/kicad/build_boards.py. KiCad shows coordinates in millimetres with Y pointing down; the board's top-left corner is at page position (100, 100), and every number below is relative to that corner (so add 100 to x and y for the page position). The reader gives Y up: model x = 100 + X, model y = -(100 + Y).
+
+- Pad shapes as on pad-shapes: the custom pad "L" is a 1 x 1 rectangle anchor plus a filled L with corners (0,0), (2,0), (2,1), (1,1), (1,2), (0,2) (KiCad's Y down); the trapezoid is 3 x 2 with rect_delta (0 1); the chamfered pad is 3 x 2 with roundrect_rratio 0.25 and chamfer_ratio 0.25 on the top-left and bottom-right corners. All are surface mount.
+- U1, on F.Cu at (10,8), not turned: pad 1 L turned 30 degrees at (0,0); pad 2 L turned 90 at (6,0); pad 3 trapezoid turned 90 at (12,0); pad 4 chamfered turned 30 at (18,0).
+- U2, on F.Cu at (10,20), the footprint turned 30 degrees, its pads not turned within it: pad 1 L at (0,0); pad 2 trapezoid at (6,0); pad 3 chamfered at (12,0). (A pad's angle in the file includes the footprint's.)
+- U3, flipped to B.Cu at (38,8), not turned: pad 1 L at (-6,0); pad 2 trapezoid at (0,0); pad 3 chamfered at (6,0). KiCad mirrors a flipped footprint's pads about its origin, so on the board pad 1 is at x = 44.
+- U4, flipped to B.Cu at (38,20), turned 90 degrees: pad 1 L at (-6,0); pad 2 trapezoid at (0,0).
+- Expected corners: KiCad's own Gerber export of F.Cu and B.Cu (KiCad 9.0.9, kicad-cli pcb export gerbers) is committed in tests/gerber/pad-shapes-turned-F_Cu.gbr and -B_Cu.gbr, and fixtures/kicad/gerber_corners.py turns each polygon pad flash into its corners in board coordinates (pad-shapes-turned-F_Cu.corners.txt and -B_Cu.corners.txt, one line per pad: reference and number, centre, corners). The test checks every corner of the reader's pads that no other piece of the same pad covers against those lines, to 0.001 mm, and that every flash is a pad the reader gave.

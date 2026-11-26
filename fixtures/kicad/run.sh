@@ -19,3 +19,15 @@ for f in "$out"/k10-work/*.kicad_pcb; do
   mv "$f" "$out/k10-$(basename "$f")"
 done
 rmdir "$out"/k10-work
+
+# KiCad's own Gerber export of the pad boards (KiCad 9), and the polygon pad outlines read from
+# it: the reader's pad corners are checked against these.
+mkdir -p crates/kicad-pcb/tests/gerber
+for b in pad-shapes pad-shapes-turned; do
+  podman run --rm --userns=keep-id -v "$PWD:/work:Z" docker.io/kicad/kicad:9.0 \
+    kicad-cli pcb export gerbers --layers F.Cu,B.Cu --no-protel-ext -o /work/crates/kicad-pcb/tests/gerber/ /work/$out/$b.kicad_pcb
+  rm -f crates/kicad-pcb/tests/gerber/*.gbrjob
+  for l in F_Cu B_Cu; do
+    python3 fixtures/kicad/gerber_corners.py crates/kicad-pcb/tests/gerber/$b-$l.gbr > crates/kicad-pcb/tests/gerber/$b-$l.corners.txt
+  done
+done

@@ -47,14 +47,17 @@ a note.
 - A zone's fill is one ring in the file, with a zero-width bridge out to each hole. The reader cuts
   the ring into simple loops wherever it passes a vertex twice (the bridges collapse to nothing),
   calls the loops that wind like the biggest one copper and the others holes, and puts each hole in
-  the smallest piece that holds most of its corners. A fill with arcs, or one that splits into more
-  than 4096 loops, is kept as the single contour KiCad wrote.
+  the smallest piece that holds most of its corners. A fill with arcs, one that splits into more than
+  4096 loops or has more than 400000 corners, or one whose holes cost too much to assign, is kept
+  as the single contour KiCad wrote, with a warning; a hole inside none of the pieces is left out
+  with a warning.
 - Custom pads: the anchor (rectangle of the pad's size, or circle of its width) plus filled
   `gr_poly`, `gr_rect` and `gr_circle` primitives, and `gr_line` and unfilled polygons and
   rectangles drawn with their width as round-ended strokes. Arcs, curves, unfilled circles and
   strokes without width are left out with a note; a stroke width on a filled primitive is not added
   to it (a warning). A pad with a chamfer keeps the rounding of its other corners (`roundrect_rratio`),
-  as KiCad's own Gerber export shows. Pads on the bottom side are untested.
+  as KiCad's own Gerber export shows. Corners of trapezoid, chamfered and custom pads are checked
+  against that export (`tests/gerber`) for pads turned, in turned footprints and on the bottom.
 
 ## Frames
 

@@ -422,3 +422,86 @@ save(b, "zone-thermal")
 b = new_board(4, 1.6)
 outline_rect(b)
 save(b, "four-layer-stackup")
+
+
+def custom_l(fp, number, at, rot=0.0):
+    """A custom pad: a 1 x 1 rectangle anchor and an L-shaped filled polygon (as on pad-shapes)."""
+    pad = sized_pad(fp, number, at, (1, 1), pcbnew.PAD_SHAPE_CUSTOM, rot=rot)
+    pad.SetAnchorPadShape(pcbnew.F_Cu, pcbnew.PAD_SHAPE_RECT)
+    pad.AddPrimitivePoly(
+        pcbnew.F_Cu,
+        [VECTOR2I(FromMM(x), FromMM(y)) for x, y in [(0, 0), (2, 0), (2, 1), (1, 1), (1, 2), (0, 2)]],
+        0,
+        True,
+    )
+    return pad
+
+
+def trapezoid(fp, number, at, rot=0.0):
+    pad = sized_pad(fp, number, at, (3, 2), pcbnew.PAD_SHAPE_TRAPEZOID, rot=rot)
+    pad.SetDelta(VECTOR2I(0, FromMM(1)))
+    return pad
+
+
+def chamfered(fp, number, at, rot=0.0):
+    pad = sized_pad(fp, number, at, (3, 2), pcbnew.PAD_SHAPE_CHAMFERED_RECT, rot=rot)
+    pad.SetRoundRectRadiusRatio(0.25)
+    pad.SetChamferRectRatio(0.25)
+    pad.SetChamferPositions(1 | 8)  # top-left and bottom-right
+    return pad
+
+
+# 14. pad-shapes-turned: the pad shapes of pad-shapes with their frames turned and flipped.
+#     U1 (top, at (10, 8), not turned): pad 1 custom L turned 30 at (0, 0); pad 2 custom L turned
+#     90 at (6, 0); pad 3 trapezoid (delta 0 1) turned 90 at (12, 0); pad 4 chamfered turned 30
+#     at (18, 0). U2 (top, at (10, 20), turned 30): pad 1 custom L at (0, 0), pad 2 trapezoid at
+#     (6, 0), pad 3 chamfered at (12, 0), all unturned within the footprint. U3 (bottom, at
+#     (38, 8), not turned): pad 1 custom L at (-6, 0), pad 2 trapezoid at (0, 0), pad 3 chamfered
+#     at (6, 0). U4 (bottom, at (38, 20), turned 90): pad 1 custom L at (-6, 0), pad 2 trapezoid
+#     at (0, 0). Pad sizes and shapes are those of pad-shapes.
+b = new_board()
+outline_rect(b)
+
+
+def footprint(ref, at, rot, flip, make):
+    fp = pcbnew.FOOTPRINT(b)
+    fp.SetReference(ref)
+    fp.SetFPID(pcbnew.LIB_ID("test", "Turned"))
+    make(fp)
+    b.Add(fp)
+    fp.SetPosition(p(*at))
+    if rot:
+        fp.SetOrientationDegrees(rot)
+    if flip:
+        fp.Flip(fp.GetPosition(), False)
+
+
+def u1(fp):
+    custom_l(fp, "1", (0, 0), 30.0)
+    custom_l(fp, "2", (6, 0), 90.0)
+    trapezoid(fp, "3", (12, 0), 90.0)
+    chamfered(fp, "4", (18, 0), 30.0)
+
+
+def u2(fp):
+    custom_l(fp, "1", (0, 0))
+    trapezoid(fp, "2", (6, 0))
+    chamfered(fp, "3", (12, 0))
+
+
+def u3(fp):
+    custom_l(fp, "1", (-6, 0))
+    trapezoid(fp, "2", (0, 0))
+    chamfered(fp, "3", (6, 0))
+
+
+def u4(fp):
+    custom_l(fp, "1", (-6, 0))
+    trapezoid(fp, "2", (0, 0))
+
+
+footprint("U1", (10, 8), 0.0, False, u1)
+footprint("U2", (10, 20), 30.0, False, u2)
+footprint("U3", (38, 8), 0.0, True, u3)
+footprint("U4", (38, 20), 90.0, True, u4)
+save(b, "pad-shapes-turned")
