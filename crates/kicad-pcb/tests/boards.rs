@@ -795,18 +795,15 @@ fn gerber_pads(board: &str, layer: &str) -> Vec<(String, Point, Vec<Point>)> {
     let mut out = Vec::new();
     for line in std::fs::read_to_string(path).unwrap().lines() {
         let parts: Vec<&str> = line.split(" | ").collect();
-        let nums = |s: &str| -> Vec<f64> { s.split([' ', ',']).filter_map(|v| v.parse().ok()).collect() };
+        let nums =
+            |s: &str| -> Vec<f64> { s.split([' ', ',']).filter_map(|v| v.parse().ok()).collect() };
         let c = nums(parts[1]);
         let pts: Vec<Point> = nums(parts[2])
             .chunks(2)
             .map(|q| Point { x: q[0], y: q[1] })
             .collect();
         if !pts.is_empty() {
-            out.push((
-                parts[0].trim().to_string(),
-                Point { x: c[0], y: c[1] },
-                pts,
-            ));
+            out.push((parts[0].trim().to_string(), Point { x: c[0], y: c[1] }, pts));
         }
     }
     out
@@ -834,7 +831,10 @@ fn check_against_gerber(name: &str, gerber_board: &str) {
     let o = board(name);
     let mut checked = [0usize; 2];
     for item in &o.board.copper {
-        let CopperItem::PolygonPad { layer, at, shapes, .. } = item else {
+        let CopperItem::PolygonPad {
+            layer, at, shapes, ..
+        } = item
+        else {
             continue;
         };
         // A through-hole pad is on every copper layer: KiCad draws it on both sides.
@@ -870,7 +870,13 @@ fn check_pad(
             for s in &shape.segments {
                 let ends = match *s {
                     Segment::Line { from, to } => vec![from, to],
-                    Segment::Arc { center, radius, start_deg, end_deg, .. } => {
+                    Segment::Arc {
+                        center,
+                        radius,
+                        start_deg,
+                        end_deg,
+                        ..
+                    } => {
                         if s.sweep_deg().unwrap().abs() >= 360.0 {
                             continue;
                         }
@@ -950,13 +956,25 @@ fn the_chamfered_pad_has_its_corners_where_the_gerber_has_them() {
         .segments
         .iter()
         .filter_map(|s| match s {
-            Segment::Arc { center, radius, start_deg, end_deg, .. } => {
-                Some((rel(*center), *radius, *start_deg, *end_deg))
-            }
+            Segment::Arc {
+                center,
+                radius,
+                start_deg,
+                end_deg,
+                ..
+            } => Some((rel(*center), *radius, *start_deg, *end_deg)),
             Segment::Line { .. } => None,
         })
         .collect();
     assert_eq!(arcs.len(), 2);
-    assert!(arcs.iter().any(|a| near(a.0 .0, 1.0) && near(a.0 .1, 0.5) && near(a.1, 0.5) && same_angle(a.2, 0.0) && same_angle(a.3, 90.0)));
-    assert!(arcs.iter().any(|a| near(a.0 .0, -1.0) && near(a.0 .1, -0.5) && near(a.1, 0.5) && same_angle(a.2, 180.0) && same_angle(a.3, 270.0)));
+    assert!(arcs.iter().any(|a| near(a.0 .0, 1.0)
+        && near(a.0 .1, 0.5)
+        && near(a.1, 0.5)
+        && same_angle(a.2, 0.0)
+        && same_angle(a.3, 90.0)));
+    assert!(arcs.iter().any(|a| near(a.0 .0, -1.0)
+        && near(a.0 .1, -0.5)
+        && near(a.1, 0.5)
+        && same_angle(a.2, 180.0)
+        && same_angle(a.3, 270.0)));
 }

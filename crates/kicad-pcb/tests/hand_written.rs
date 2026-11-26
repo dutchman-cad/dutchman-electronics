@@ -265,16 +265,15 @@ fn a_pad_with_a_size_that_is_not_positive_is_dropped_with_a_note() {
         );
         let o = read(&text).unwrap();
         assert!(
-            !o.board
-                .copper
-                .iter()
-                .any(|c| matches!(c, board_model::CopperItem::Pad { .. } | board_model::CopperItem::PolygonPad { .. })),
+            !o.board.copper.iter().any(|c| matches!(
+                c,
+                board_model::CopperItem::Pad { .. } | board_model::CopperItem::PolygonPad { .. }
+            )),
             "{size}"
         );
-        assert!(o
-            .notes
-            .iter()
-            .any(|n| n.severity == Severity::Dropped && n.message.contains("not a positive number")));
+        assert!(o.notes.iter().any(
+            |n| n.severity == Severity::Dropped && n.message.contains("not a positive number")
+        ));
     }
 }
 
@@ -301,7 +300,9 @@ fn an_arc_in_a_custom_pad_polygon_is_noted() {
          (width 0) (fill yes)))))\n)"
     );
     let o = read(&text).unwrap();
-    assert!(o.notes.iter().any(|n| n.message.contains("polygon arc(s) were drawn as straight edges")));
+    assert!(o.notes.iter().any(|n| n
+        .message
+        .contains("polygon arc(s) were drawn as straight edges")));
 }
 
 fn zone_text(pts: &str) -> String {
@@ -340,13 +341,17 @@ fn a_fill_with_two_pieces_and_two_thousand_holes_is_split_and_assigned() {
         .collect();
     regions.sort_unstable();
     assert_eq!(regions, vec![0, 2000]);
-    assert!(!o.notes.iter().any(|n| n.message.contains("kept as the one contour")));
+    assert!(!o
+        .notes
+        .iter()
+        .any(|n| n.message.contains("kept as the one contour")));
 }
 
 #[test]
 fn a_hole_inside_no_piece_is_left_out_with_a_note() {
     // Two pinched squares and a hole that hangs off the first one's corner, outside both.
-    let ring = "(xy 0 0) (xy 10 0) (xy 10 10) (xy 20 10) (xy 20 20) (xy 10 20) (xy 10 10) (xy 0 10) \
+    let ring =
+        "(xy 0 0) (xy 10 0) (xy 10 10) (xy 20 10) (xy 20 20) (xy 10 20) (xy 10 10) (xy 0 10) \
         (xy -5 10) (xy -5 11) (xy -4 11) (xy -4 10) (xy -5 10) (xy 0 10)";
     let o = read(&zone_text(ring)).unwrap();
     let holes: Vec<usize> = o
