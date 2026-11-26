@@ -432,9 +432,9 @@ fn silkscreen_lines_and_arcs_are_drawn_and_other_layers_are_noted() {
     let o = named(&list, "Silkscreen top");
     assert_eq!(o["kind"], "silkscreen");
     assert!(o.get("finish").is_none());
-    // Silkscreen z = T + 0.02 = 1.62 (on the mask); its thickness is 0.13.
-    assert_eq!(o["z"], 1.62);
-    assert_eq!(o["thickness"], 0.13);
+    // Silkscreen z = T + 0.035 = 1.635; its thickness is 0.015.
+    assert_eq!(o["z"], 1.635);
+    assert_eq!(o["thickness"], 0.015);
     // The line, and a ring of width 0.2 around radius 2 (with a hole).
     let exact = 10.0 * 0.2 + PI * 0.01 + 2.0 * PI * 2.0 * 0.2;
     assert!((area(o) - exact).abs() < 0.05, "{}", area(o));
@@ -1171,7 +1171,7 @@ fn faces_of(o: &Value) -> usize {
 
 #[test]
 fn each_overlay_has_its_z_thickness_and_color() {
-    // T = 1.6: copper and mask start at the face, silkscreen on top of the mask (T + 0.02).
+    // T = 1.6: copper and mask start at the face, silkscreen on top of the copper (T + 0.035).
     let (list, notes) = overlays(&stacked_board(0, 3), 1.6, "Board");
     assert!(notes.is_empty(), "{notes:?}");
     assert_eq!(list.len(), 5);
@@ -1179,7 +1179,7 @@ fn each_overlay_has_its_z_thickness_and_color() {
         ("Copper top", 1.6, 0.035, "#2b6e43"),
         ("Copper top pads", 1.6, 0.035, "#d4af37"),
         ("Solder mask top", 1.6, 0.02, "#1f5f3a"),
-        ("Silkscreen top", 1.62, 0.13, "#f2f2f2"),
+        ("Silkscreen top", 1.635, 0.015, "#f2f2f2"),
     ] {
         let o = named(&list, name);
         assert_eq!(o["z"], z, "{name}");
@@ -1190,11 +1190,9 @@ fn each_overlay_has_its_z_thickness_and_color() {
 }
 
 #[test]
-fn silkscreen_rests_on_the_mask_and_stands_above_it_and_the_copper() {
-    // SolidCraft hides silkscreen that is not clear of the mask's top, and silkscreen in the air
-    // is wrong too: on each side the silkscreen's bottom is exactly at the mask's top (not below
-    // it, not in the air above it), and its top is at least 0.1 mm above the mask's and above
-    // the copper's.
+fn silkscreen_is_real_ink_and_starts_above_the_copper_and_the_mask() {
+    // On each side the silkscreen is 0.015 mm thick and its bottom is at or above the top of
+    // both the copper (T + 0.035) and the mask (T + 0.020), so it intersects neither.
     for (side, sign, board) in [
         ("top", 1.0, stacked_board(0, 3)),
         ("bottom", -1.0, stacked_board(1, 6)),
@@ -1211,19 +1209,14 @@ fn silkscreen_rests_on_the_mask_and_stands_above_it_and_the_copper() {
         let (_, mask_top) = span("Solder mask");
         let (_, copper_top) = span("Copper");
         assert!(
+            silk_bottom >= copper_top - 1e-9,
+            "{side}: {silk_bottom} < {copper_top}"
+        );
+        assert!(
             silk_bottom >= mask_top - 1e-9,
             "{side}: {silk_bottom} < {mask_top}"
         );
-        assert!(
-            silk_bottom <= mask_top + 1e-9,
-            "{side}: a gap under the silkscreen"
-        );
-        assert!(silk_top > mask_top, "{side}");
-        assert!(silk_top > copper_top, "{side}");
-        assert!(
-            silk_top - mask_top >= 0.1,
-            "{side}: SolidCraft hides a lead under 0.1 mm"
-        );
+        assert!((silk_top - silk_bottom - 0.015).abs() < 1e-9, "{side}");
     }
 }
 
@@ -1251,7 +1244,7 @@ fn the_bottom_side_mirrors_the_top() {
         ("Copper bottom", 0.0),
         ("Copper bottom pads", 0.0),
         ("Solder mask bottom", 0.0),
-        ("Silkscreen bottom", -0.02),
+        ("Silkscreen bottom", -0.035),
     ] {
         let o = named(&bottom, name);
         let t = named(&top, &name.replace("bottom", "top"));
