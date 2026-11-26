@@ -118,6 +118,117 @@ fn one_step_resistor_has_its_embedded_step_box() -> Result<(), Box<dyn std::erro
     Ok(())
 }
 
+/// The smallest and largest of one coordinate (0 x, 1 y, 2 z) of the points in a STEP text,
+/// rounded to 0.001.
+fn axis_range(step: &[u8], axis: usize) -> Option<(f64, f64)> {
+    let text = std::str::from_utf8(step).ok()?;
+    let values: Vec<f64> = text
+        .split("CARTESIAN_POINT(")
+        .skip(1)
+        .filter_map(|p| {
+            let inner = p.split_once(",(")?.1.split_once(')')?.0;
+            inner.split(',').nth(axis)?.trim().parse().ok()
+        })
+        .collect();
+    let round = |v: f64| (v * 1000.0).round() / 1000.0;
+    (!values.is_empty()).then(|| {
+        (
+            round(values.iter().copied().fold(f64::MAX, f64::min)),
+            round(values.iter().copied().fold(f64::MIN, f64::max)),
+        )
+    })
+}
+
+/// `one-step-header`: J1, a 1x4 through-hole header whose body is an embedded STEP model of a
+/// housing and four pins that reach 3 mm below it (tests/boards/README.txt).
+#[test]
+fn one_step_header_is_a_through_hole_part_with_its_step_model(
+) -> Result<(), Box<dyn std::error::Error>> {
+    use board_model::{CopperItem, PadShape};
+    let out = read("one-step-header.PcbDoc")?;
+    let [j1] = out.board.components.as_slice() else {
+        return Err(format!("expected one part, got {:?}", out.board.components).into());
+    };
+    assert_eq!(
+        (j1.designator.as_str(), j1.footprint.as_str()),
+        ("J1", "HDR1X4-STEP")
+    );
+    assert!(near(j1.at.x, 25.0) && near(j1.at.y, 15.0), "{:?}", j1.at);
+    // Four plated pads 1.7 on a 2.54 pitch, hole 1.0; pin 1 square at the top.
+    let mut pads: Vec<(f64, PadShape)> = Vec::new();
+    for item in &out.board.copper {
+        let CopperItem::Pad {
+            at,
+            shape,
+            size_x,
+            size_y,
+            drill,
+            plated,
+            owner,
+            ..
+        } = item
+        else {
+            return Err(format!("expected only pads, got {item:?}").into());
+        };
+        assert!(near(at.x, 25.0), "{at:?}");
+        assert!(
+            near(*size_x, 1.7) && near(*size_y, 1.7),
+            "{size_x} {size_y}"
+        );
+        assert!(drill.is_some_and(|d| near(d, 1.0)) && *plated, "{drill:?}");
+        assert_eq!(owner.as_deref(), Some("J1"));
+        pads.push((at.y, *shape));
+    }
+    pads.sort_by(|a, b| b.0.total_cmp(&a.0));
+    let want = [
+        (18.81, PadShape::Rectangle),
+        (16.27, PadShape::Round),
+        (13.73, PadShape::Round),
+        (11.19, PadShape::Round),
+    ];
+    assert_eq!(pads.len(), 4, "{pads:?}");
+    for (got, want) in pads.iter().zip(want) {
+        assert!(near(got.0, want.0) && got.1 == want.1, "{pads:?}");
+    }
+    // The model: embedded, at J1's centre, not turned or raised.
+    let model = j1.model.as_ref().ok_or("J1 has no model")?;
+    assert_eq!(model.name, "header-1x4.step");
+    assert_eq!(
+        model.source,
+        ModelSource::Embedded {
+            id: "{AFE25888-7D73-4AF3-9861-6835E8C67860}".into()
+        }
+    );
+    assert!(
+        model.offset.iter().all(|v| near(*v, 0.0)),
+        "{:?}",
+        model.offset
+    );
+    assert!(
+        model.rotation_deg.iter().all(|v| near(*v, 0.0)),
+        "{:?}",
+        model.rotation_deg
+    );
+    // Unpacked whole: the housing and four pins, the pins from 3 below the base to 8.5 up.
+    let [stored] = out.models.as_slice() else {
+        return Err(format!("expected one model, got {}", out.models.len()).into());
+    };
+    assert_eq!(stored.name, "header-1x4.step");
+    let text = std::str::from_utf8(&stored.step)?;
+    assert_eq!(text.matches("MANIFOLD_SOLID_BREP(").count(), 5);
+    assert_eq!(
+        axis_range(&stored.step, 0).ok_or("no points")?,
+        (-1.27, 1.27)
+    );
+    assert_eq!(
+        axis_range(&stored.step, 1).ok_or("no points")?,
+        (-5.08, 5.08)
+    );
+    assert_eq!(axis_range(&stored.step, 2).ok_or("no points")?, (-3.0, 8.5));
+    assert!(out.notes.is_empty(), "{:?}", out.notes);
+    Ok(())
+}
+
 /// `linked-model/`: R1's body links to `box-1608.step` next to the board instead of holding it
 /// (tests/boards/linked-model/README.txt).
 #[test]
@@ -245,6 +356,7 @@ fn the_shape_based_copy_of_the_bodies_raises_no_note() -> Result<(), Box<dyn std
         "one-step-resistor.PcbDoc",
         "shared-step-model.PcbDoc",
         "one-bottom-rotated-turned-step-resistor.PcbDoc",
+        "one-step-header.PcbDoc",
     ] {
         let out = read(name)?;
         assert!(
