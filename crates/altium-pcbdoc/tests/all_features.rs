@@ -276,7 +276,39 @@ fn texts_use_the_embedded_font_and_a_special_string() -> Result<(), Box<dyn std:
 fn the_parts_of_dense_board_are_all_there() -> Result<(), Box<dyn std::error::Error>> {
     let out = read()?;
     assert_eq!(out.board.components.len(), 34);
-    // R3 and R4 each hold their own embedded copy of box-1608.step (see dense-board).
-    assert_eq!(out.models.len(), 2);
+    // R3 and R4 each hold their own embedded copy of box-1608.step (see dense-board), and J1
+    // holds header-1x4.step.
+    let mut names: Vec<&str> = out.models.iter().map(|m| m.name.as_str()).collect();
+    names.sort_unstable();
+    assert_eq!(names, ["box-1608.step", "box-1608.step", "header-1x4.step"]);
+    Ok(())
+}
+
+/// J1 is the through-hole header of `one-step-header`: its body is the same embedded STEP model
+/// (housing and four pins reaching 3 mm below the top face), on J1's centre, not turned or raised.
+#[test]
+fn j1_is_the_through_hole_header_step_model() -> Result<(), Box<dyn std::error::Error>> {
+    let out = read()?;
+    let j1 = out
+        .board
+        .components
+        .iter()
+        .find(|p| p.designator == "J1")
+        .ok_or("no J1")?;
+    let model = j1.model.as_ref().ok_or("J1 has no model")?;
+    assert_eq!(model.name, "header-1x4.step");
+    let board_model::ModelSource::Embedded { id } = &model.source else {
+        return Err(format!("{:?}", model.source).into());
+    };
+    assert_eq!(model.offset, [0.0; 3]);
+    assert_eq!(model.rotation_deg, [0.0; 3]);
+    let step =
+        |o: &ReadOutcome, id: &str| o.models.iter().find(|m| m.id == id).map(|m| m.step.clone());
+    let header_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/boards/one-step-header.PcbDoc");
+    let header = Altium.read(&std::fs::read(header_path)?)?;
+    let original = header.models.first().map(|m| m.step.clone());
+    assert!(original.is_some());
+    assert_eq!(step(&out, id), original, "not the file of one-step-header");
     Ok(())
 }

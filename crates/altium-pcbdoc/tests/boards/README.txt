@@ -883,10 +883,17 @@ scripts, every scripted change read back and logged:
    Polygon Pours > Repour All and Tools > Split Planes > Rebuild Split Planes on All Layers.
 8. By hand, in the 3D view's View Configuration: solder mask, top and bottom, 17, 85, 204
    (stored as 13391121), opacity 0.6 as before. Silkscreen stays Altium's default.
+9. By script, later the same day, from the board as described so far: J1's extruded body (the
+   2.540 x 10.160 box, height 2.500, of dense-board) taken off, and a 3D body on Mechanical 1
+   holding the embedded header-1x4.step of one-step-header put on, its origin on J1's centre
+   (3.500, 15.000), not turned or raised. Altium read back x 2.23 to 4.77, y 9.92 to 20.08,
+   standoff -3.000 and overall height 8.500, and gave the model MODELID
+   {EAA8DA22-03CC-4142-A160-71B7E4E5E84E}; the file is stored unchanged. J2 keeps its extruded
+   body.
 A first try put the TrueType text and the free copper over "DUTCHMAN NODE 1"; a second script
 removed them and placed them as above before the board was first saved with the cutout.
 
-Altium embedded Arial on saving as well as DejaVu Sans Mono. After the last save my own tool
+Altium embedded Arial on saving as well as DejaVu Sans Mono. After each save my own tool
 copied every stream into a new file unchanged, except EmbeddedFonts6, which now holds only the
 DejaVu Sans Mono record (Header 1): byte for byte the DejaVu Sans Mono 2.37 file of
 one-dejavu-text, under its own license (see "Embedded TrueType font" above and
