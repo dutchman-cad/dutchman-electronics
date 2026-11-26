@@ -709,6 +709,41 @@ one-step-header.PcbDoc
     turned or raised. Altium read back x 23.73 to 26.27, y 9.92 to 20.08, standoff -3.000
     (the pins' tips below the top face) and overall height 8.500. Altium gave the model
     MODELID {AFE25888-7D73-4AF3-9861-6835E8C67860} and stored the file unchanged.
+Scripted boards: objects on mechanical layers (mechanical-layers, mechanical-pair-resistor,
+mechanical-pair-bottom-resistor)
+------------------------------------------------------------------------------------------
+Made on 2026-11-26 by my own script; every object on a mechanical layer was read back and logged
+after the change. Altium numbers its first 16 mechanical layers 57 (Mechanical 1) to 72
+(Mechanical 16) in the records, and names each in /Board6/Data (LAYER57NAME=Mechanical 1, ...).
+A layer the script used was switched on (LAYERnMECHENABLED=TRUE). A pair of mechanical layers is
+stored as MECHPAIRnL1 and MECHPAIRnL2: one-resistor already had Mechanical 2 paired with
+Mechanical 3 (MECHPAIR0, Altium's own), and the two pair boards add Mechanical 13 with
+Mechanical 15 (MECHPAIR1L1=MECHANICAL13, MECHPAIR1L2=MECHANICAL15).
+
+mechanical-layers.PcbDoc  (from empty-outline)
+    Free objects (no net, no component):
+        Mechanical 1    track (5.000, 5.000) to (45.000, 5.000), width 0.200
+        Mechanical 1    arc centre (10.000, 20.000), radius 3.000, 0 to 360 degrees (a full
+                        circle), width 0.150
+        Mechanical 1    arc centre (18.000, 20.000), radius 3.000, 0 to 90 degrees, width 0.150
+        Mechanical 2    fill (30.000, 10.000) to (34.000, 14.000), rotation 0
+        Mechanical 2    text "MECH", stroke font, reference point (20.000, 10.000), height 1.500,
+                        stroke 0.150, rotation 0, not mirrored
+        Mechanical 13   region, a triangle (38.000, 18.000), (46.000, 18.000), (42.000, 26.000)
+                        (Altium lists its vertices from (46, 18)); KIND 0
+
+mechanical-pair-resistor.PcbDoc  (from one-resistor)
+    Mechanical 13 and Mechanical 15 paired. R1 (still at (25.000, 15.000), rotation 0, top) got an
+    assembly outline of five tracks on Mechanical 13, width 0.100, all part of R1:
+        a rectangle (24.100, 14.500) to (25.900, 15.500), and a pin-1 mark on the pad 1 side
+        from (24.100, 15.000) to (24.600, 15.500)
+
+mechanical-pair-bottom-resistor.PcbDoc  (from one-resistor)
+    The same, then R1 flipped to the bottom side. Altium shows R1 with rotation 180 (I set only
+    the side), centre still (25, 15), and moved its five tracks to Mechanical 15, the other layer
+    of the pair, mirrored about R1's centre in x:
+        the rectangle (24.100, 14.500) to (25.900, 15.500) as before (it is symmetric), and the
+        pin-1 mark now from (25.400, 15.500) to (25.900, 15.000)
 
 Paths inside the files
 ----------------------
