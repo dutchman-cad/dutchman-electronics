@@ -180,7 +180,7 @@ fn connect_of(rule: &Properties, notes: &mut Vec<Note>) -> Result<Connect, Strin
 }
 
 /// Splits `/Rules6/Data` into its text records: a `u16` kind, a `u32` length, then the text.
-fn rule_records(data: &[u8]) -> Result<Vec<Properties>, String> {
+pub(crate) fn rule_records(data: &[u8]) -> Result<Vec<Properties>, String> {
     let mut records = Vec::new();
     let mut at = 0usize;
     while at < data.len() {

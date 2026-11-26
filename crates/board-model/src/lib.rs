@@ -383,9 +383,9 @@ pub struct Board {
     pub solder_mask_expansion: Option<f64>,
 }
 
-/// The mask expansion used when a board file does not give one: 0.1016 mm (4 mil), the default of
-/// the Altium rule.
-pub const DEFAULT_SOLDER_MASK_EXPANSION: f64 = 0.1016;
+/// The mask expansion used when a board file does not give one: 0.1 mm, a common value on real
+/// boards.
+pub const DEFAULT_SOLDER_MASK_EXPANSION: f64 = 0.1;
 
 // ---------------------------------------------------------------------------------------------
 // The input-format trait

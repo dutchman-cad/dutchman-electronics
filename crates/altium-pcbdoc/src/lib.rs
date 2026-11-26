@@ -17,6 +17,7 @@ mod board;
 mod components;
 mod copper;
 mod fonts;
+mod mask;
 mod models;
 mod planes;
 pub mod privacy;
@@ -252,10 +253,12 @@ impl InputFormat for Altium {
             copper.extend(copper::fills(data, &layers, &mut notes).map_err(ReadError::Invalid)?);
         }
         copper.extend(copper::regions(&shape.other_regions, &layers, &mut notes));
+        let rules6 = read_stream(&mut container, "/Rules6/Data")?;
+        let solder_mask_expansion =
+            mask::expansion(rules6.as_deref(), &mut notes).map_err(ReadError::Invalid)?;
         let polygons6 = read_stream(&mut container, "/Polygons6/Data")?;
         let mut pours = 0usize;
         if let Some(data) = polygons6.as_deref().filter(|d| !d.is_empty()) {
-            let rules6 = read_stream(&mut container, "/Rules6/Data")?;
             let mut rule_notes = Vec::new();
             let rules =
                 planes::rules(rules6.as_deref(), &mut rule_notes).map_err(ReadError::Invalid)?;
@@ -318,6 +321,7 @@ impl InputFormat for Altium {
                 texts,
                 components: components.placements,
                 appearance,
+                solder_mask_expansion,
                 ..Board::default()
             },
             notes,
