@@ -153,7 +153,9 @@ fn every_open_hardware_folder_names_an_accepted_license_its_source_and_its_attri
         // Written for the KiCad 9 file format.
         let board = std::fs::read_to_string(&boards_in(&folder)[0]).unwrap();
         assert!(
-            board.starts_with("(kicad_pcb\n\t(version 2024"),
+            board
+                .strip_prefix("(kicad_pcb")
+                .is_some_and(|rest| rest.trim_start().starts_with("(version 2024")),
             "{name}: not a KiCad 9 file"
         );
     }
