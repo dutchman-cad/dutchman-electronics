@@ -9,7 +9,8 @@
 # outline (see their README.txt) of 1.6 mm thickness (four-layer: Altium 1.8122 mm, KiCad 1.2 mm);
 # the open-hardware boards have the sizes KiCad gives, in their README.txt.
 # Each component model the package writes (model-*.step) must pass cadmpeg `check` and, on import
-# and on reopening its saved design, be one closed body with a volume.
+# and on reopening its saved design, be as many closed bodies with a volume as the file has solids
+# (one for an extruded body; a STEP model the board embeds may hold several).
 #   usage: scripts/check-board-step.sh <dutchman-electronics> <solidcraft-cli> <cadmpeg>
 set -euo pipefail
 module="$1"; solidcraft="$2"; cadmpeg="$3"
@@ -76,11 +77,12 @@ if problems:
 PY
   then failed=1; fi
   done
-  # Each component model the package wrote (extruded bodies): cadmpeg check OK, and SolidCraft
-  # sees one closed body with a volume.
+  # Each component model the package wrote: cadmpeg check OK, and SolidCraft sees as many bodies
+  # as the file has solids, each closed with a volume.
   for model in "$dir"/model-*.step; do
     [ -e "$model" ] || continue
     m=$(basename "$model" .step)
+    solids=$(grep -c 'MANIFOLD_SOLID_BREP' "$model" || true)
     if "$cadmpeg" check --json "$model" > "$work/$name.$m.check.json" 2> "$work/$name.$m.check.log" \
       && python3 -c 'import json,sys; sys.exit(json.load(open(sys.argv[1])).get("status") != "ok")' \
         "$work/$name.$m.check.json"; then
@@ -94,19 +96,21 @@ PY
       echo "::error::SolidCraft could not open $name $m"; failed=1; continue
     fi
     for report in "$work/$name.$m.solidcraft.json" "$work/$name.$m.reopened.json"; do
-    if ! python3 - "$report" "$name $m" <<'PY'
+    if ! python3 - "$report" "$name $m" "$solids" <<'PY'
 import json, sys
-report, name = json.load(open(sys.argv[1])), sys.argv[2]
+report, name, solids = json.load(open(sys.argv[1])), sys.argv[2], int(sys.argv[3])
 errors = [t.get("error") for t in report.get("timeline", []) if t.get("error")]
 bodies = report.get("bodies", [])
 problems = [f"feature error: {e}" for e in errors]
-if len(bodies) != 1:
-    problems.append(f"{len(bodies)} bodies, expected 1")
+if solids < 1:
+    problems.append("the file holds no solid")
+if len(bodies) != solids:
+    problems.append(f"{len(bodies)} bodies, expected {solids}")
 for b in bodies:
     if not b.get("closed"):
-        problems.append("the body is not closed")
+        problems.append("a body is not closed")
     if not b.get("volume_mm3", 0) > 0:
-        problems.append("the body has no volume")
+        problems.append("a body has no volume")
     print(f"SolidCraft {name} ({sys.argv[1].rsplit('.', 2)[-2]}): closed={b.get('closed')} faces={b.get('faces')} volume={b.get('volume_mm3', 0):.4f} mm3")
 if problems:
     print(f"::error::SolidCraft on {name}: " + "; ".join(problems))
