@@ -72,7 +72,7 @@ fn join(pieces: &[(Point, Option<Segment>, Point)]) -> Contour {
 /// off by `c` instead (a chamfered corner is not also rounded). Counter-clockwise.
 pub fn rounded_chamfered_rect(w: f64, h: f64, r: f64, c: f64, chamfered: Corners) -> Contour {
     let (hx, hy) = (w / 2.0, h / 2.0);
-    let limit = w.min(h) / 2.0;
+    let limit = (w.min(h) / 2.0).max(0.0);
     let (r, c) = (r.clamp(0.0, limit), c.clamp(0.0, limit));
     // (corner x sign, corner y sign, chamfered, angle the rounding starts at), going
     // counter-clockwise from the bottom left.

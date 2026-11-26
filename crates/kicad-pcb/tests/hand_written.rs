@@ -254,3 +254,122 @@ fn a_fill_with_one_bridge_gives_an_outer_contour_and_one_hole() {
     assert_eq!(holes.len(), 1);
     assert_eq!(holes[0].segments.len(), 4);
 }
+
+#[test]
+fn a_pad_with_a_size_that_is_not_positive_is_dropped_with_a_note() {
+    for size in ["-3 2", "3 0", "0 0", "3 -2"] {
+        let text = format!(
+            "{HEAD}(footprint \"t:x\" (layer \"F.Cu\") (at 5 5) (property \"Reference\" \"U1\")\n\
+             (pad \"1\" smd roundrect (at 0 0) (size {size}) (layers \"F.Cu\") (roundrect_rratio 0.25) \
+             (chamfer_ratio 0.25) (chamfer top_left)))\n)"
+        );
+        let o = read(&text).unwrap();
+        assert!(
+            !o.board
+                .copper
+                .iter()
+                .any(|c| matches!(c, board_model::CopperItem::Pad { .. } | board_model::CopperItem::PolygonPad { .. })),
+            "{size}"
+        );
+        assert!(o
+            .notes
+            .iter()
+            .any(|n| n.severity == Severity::Dropped && n.message.contains("not a positive number")));
+    }
+}
+
+#[test]
+fn hostile_pad_shapes_do_not_panic() {
+    for body in [
+        "(pad \"1\" smd trapezoid (at 0 0) (size 1 1) (rect_delta 5 5) (layers \"F.Cu\"))",
+        "(pad \"1\" smd roundrect (at 0 0) (size 1 1) (roundrect_rratio 7) (chamfer_ratio -3) (chamfer top_left top_right bottom_left bottom_right) (layers \"F.Cu\"))",
+        "(pad \"1\" smd custom (at 0 0) (size 1 1) (layers \"F.Cu\") (options (anchor circle)) (primitives (gr_poly (pts (xy 0 0) (arc (start 1 0) (mid 2 1) (end 3 0))) (width 0) (fill yes)) (gr_circle (center 0 0) (end 0 0) (fill yes)) (gr_line (start 0 0) (end 0 0) (width 0.1))))",
+    ] {
+        let text = format!(
+            "{HEAD}(footprint \"t:x\" (layer \"F.Cu\") (at 5 5) (property \"Reference\" \"U1\")\n{body})\n)"
+        );
+        read(&text).unwrap();
+    }
+}
+
+#[test]
+fn an_arc_in_a_custom_pad_polygon_is_noted() {
+    let text = format!(
+        "{HEAD}(footprint \"t:x\" (layer \"F.Cu\") (at 5 5) (property \"Reference\" \"U1\")\n\
+         (pad \"1\" smd custom (at 0 0) (size 1 1) (layers \"F.Cu\") (options (anchor rect)) \
+         (primitives (gr_poly (pts (xy 0 0) (xy 2 0) (arc (start 2 0) (mid 3 1) (end 2 2)) (xy 0 2)) \
+         (width 0) (fill yes)))))\n)"
+    );
+    let o = read(&text).unwrap();
+    assert!(o.notes.iter().any(|n| n.message.contains("polygon arc(s) were drawn as straight edges")));
+}
+
+fn zone_text(pts: &str) -> String {
+    format!(
+        "{HEAD}(zone (net 0) (net_name \"\") (layer \"F.Cu\") (polygon (pts (xy 0 0) (xy 1 0) (xy 1 1)))\n\
+         (filled_polygon (layer \"F.Cu\") (pts {pts})))\n)"
+    )
+}
+
+#[test]
+fn a_fill_with_two_pieces_and_two_thousand_holes_is_split_and_assigned() {
+    // A tall piece with 2000 bridged holes down its left side, pinched at one corner to a small
+    // second piece.
+    let height = 8000.0;
+    let mut ring = format!(
+        "(xy 0 0) (xy 1000 0) (xy 1000 {height}) (xy 1010 {height}) (xy 1010 {h2}) (xy 1000 {h2}) \
+         (xy 1000 {height}) (xy 0 {height}) ",
+        h2 = height + 10.0
+    );
+    for k in 1..=2000 {
+        let y = height - 4.0 * f64::from(k);
+        ring.push_str(&format!(
+            "(xy 0 {y}) (xy 2 {y}) (xy 2 {y1}) (xy 3 {y1}) (xy 3 {y}) (xy 2 {y}) (xy 0 {y}) ",
+            y1 = y + 1.0
+        ));
+    }
+    let o = read(&zone_text(&ring)).unwrap();
+    let mut regions: Vec<usize> = o
+        .board
+        .copper
+        .iter()
+        .filter_map(|c| match c {
+            board_model::CopperItem::Region { holes, .. } => Some(holes.len()),
+            _ => None,
+        })
+        .collect();
+    regions.sort_unstable();
+    assert_eq!(regions, vec![0, 2000]);
+    assert!(!o.notes.iter().any(|n| n.message.contains("kept as the one contour")));
+}
+
+#[test]
+fn a_hole_inside_no_piece_is_left_out_with_a_note() {
+    // Two pinched squares and a hole that hangs off the first one's corner, outside both.
+    let ring = "(xy 0 0) (xy 10 0) (xy 10 10) (xy 20 10) (xy 20 20) (xy 10 20) (xy 10 10) (xy 0 10) \
+        (xy -5 10) (xy -5 11) (xy -4 11) (xy -4 10) (xy -5 10) (xy 0 10)";
+    let o = read(&zone_text(ring)).unwrap();
+    let holes: Vec<usize> = o
+        .board
+        .copper
+        .iter()
+        .filter_map(|c| match c {
+            board_model::CopperItem::Region { holes, .. } => Some(holes.len()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(holes, vec![0, 0]);
+    assert!(o
+        .notes
+        .iter()
+        .any(|n| n.severity == Severity::Warning && n.message.contains("inside none")));
+}
+
+#[test]
+fn a_fill_with_arcs_is_kept_whole_with_a_note() {
+    let ring = "(xy 0 0) (xy 10 0) (arc (start 10 0) (mid 11 5) (end 10 10)) (xy 0 10)";
+    let o = read(&zone_text(ring)).unwrap();
+    assert!(o.notes.iter().any(|n| {
+        n.severity == Severity::Warning && n.message.contains("kept as the one contour")
+    }));
+}

@@ -653,7 +653,7 @@ impl Reader {
                 );
                 continue;
             };
-            let Some(pieces) = fp
+            let Some(split) = fp
                 .child("pts")
                 .and_then(|p| split_fill(&Frame::IDENTITY, p))
             else {
@@ -663,7 +663,21 @@ impl Reader {
                 );
                 continue;
             };
-            for piece in pieces {
+            if let Some(why) = split.kept_whole {
+                self.tally.add(
+                    Severity::Warning,
+                    format!("zone fill(s) kept as the one contour KiCad wrote, because the fill {why} (their holes are not cut out)"),
+                );
+            }
+            if split.orphan_holes > 0 {
+                for _ in 0..split.orphan_holes {
+                    self.tally.add(
+                        Severity::Warning,
+                        "hole(s) of a zone fill inside none of its copper pieces were left out",
+                    );
+                }
+            }
+            for piece in split.pieces {
                 filled += 1;
                 self.copper.push(CopperItem::Region {
                     layer,
@@ -861,11 +875,23 @@ impl Reader {
                 .is_some_and(|f| f == "yes" || f == "solid");
             let corners: Option<Vec<Point>> = match prim.head() {
                 Some("gr_poly") => prim.child("pts").map(|p| {
-                    p.args()
-                        .iter()
-                        .filter(|n| n.head() == Some("xy"))
-                        .filter_map(local)
-                        .collect()
+                    let mut points = Vec::new();
+                    for n in p.args() {
+                        match n.head() {
+                            Some("xy") => points.extend(local(n)),
+                            Some("arc") => {
+                                // Drawn as the straight line between its ends.
+                                points.extend(n.child("start").and_then(local));
+                                points.extend(n.child("end").and_then(local));
+                                self.tally.add(
+                                    Severity::Warning,
+                                    "custom pad polygon arc(s) were drawn as straight edges",
+                                );
+                            }
+                            _ => {}
+                        }
+                    }
+                    points
                 }),
                 Some("gr_rect") => prim
                     .child("start")
@@ -936,6 +962,13 @@ impl Reader {
                 .add(Severity::Dropped, "pad(s) with unreadable numbers");
             return;
         };
+        if !(sx.is_finite() && sy.is_finite() && sx > 0.0 && sy > 0.0) {
+            self.tally.add(
+                Severity::Dropped,
+                "pad(s) whose size is not a positive number",
+            );
+            return;
+        }
         let rotation_deg = at.and_then(|a| a.num(2)).unwrap_or(0.0);
         let centre = f.point(ax, ay);
         // The pad's own outline when it is not a plain shape: contours in its frame (Y up).

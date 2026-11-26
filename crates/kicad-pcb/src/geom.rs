@@ -309,23 +309,69 @@ fn vertex_key(p: Point) -> (i64, i64) {
     ((p.x * 1e6).round() as i64, (p.y * 1e6).round() as i64)
 }
 
+/// What [`split_fill`] made of one fill.
+#[derive(Debug)]
+pub struct FillSplit {
+    pub pieces: Vec<FillPiece>,
+    /// Why the fill was kept as the one contour KiCad wrote, with its holes not separated.
+    pub kept_whole: Option<&'static str>,
+    /// Holes that lie inside none of the copper pieces and were left out.
+    pub orphan_holes: usize,
+}
+
+/// The most corners a fill may have to be split (the work grows with corners times holes).
+const MAX_FILL_POINTS: usize = 400_000;
+/// The most polygon edges tested spent putting holes into pieces when a fill has several
+/// pieces (one piece needs none).
+const MAX_FILL_TESTS: usize = 40_000_000;
+
+fn point_bounds(points: &[Point]) -> (Point, Point) {
+    let mut lo = Point {
+        x: f64::INFINITY,
+        y: f64::INFINITY,
+    };
+    let mut hi = Point {
+        x: f64::NEG_INFINITY,
+        y: f64::NEG_INFINITY,
+    };
+    for p in points {
+        lo.x = lo.x.min(p.x);
+        lo.y = lo.y.min(p.y);
+        hi.x = hi.x.max(p.x);
+        hi.y = hi.y.max(p.y);
+    }
+    (lo, hi)
+}
+
 /// A zone's `filled_polygon` as outer contours with their holes.
 ///
 /// KiCad writes one closed ring for a whole fill: each hole is reached from the outside by a
 /// zero-width bridge (the ring runs to a vertex, round the hole, and back to the same vertex).
 /// The ring is cut into simple loops wherever it comes back to a vertex it already passed; the
 /// bridges collapse to loops without area and are dropped. Loops that wind like the biggest one
-/// are copper (several when the ring pinches), the others are holes, each put in the smallest
-/// piece that holds most of its corners. A fill with arcs, or with more than [`MAX_FILL_LOOPS`]
-/// loops, is returned as the one contour that was written. `None` when fewer than three corners
-/// are readable.
-pub fn split_fill(frame: &Frame, pts: &Node) -> Option<Vec<FillPiece>> {
+/// are copper (several when the ring pinches), the others are holes. A fill with one piece gives
+/// it all its holes; with several, each hole goes to the smallest piece whose bounding box holds
+/// it and that holds one of three of its corners, and a hole no piece holds is counted in
+/// [`FillSplit::orphan_holes`] and left out. A fill with arcs, with more than [`MAX_FILL_LOOPS`]
+/// loops or [`MAX_FILL_POINTS`] corners, or one that would cost more than [`MAX_FILL_TESTS`]
+/// tests, is returned as the one contour that was written, with the reason in
+/// [`FillSplit::kept_whole`]. `None` when fewer than three corners are readable.
+pub fn split_fill(frame: &Frame, pts: &Node) -> Option<FillSplit> {
+    let kept = |outer: Contour, why: &'static str| {
+        Some(FillSplit {
+            pieces: vec![FillPiece {
+                outer,
+                holes: Vec::new(),
+            }],
+            kept_whole: Some(why),
+            orphan_holes: 0,
+        })
+    };
     if pts.args().iter().any(|n| n.head() == Some("arc")) {
-        let contour = pts_contour(frame, pts)?;
-        return Some(vec![FillPiece {
-            outer: contour,
-            holes: Vec::new(),
-        }]);
+        return kept(
+            pts_contour(frame, pts)?,
+            "has arcs, which are not split into holes",
+        );
     }
     let mut ring: Vec<Point> = Vec::new();
     for item in pts.args() {
@@ -347,12 +393,13 @@ pub fn split_fill(frame: &Frame, pts: &Node) -> Option<Vec<FillPiece>> {
     if ring.len() < 3 {
         return None;
     }
-    let whole = || {
-        Some(vec![FillPiece {
-            outer: crate::padshape::polygon(&ring),
-            holes: Vec::new(),
-        }])
-    };
+    if ring.len() > MAX_FILL_POINTS {
+        return kept(
+            crate::padshape::polygon(&ring),
+            "has too many corners to split into holes",
+        );
+    }
+    let too_many_loops = "has too many holes to split";
     // Cut the ring into loops at every vertex it passes twice.
     let mut stack: Vec<Point> = Vec::new();
     let mut at: HashMap<(i64, i64), usize> = HashMap::new();
@@ -369,7 +416,7 @@ pub fn split_fill(frame: &Frame, pts: &Node) -> Option<Vec<FillPiece>> {
                 l.extend(tail);
                 loops.push(l);
                 if loops.len() > MAX_FILL_LOOPS {
-                    return whole();
+                    return kept(crate::padshape::polygon(&ring), too_many_loops);
                 }
             }
             None => {
@@ -392,36 +439,75 @@ pub fn split_fill(frame: &Frame, pts: &Node) -> Option<Vec<FillPiece>> {
         .map(|(_, a)| *a)
         .max_by(|a, b| a.abs().total_cmp(&b.abs()))
     else {
-        return whole();
+        return kept(crate::padshape::polygon(&ring), "has no area to split");
     };
     loops.sort_by(|a, b| a.1.abs().total_cmp(&b.1.abs()));
     let (outers, holes): (Vec<_>, Vec<_>) = loops
         .into_iter()
         .partition(|(_, a)| (*a > 0.0) == (big > 0.0));
     // `outers` is sorted smallest first, so the first one to hold a hole is its smallest parent.
-    let mut pieces: Vec<(Vec<Point>, Vec<Contour>)> =
-        outers.into_iter().map(|(l, _)| (l, Vec::new())).collect();
-    let last = pieces.len().saturating_sub(1);
+    let mut pieces: Vec<(Vec<Point>, (Point, Point), Vec<Contour>)> = outers
+        .into_iter()
+        .map(|(l, _)| {
+            let b = point_bounds(&l);
+            (l, b, Vec::new())
+        })
+        .collect();
+    let mut orphans = 0usize;
+    let mut tests = 0usize;
     for (hole, _) in holes {
-        let target = pieces
+        if pieces.len() == 1 {
+            if let Some(piece) = pieces.first_mut() {
+                piece.2.push(crate::padshape::polygon(&hole));
+            }
+            continue;
+        }
+        let (lo, hi) = point_bounds(&hole);
+        // A corner from the middle of the hole, then two more in case one sits on an edge.
+        let n = hole.len();
+        let samples: Vec<Point> = [n / 2, n / 4, n * 3 / 4]
             .iter()
-            .position(|(outer, _)| {
-                hole.iter().filter(|p| inside(outer, **p)).count() * 2 >= hole.len()
-            })
-            .unwrap_or(last);
-        if let Some(piece) = pieces.get_mut(target) {
-            piece.1.push(crate::padshape::polygon(&hole));
+            .filter_map(|&i| hole.get(i).copied())
+            .collect();
+        let mut target = None;
+        'pieces: for (i, (outer, (olo, ohi), _)) in pieces.iter().enumerate() {
+            if lo.x < olo.x - 1e-6
+                || lo.y < olo.y - 1e-6
+                || hi.x > ohi.x + 1e-6
+                || hi.y > ohi.y + 1e-6
+            {
+                continue;
+            }
+            for p in &samples {
+                tests = tests.saturating_add(outer.len());
+                if tests > MAX_FILL_TESTS {
+                    return kept(
+                        crate::padshape::polygon(&ring),
+                        "has too many pieces and holes to split",
+                    );
+                }
+                if inside(outer, *p) {
+                    target = Some(i);
+                    break 'pieces;
+                }
+            }
+        }
+        match target.and_then(|i| pieces.get_mut(i)) {
+            Some(piece) => piece.2.push(crate::padshape::polygon(&hole)),
+            None => orphans = orphans.saturating_add(1),
         }
     }
-    Some(
-        pieces
+    Some(FillSplit {
+        pieces: pieces
             .into_iter()
-            .map(|(outer, holes)| FillPiece {
+            .map(|(outer, _, holes)| FillPiece {
                 outer: crate::padshape::polygon(&outer),
                 holes,
             })
             .collect(),
-    )
+        kept_whole: None,
+        orphan_holes: orphans,
+    })
 }
 
 #[cfg(test)]
