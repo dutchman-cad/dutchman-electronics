@@ -189,6 +189,19 @@ bodies = report.get("bodies", [])
 problems = [f"feature error: {e}" for e in errors]
 if len(bodies) != tubes:
     problems.append(f"{len(bodies)} bodies, expected {tubes}")
+if name == "kicad-overlapping-holes plating":
+    # Pair: r=0.5, d=0.8, t=0.025 mm. Each exposed arc sweeps theta =
+    # 2*pi - 2*acos(d/(2*r)); its annular band is theta*t*(r-t/2).
+    # The two inward bends each add phi*t*t/2, phi=2*atan(0.4/0.3).
+    # Pair area = 2*theta*t*(r-t/2) + phi*t*t = 0.1229410818 mm2;
+    # volume = area*1.6 = 0.1967057309 mm3. Check the pair by its x range.
+    import math
+    theta = 2 * math.pi - 2 * math.acos(0.8)
+    phi = 2 * math.atan(0.4 / 0.3)
+    want = (2 * theta * 0.025 * (0.5 - 0.025 / 2) + phi * 0.025**2) * 1.6
+    pair = [b for b in bodies if abs(b["bbox"]["min"][0] - 124.1) < 0.001]
+    if len(pair) != 1 or abs(pair[0].get("volume_mm3", 0) - want) > want * 0.005:
+        problems.append(f"merged pair plating volume differs from {want:.9f} mm3")
 for b in bodies:
     if not b.get("closed"):
         problems.append("a body is not closed")
