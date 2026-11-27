@@ -76,6 +76,32 @@ fn refs(args: &str) -> Vec<usize> {
 /// Checks the solid's topology from the STEP text alone: every edge is used exactly twice, in
 /// opposite directions; every loop is closed head to tail; V - E + F = 2.
 fn check_topology(text: &str) {
+    let (v, e, f) = check_edges(text);
+    // Two for each closed shell: a file may hold several solids.
+    let shells = entities(text)
+        .values()
+        .filter(|(n, _)| n == "CLOSED_SHELL")
+        .count() as i64;
+    assert_eq!(v - e + f, 2 * shells, "Euler: V={v} E={e} F={f}");
+}
+
+/// As [`check_topology`] for a solid with blind holes: V - E + F - L = 2 for each shell, where L
+/// counts the faces' inner loops (a blind pocket's rim is one; a hole right through has two).
+fn check_topology_blind(text: &str, inner_loops: i64) {
+    let (v, e, f) = check_edges(text);
+    let shells = entities(text)
+        .values()
+        .filter(|(n, _)| n == "CLOSED_SHELL")
+        .count() as i64;
+    assert_eq!(
+        v - e + f - inner_loops,
+        2 * shells,
+        "Euler: V={v} E={e} F={f} L={inner_loops}"
+    );
+}
+
+/// Checks every edge and loop, and returns the vertex, edge and face counts.
+fn check_edges(text: &str) -> (i64, i64, i64) {
     let all = entities(text);
     let of = |name: &'static str| all.iter().filter(move |(_, (n, _))| n == name);
     let vertices = of("VERTEX_POINT").count();
@@ -123,10 +149,7 @@ fn check_topology(text: &str) {
         }
     }
 
-    let (v, e, f) = (vertices as i64, edges.len() as i64, faces as i64);
-    // Two for each closed shell: a file may hold several solids.
-    let shells = of("CLOSED_SHELL").count() as i64;
-    assert_eq!(v - e + f, 2 * shells, "Euler: V={v} E={e} F={f}");
+    (vertices as i64, edges.len() as i64, faces as i64)
 }
 
 #[test]
@@ -865,7 +888,7 @@ fn a_blind_via_is_a_pocket_open_on_one_face() {
     // to the 6 faces of the box.
     assert_eq!(out.stats.openings, 1);
     assert_eq!(out.stats.faces, 6 + 2 + 1);
-    check_topology(&out.text);
+    check_topology_blind(&out.text, 1);
 
     // The same from the bottom (In2 to bottom): a pocket open on the bottom face.
     let out = write(&four_layer(vec![via_on(10.0, Some((3, 2)))]), "blind").unwrap();
@@ -875,7 +898,7 @@ fn a_blind_via_is_a_pocket_open_on_one_face() {
         "{low} {high}"
     );
     assert_eq!(out.stats.openings, 0);
-    check_topology(&out.text);
+    check_topology_blind(&out.text, 1);
 }
 
 #[test]
