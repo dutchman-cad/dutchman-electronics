@@ -440,8 +440,8 @@ fn silkscreen_lines_and_arcs_are_drawn_and_other_layers_are_noted() {
     let o = named(&list, "Silkscreen top");
     assert_eq!(o["kind"], "silkscreen");
     assert!(o.get("finish").is_none());
-    // Silkscreen z = T + 0.035 = 1.635; its thickness is 0.015.
-    assert_eq!(o["z"], 1.635);
+    // Silkscreen z = T + 0.045 (the top of the mask) = 1.645; its thickness is 0.015.
+    assert_eq!(o["z"], 1.645);
     assert_eq!(o["thickness"], 0.015);
     // The line, and a ring of width 0.2 around radius 2 (with a hole).
     let exact = 10.0 * 0.2 + PI * 0.01 + 2.0 * PI * 2.0 * 0.2;
