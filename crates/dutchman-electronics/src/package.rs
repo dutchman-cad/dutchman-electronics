@@ -689,10 +689,8 @@ fn components_with(
             if let Some(found) = recognizer.recognize(p) {
                 match standard_parts(
                     &name,
-                    p,
-                    &found,
-                    extruded_body,
-                    thickness,
+                    (p, thickness),
+                    (&found, extruded_body),
                     &mut standard_models,
                     &mut placed,
                     &mut used,
@@ -879,10 +877,8 @@ fn components_with(
 /// named `name` and the leads "<name> leads" (made unique), in the component's group.
 fn standard_parts(
     name: &str,
-    p: &Placement,
-    found: &Standard,
-    replaces_extruded: bool,
-    thickness: f64,
+    (p, thickness): (&Placement, f64),
+    (found, replaces_extruded): (&Standard, bool),
     models: &mut std::collections::BTreeMap<String, String>,
     placed: &mut Placed,
     used: &mut std::collections::BTreeSet<String>,
