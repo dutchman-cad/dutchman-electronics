@@ -7,9 +7,9 @@
 use std::collections::{BTreeMap, HashMap};
 
 use board_model::{
-    Board, Contour, CopperItem, EmbeddedFont, Graphic, Layer, LayerKind, ModelRef, ModelSource,
-    Note, PadShape, Placement, Point, ReadOutcome, Segment, Severity, Side, StackPosition, Text,
-    TextFont,
+    Board, Contour, CopperItem, EmbeddedFont, Graphic, HorizontalAnchor, Layer, LayerKind,
+    ModelRef, ModelSource, Note, PadShape, Placement, Point, ReadOutcome, Segment, Severity, Side,
+    StackPosition, Text, TextAnchor, TextFont, VerticalAnchor, KICAD_LINE_PITCH,
 };
 
 use crate::geom::{arc_through, circle_segment, place, pts_contour, split_fill, Frame};
@@ -124,7 +124,6 @@ struct Reader {
     components: Vec<Placement>,
     edge_open: Vec<Segment>,
     edge_closed: Vec<Contour>,
-    inexact_text: bool,
     /// Which sides' vias the board covers with solder mask unless a via says otherwise
     /// (`(setup (tenting ...))`): top, bottom. `None` when the setup does not say.
     default_tenting: Option<[bool; 2]>,
@@ -475,12 +474,15 @@ impl Reader {
             .and_then(|f| f.child("thickness"))
             .and_then(|t| t.num(0))
             .filter(|t| *t > 0.0)
+            // KiCad draws a pen at most a quarter of the text's height wide (its Gerber export
+            // of a 1 mm text asked to have a 0.3 mm pen draws it with 0.25).
+            .map(|t| t.min(height / 4.0))
             // Our own estimate when the text sets none: KiCad's default pen of 0.15 mm on a
             // 1.27 mm text (a board's explicit value) is 0.118 of the height.
             .unwrap_or(height * 0.12);
         let mut text_font = TextFont::Stroke {
             width: thickness,
-            font: board_model::StrokeFont::Default,
+            font: board_model::StrokeFont::KiCad,
         };
         if let Some(face) = font.and_then(|f| f.child("face")).and_then(|f| f.str_at(0)) {
             if face != "KiCad Font" {
@@ -500,39 +502,29 @@ impl Reader {
         let justify = effects.and_then(|e| e.child("justify"));
         let has = |w: &str| justify.is_some_and(|j| j.has_flag(w));
         let mirrored = has("mirror");
-        // KiCad anchors a text by its center unless told otherwise; the model anchors it at the
-        // left end of its baseline. Without glyph widths the shift is an estimate.
-        let lines: Vec<&str> = content.split('\n').collect();
-        let longest = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0) as f64;
-        // Our own estimate, not KiCad's metrics: 0.6 of the height per letter.
-        let width = longest * height * 0.6;
-        let mut dx = if has("left") {
-            0.0
-        } else if has("right") {
-            -width
-        } else {
-            -width / 2.0
+        // KiCad anchors a text by the middle of its box unless told otherwise, each line
+        // justified on its own; the model carries the justification and the overlay resolves it
+        // from the letters it draws. For a mirrored text it is in the text's own frame (the end
+        // its letters start from), as the Gerber export shows.
+        let anchor = TextAnchor {
+            horizontal: if has("left") {
+                HorizontalAnchor::Left
+            } else if has("right") {
+                HorizontalAnchor::Right
+            } else {
+                HorizontalAnchor::Center
+            },
+            vertical: if has("top") {
+                VerticalAnchor::Top
+            } else if has("bottom") {
+                VerticalAnchor::Bottom
+            } else {
+                VerticalAnchor::Center
+            },
         };
-        let dy = if has("bottom") {
-            0.0
-        } else if has("top") {
-            -height
-        } else {
-            -height / 2.0
-        };
-        if mirrored {
-            dx = -dx;
-        }
-        if dx != 0.0 || dy != 0.0 {
-            self.inexact_text = true;
-        }
+        let line_pitch = matches!(text_font, TextFont::Stroke { .. }).then_some(KICAD_LINE_PITCH);
         let rotation_deg = spot.angle;
-        let a = rotation_deg.to_radians();
-        let anchor = frame.point(spot.x, spot.y);
-        let at = Point {
-            x: anchor.x + dx * a.cos() - dy * a.sin(),
-            y: anchor.y + dx * a.sin() + dy * a.cos(),
-        };
+        let at = frame.point(spot.x, spot.y);
         self.texts.push(Text {
             layer,
             at,
@@ -540,6 +532,8 @@ impl Reader {
             height,
             rotation_deg,
             mirrored,
+            anchor,
+            line_pitch,
             font: text_font,
             component: None,
         });
@@ -1455,7 +1449,6 @@ pub fn read(mut root: Node) -> ReadOutcome {
             .child("setup")
             .and_then(|s| s.child("tenting"))
             .map(tenting_sides),
-        inexact_text: false,
         fonts_unused: Vec::new(),
         fonts_used: Vec::new(),
         embedded: Vec::new(),
@@ -1529,12 +1522,6 @@ pub fn read(mut root: Node) -> ReadOutcome {
                 "Edge.Cuts piece(s) beyond the limit were not joined".into(),
             ),
             joined.over_limit,
-        );
-    }
-    if r.inexact_text {
-        r.tally.add(
-            Severity::Info,
-            "board(s) whose centered or right-aligned texts sit where we estimate them (KiCad aligns a text by its middle and we have no glyph widths)",
         );
     }
     for (e, unused) in r.embedded.iter().zip(&r.fonts_unused) {

@@ -286,12 +286,89 @@ pub struct Text {
     pub rotation_deg: f64,
     /// Reads mirrored (text on the bottom side).
     pub mirrored: bool,
+    /// Which point of the text `at` names. The default is the left end of the first line's
+    /// baseline, as Altium anchors a text.
+    pub anchor: TextAnchor,
+    /// The distance from one line's baseline to the next, as a multiple of `height`; `None` is
+    /// the font's own pitch (for a stroke font, the stroke font's own line step; a TrueType text
+    /// always uses its font's line height and ignores this). KiCad texts set it
+    /// ([`KICAD_LINE_PITCH`]).
+    pub line_pitch: Option<f64>,
     /// Where its letter shapes come from.
     pub font: TextFont,
     /// The component it belongs to, as an index into [`Board::components`], for a text that is
     /// part of a component (such as one drawn in its footprint); `None` for a free text.
     pub component: Option<usize>,
 }
+
+/// Which point of a [`Text`] its position names: a horizontal part (resolved per line, from the
+/// advance width of the line as drawn) and a vertical part (resolved from the text box).
+///
+/// The text box follows KiCad's placement of stroke texts, but its constants are not KiCad's
+/// own numbers: they were fitted to KiCad's Gerber export of the test boards
+/// (`crates/kicad-pcb/tests/gerber/text-justify-*`) against the letter shapes we draw (Roman
+/// Simplex), so they also absorb the differences between those shapes and KiCad's. The fit used
+/// "HIH", whose outer edges are the Hs'; other letters are only as close as their widths are
+/// (see the `text-strings` board and the overlay's test of it for how far that is).
+///
+/// A line's box is [`TEXT_BOX_HEIGHT`] heights tall, a capital's top lies [`TEXT_CAP_GAP`]
+/// heights below the box top and the baseline [`TEXT_BASELINE_GAP`] heights above its bottom
+/// (the room for descenders), and the box of a text of several lines is the first line's box
+/// plus one line pitch for every further line. The default anchor (left, baseline) has no box
+/// around it: the point is the first glyph's origin, as Altium places a text. Everything is in
+/// the text's own frame, before it is mirrored and turned about `at`, so a mirrored text's
+/// `Left` is the end its letters start from, on whichever side that falls.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TextAnchor {
+    pub horizontal: HorizontalAnchor,
+    pub vertical: VerticalAnchor,
+}
+
+/// The horizontal part of a [`TextAnchor`]: the left end, the middle or the right end of each
+/// line's box, which is the sum of its letters' advances (not the ink) and the side gap
+/// ([`TEXT_SIDE_GAP_PER_HEIGHT`], [`TEXT_SIDE_GAP_PER_PEN`]) on each side.
+///
+/// A TrueType text is placed differently, because KiCad's placement of those was not measured:
+/// with `Left`, the ink's left edge is the anchor; with `Center` or `Right`, the advance widths
+/// alone are used (no side gap, which is a pen-dependent allowance fitted to stroke texts).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum HorizontalAnchor {
+    #[default]
+    Left,
+    Center,
+    Right,
+}
+
+/// The vertical part of a [`TextAnchor`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum VerticalAnchor {
+    /// The first line's baseline. Only the default anchor (Altium's placement) uses it; KiCad
+    /// has no such justification.
+    #[default]
+    Baseline,
+    /// The top of the text box.
+    Top,
+    /// The middle of the text box.
+    Center,
+    /// The bottom of the text box.
+    Bottom,
+}
+
+/// How far a line's text box reaches past its advance width on each side, as the sum of
+/// [`TEXT_SIDE_GAP_PER_HEIGHT`] times the text height and [`TEXT_SIDE_GAP_PER_PEN`] times the
+/// pen width, so a text anchored by its left or right end starts this far in from the anchor.
+/// Fitted, with the other box constants, as [`TextAnchor`] says.
+pub const TEXT_SIDE_GAP_PER_HEIGHT: f64 = 0.048;
+/// See [`TEXT_SIDE_GAP_PER_HEIGHT`].
+pub const TEXT_SIDE_GAP_PER_PEN: f64 = 0.656;
+/// The height of one line's text box, in text heights (the height of a capital).
+pub const TEXT_BOX_HEIGHT: f64 = 1.17;
+/// From the top of the box to the top of a capital, in text heights.
+pub const TEXT_CAP_GAP: f64 = 0.04;
+/// From the baseline to the bottom of the box, in text heights.
+pub const TEXT_BASELINE_GAP: f64 = 0.13;
+/// KiCad's distance between the baselines of two lines, in text heights.
+pub const KICAD_LINE_PITCH: f64 = 1.61;
 
 /// The letter shapes of a [`Text`].
 #[derive(Clone, Debug, PartialEq)]
@@ -308,8 +385,9 @@ pub enum TextFont {
     },
 }
 
-/// Which of a CAD program's single-line fonts a stroke [`Text`] uses. Altium has these three;
-/// a reader for a program with one stroke font uses [`StrokeFont::Default`].
+/// Which of a CAD program's single-line fonts a stroke [`Text`] uses. Altium has the first three;
+/// a reader for a program with one stroke font uses [`StrokeFont::Default`], or its own variant
+/// where the font's spacing is known (KiCad).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum StrokeFont {
     /// The program's default stroke font.
@@ -319,6 +397,8 @@ pub enum StrokeFont {
     SansSerif,
     /// Its serif stroke font.
     Serif,
+    /// KiCad's stroke font (its default "KiCad Font"), drawn at the glyphs' own advances.
+    KiCad,
 }
 
 /// Where a 3D model for a component comes from.

@@ -262,6 +262,8 @@ mod tests {
             height: 1.5,
             rotation_deg: 0.0,
             mirrored: false,
+            anchor: board_model::TextAnchor::default(),
+            line_pitch: None,
             font: TextFont::Stroke {
                 width: 0.15,
                 font: board_model::StrokeFont::Default,

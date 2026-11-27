@@ -331,6 +331,8 @@ mod tests {
             height: 2.0,
             rotation_deg: 0.0,
             mirrored: false,
+            anchor: board_model::TextAnchor::default(),
+            line_pitch: None,
             font: TextFont::TrueType {
                 name: name.into(),
                 bold,

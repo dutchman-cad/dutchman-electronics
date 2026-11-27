@@ -465,20 +465,59 @@ fn silkscreen_lines_arcs_circles_polygons_and_text() {
     );
     let circle = arcs.iter().find(|a| a.2 == a.3).unwrap();
     assert!(at(circle.0, 35.0, 8.0) && near(circle.1, 2.0) && near(circle.4, 0.15));
-    // The text: "HELLO" centered on (30, 22). The model anchors a text at its baseline's left
-    // end, so the reader moves it by half an estimated width (5 letters, 0.6 of the height
-    // each) and half the height. The turn is 0.
+    // The text: "HELLO" centered on (30, 22): the model keeps the anchor point and carries the
+    // justification (KiCad's default: centered both ways), which the overlay resolves from the
+    // letters it draws. The turn is 0.
     assert_eq!(b.texts.len(), 1);
     let t = &b.texts[0];
     assert_eq!(t.content, "HELLO");
     assert!(near(t.height, 1.5) && near(t.rotation_deg, 0.0) && !t.mirrored);
     assert!(matches!(t.font, board_model::TextFont::Stroke { width, .. } if near(width, 0.2)));
-    assert!(
-        near(t.at.x, 130.0 - 2.25) && near(t.at.y, -122.0 - 0.75),
-        "{:?}",
-        t.at
+    assert!(near(t.at.x, 130.0) && near(t.at.y, -122.0), "{:?}", t.at);
+    assert_eq!(
+        t.anchor,
+        board_model::TextAnchor {
+            horizontal: board_model::HorizontalAnchor::Center,
+            vertical: board_model::VerticalAnchor::Center
+        }
     );
-    assert!(notes_contain(&o, "estimate"));
+    assert!(!notes_contain(&o, "estimate"));
+}
+
+/// `text-justify`: every justification is carried in the model, in the text's own frame, and a pen
+/// wider than a quarter of the text's height is cut to that, as KiCad's Gerber export does. Where
+/// the texts land is checked against that export in the overlay (`kicad_gerber`).
+#[test]
+fn text_justification_and_pen_are_carried() {
+    use board_model::{HorizontalAnchor as H, TextAnchor, TextFont, VerticalAnchor as V};
+    let o = board("text-justify");
+    let b = &o.board;
+    assert_eq!(b.texts.len(), 71, "{:?}", o.notes);
+    assert!(!notes_contain(&o, "estimate"));
+    // README: the first text is "HIH" at (12, 12), left and top, 2 mm high, 0.25 mm pen.
+    let t = b.texts.iter().find(|t| at(t.at, 12.0, 12.0)).unwrap();
+    assert_eq!(
+        t.anchor,
+        TextAnchor {
+            horizontal: H::Left,
+            vertical: V::Top
+        }
+    );
+    assert!(matches!(t.font, TextFont::Stroke { width, .. } if near(width, 0.25)));
+    // Bottom-side texts are mirrored and keep "left" as the end their letters start from.
+    let mirrored: Vec<_> = b.texts.iter().filter(|t| t.mirrored).collect();
+    assert_eq!(mirrored.len(), 23);
+    assert!(mirrored
+        .iter()
+        .any(|t| t.anchor.horizontal == H::Left && t.rotation_deg == 0.0));
+    // Two lines are kept as one text.
+    assert_eq!(
+        b.texts.iter().filter(|t| t.content == "HIH\nHIH").count(),
+        16
+    );
+    // The 1 mm text asked to have a 0.3 mm pen is drawn with 0.25.
+    let small = b.texts.iter().find(|t| near(t.height, 1.0)).unwrap();
+    assert!(matches!(small.font, TextFont::Stroke { width, .. } if near(width, 0.25)));
 }
 
 #[test]

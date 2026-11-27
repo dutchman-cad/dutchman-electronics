@@ -896,6 +896,8 @@ fn text_on(layer: usize, content: &str, height: f64, at: Point) -> board_model::
         height,
         rotation_deg: 0.0,
         mirrored: false,
+        anchor: board_model::TextAnchor::default(),
+        line_pitch: None,
         font: board_model::TextFont::Stroke {
             width: 0.2,
             font: board_model::StrokeFont::Default,

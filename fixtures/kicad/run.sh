@@ -33,3 +33,17 @@ for b in pad-shapes pad-shapes-turned pad-arcs; do
     python3 fixtures/kicad/gerber_corners.py crates/kicad-pcb/tests/gerber/$b-$l.gbr > crates/kicad-pcb/tests/gerber/$b-$l.corners.txt
   done
 done
+
+# The ink boxes of the texts on the two text boards, read from KiCad's own Gerber export of their
+# silkscreens (only these extents are kept, not the Gerber files, which hold KiCad's letter shapes).
+tmp=$(mktemp -d)
+for b in text-justify text-strings; do
+  podman run --rm --userns=keep-id -v "$PWD:/work:Z" -v "$tmp:/out:Z" docker.io/kicad/kicad:9.0 \
+    kicad-cli pcb export gerbers --layers F.SilkS,B.SilkS --no-protel-ext -o /out/ /work/$out/$b.kicad_pcb
+  for s in F B; do
+    ext=$(python3 fixtures/kicad/gerber_text_extents.py "$tmp/$b-${s}_Silkscreen.gbr")
+    # A silkscreen with no text has no extents file.
+    [ -n "$ext" ] && echo "$ext" > crates/kicad-pcb/tests/gerber/$b-${s}_Silkscreen.extents.txt
+  done
+done
+true
