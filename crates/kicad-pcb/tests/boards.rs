@@ -1098,3 +1098,253 @@ fn a_via_with_no_tenting_of_its_own_takes_the_board_default() {
         assert_eq!((got[1].1, &got[1].2), ([yes, yes], &None), "{name}");
     }
 }
+
+/// A contour as a closed ring of points, arcs cut every two degrees at most.
+fn ring_of(c: &board_model::Contour) -> Vec<Point> {
+    let mut ring = Vec::new();
+    for s in &c.segments {
+        match *s {
+            Segment::Line { from, .. } => ring.push(from),
+            Segment::Arc {
+                center,
+                radius,
+                start_deg,
+                ..
+            } => {
+                let sweep = s.sweep_deg().unwrap();
+                let n = (sweep.abs() / 2.0).ceil().max(1.0) as usize;
+                for i in 0..n {
+                    let a = (start_deg + sweep * i as f64 / n as f64).to_radians();
+                    ring.push(Point {
+                        x: center.x + radius * a.cos(),
+                        y: center.y + radius * a.sin(),
+                    });
+                }
+            }
+        }
+    }
+    ring
+}
+
+fn inside_ring(ring: &[Point], p: Point) -> bool {
+    let mut odd = false;
+    for (i, a) in ring.iter().enumerate() {
+        let b = ring[(i + 1) % ring.len()];
+        if (a.y > p.y) != (b.y > p.y) && p.x < a.x + (p.y - a.y) / (b.y - a.y) * (b.x - a.x) {
+            odd = !odd;
+        }
+    }
+    odd
+}
+
+fn dist_to_segment(p: Point, a: Point, b: Point) -> f64 {
+    let (dx, dy) = (b.x - a.x, b.y - a.y);
+    let len2 = dx * dx + dy * dy;
+    let t = if len2 == 0.0 {
+        0.0
+    } else {
+        (((p.x - a.x) * dx + (p.y - a.y) * dy) / len2).clamp(0.0, 1.0)
+    };
+    (p.x - a.x - t * dx).hypot(p.y - a.y - t * dy)
+}
+
+fn dist_to_ring(p: Point, ring: &[Point]) -> f64 {
+    (0..ring.len())
+        .map(|i| dist_to_segment(p, ring[i], ring[(i + 1) % ring.len()]))
+        .fold(f64::INFINITY, f64::min)
+}
+
+/// The distance from `p` to the nearest of the contours' exact pieces.
+fn dist_to_contours(p: Point, shapes: &[board_model::Contour]) -> f64 {
+    let mut best = f64::INFINITY;
+    for c in shapes {
+        for s in &c.segments {
+            let d = match *s {
+                Segment::Line { from, to } => dist_to_segment(p, from, to),
+                Segment::Arc {
+                    center,
+                    radius,
+                    start_deg,
+                    ..
+                } => {
+                    // Nearest point on the circle, if it lies on the arc; else the nearer end.
+                    let sweep = s.sweep_deg().unwrap();
+                    let a = (p.y - center.y).atan2(p.x - center.x).to_degrees();
+                    let along = if sweep >= 0.0 {
+                        (a - start_deg).rem_euclid(360.0)
+                    } else {
+                        (start_deg - a).rem_euclid(360.0)
+                    };
+                    let end = |deg: f64| Point {
+                        x: center.x + radius * deg.to_radians().cos(),
+                        y: center.y + radius * deg.to_radians().sin(),
+                    };
+                    if along <= sweep.abs() {
+                        ((p.x - center.x).hypot(p.y - center.y) - radius).abs()
+                    } else {
+                        dist_to_segment(p, end(start_deg), end(start_deg)).min(
+                            (p.x - end(start_deg + sweep).x).hypot(p.y - end(start_deg + sweep).y),
+                        )
+                    }
+                }
+            };
+            best = best.min(d);
+        }
+    }
+    best
+}
+
+/// Custom pads with arcs: every corner of KiCad's own Gerber outline of a pad lies on the exact
+/// outline the reader gives (arcs included), and every point of the reader's outline that no other
+/// piece of the pad covers lies within KiCad's chord tolerance of KiCad's outline.
+#[test]
+fn pad_arcs_match_kicads_own_gerber_export() {
+    for name in ["pad-arcs"] {
+        let o = board(name);
+        let mut checked = 0;
+        for item in &o.board.copper {
+            let CopperItem::PolygonPad {
+                layer, at, shapes, ..
+            } = item
+            else {
+                continue;
+            };
+            let side = match o.board.layers[*layer].name.as_str() {
+                "F.Cu" => "F_Cu",
+                "B.Cu" => "B_Cu",
+                other => panic!("{other}"),
+            };
+            let kicad: Vec<Vec<Point>> = gerber_pads(name, side)
+                .into_iter()
+                .filter(|f| near(f.1.x, at.x) && near(f.1.y, at.y))
+                .map(|f| f.2)
+                .collect();
+            assert!(!kicad.is_empty(), "{name}: no Gerber flash at {at:?}");
+            for p in kicad.iter().flatten() {
+                let d = dist_to_contours(*p, shapes);
+                // KiCad cuts an arc into chords with at most 5 micrometers of error and places the
+                // corners of a concave edge (the inside of a stroked arc) up to that far off the
+                // circle: its corner at (113.000091, -107.905464) on the inner edge of pad 2's
+                // stroke, radius 1.0, sits at radius 1.0044. So 5 micrometers plus the 1e-6
+                // rounding of the Gerber file is the tolerance.
+                assert!(
+                    d < 0.0051,
+                    "{name} pad at {at:?}: KiCad's corner {p:?} is {d} off our outline"
+                );
+            }
+            let rings: Vec<Vec<Point>> = shapes.iter().map(ring_of).collect();
+            for (i, ring) in rings.iter().enumerate() {
+                for p in ring {
+                    let covered = rings
+                        .iter()
+                        .enumerate()
+                        .any(|(j, other)| j != i && inside_ring(other, *p));
+                    if covered {
+                        continue;
+                    }
+                    let d = kicad
+                        .iter()
+                        .map(|k| dist_to_ring(*p, k))
+                        .fold(f64::INFINITY, f64::min);
+                    assert!(
+                        d < 0.01,
+                        "{name} pad at {at:?}: our point {p:?} is {d} from KiCad's outline"
+                    );
+                }
+            }
+            checked += 1;
+        }
+        // U1 and U2 have four pads, U3 three, U4 two.
+        assert_eq!(checked, 13, "{name}");
+    }
+}
+
+/// The arcs are exact: the D pad's contour has one arc of radius 1.5 and its straight edge.
+#[test]
+fn the_d_pad_keeps_its_arc() {
+    let o = board("pad-arcs");
+    let d = o
+        .board
+        .copper
+        .iter()
+        .find_map(|c| match c {
+            CopperItem::PolygonPad { at, shapes, .. }
+                if near(at.x, 106.0) && near(at.y, -108.0) =>
+            {
+                Some(shapes)
+            }
+            _ => None,
+        })
+        .unwrap();
+    let arcs: Vec<_> = d
+        .iter()
+        .flat_map(|c| &c.segments)
+        .filter_map(|s| match s {
+            Segment::Arc { radius, .. } => Some(*radius),
+            _ => None,
+        })
+        .collect();
+    // The circle anchor (radius 0.5) and the D's arc (radius 1.5).
+    assert_eq!(arcs.len(), 2, "{arcs:?}");
+    assert!(arcs.iter().any(|r| near(*r, 1.5)));
+    assert!(o.notes.iter().all(|n| !n.message.contains("straight")));
+}
+
+/// `embedded-font`: two texts in DejaVu Sans Mono (regular and bold), whose files the board embeds.
+/// The sizes are those of the files the board was made with (README.txt).
+#[test]
+fn embedded_fonts_are_handed_over_with_their_texts() {
+    let o = board("embedded-font");
+    assert_eq!(o.board.texts.len(), 2);
+    assert_eq!(o.fonts.len(), 2, "{:?}", o.notes);
+    for (content, bold, size, style) in [
+        ("Regular 123", false, 343_140, "Book"),
+        ("Bold 456", true, 334_268, "Bold"),
+    ] {
+        let t = o.board.texts.iter().find(|t| t.content == content).unwrap();
+        assert_eq!(
+            t.font,
+            board_model::TextFont::TrueType {
+                name: "DejaVu Sans Mono".into(),
+                bold,
+                italic: false
+            }
+        );
+        let f = o
+            .font(&t.font)
+            .unwrap_or_else(|| panic!("no font for {content}"));
+        assert_eq!(f.family, "DejaVu Sans Mono");
+        assert_eq!(f.style, style);
+        assert_eq!(f.data.len(), size);
+        assert_eq!(f.data[..4], [0, 1, 0, 0]);
+    }
+    assert!(
+        o.notes.iter().all(|n| n.severity == Severity::Info),
+        "{:?}",
+        o.notes
+    );
+}
+
+/// A font that texts call by two spellings (and its bold face by its full name) is handed over once.
+#[test]
+fn one_font_under_two_names_is_handed_over_once() {
+    let path = format!(
+        "{}/tests/boards/embedded-font.kicad_pcb",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let mut text = std::fs::read_to_string(path).unwrap();
+    let end = text.rfind(')').unwrap();
+    text.insert_str(
+        end,
+        "(gr_text \"Alias\" (at 110 110 0) (layer \"F.SilkS\") \
+         (effects (font (face \"dejavu SANS mono\") (size 2 2))))\n\
+         (gr_text \"Full\" (at 110 120 0) (layer \"F.SilkS\") \
+         (effects (font (face \"DejaVu Sans Mono Bold\") (size 2 2) (bold yes))))\n",
+    );
+    let o = KiCad.read(text.as_bytes()).unwrap();
+    assert_eq!(o.board.texts.len(), 4, "{:?}", o.notes);
+    assert_eq!(o.fonts.len(), 2, "{:?}", o.notes);
+    for t in &o.board.texts {
+        assert!(o.font(&t.font).is_some(), "{}", t.content);
+    }
+}

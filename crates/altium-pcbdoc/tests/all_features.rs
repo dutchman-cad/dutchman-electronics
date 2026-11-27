@@ -166,6 +166,30 @@ fn the_board_has_one_round_cutout() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Both planes keep away from the board cutout by their pull-back (#123): each holds a round
+/// hole about the cutout's center (46.5, 5.5), of the cutout's radius 1.5 plus the pull-back
+/// 0.508.
+#[test]
+fn the_planes_keep_their_pull_back_from_the_cutout() -> Result<(), Box<dyn std::error::Error>> {
+    let out = read()?;
+    for plane in ["Layer 1", "Layer 2"] {
+        let i = layer_index(&out, plane)?;
+        let found = out.board.copper.iter().any(|c| match c {
+            CopperItem::Region { layer, holes, .. } if *layer == i => holes.iter().any(|h| {
+                h.segments.iter().all(|s| match *s {
+                    Segment::Arc { center, radius, .. } => {
+                        near(center.x, 46.5) && near(center.y, 5.5) && near(radius, 2.008)
+                    }
+                    Segment::Line { .. } => false,
+                })
+            }),
+            _ => false,
+        });
+        assert!(found, "{plane} has no hole around the cutout");
+    }
+    Ok(())
+}
+
 #[test]
 fn pads_come_in_every_shape() -> Result<(), Box<dyn std::error::Error>> {
     let out = read()?;

@@ -292,7 +292,7 @@ fn hostile_pad_shapes_do_not_panic() {
 }
 
 #[test]
-fn an_arc_in_a_custom_pad_polygon_is_noted() {
+fn an_arc_in_a_custom_pad_polygon_stays_an_arc() {
     let text = format!(
         "{HEAD}(footprint \"t:x\" (layer \"F.Cu\") (at 5 5) (property \"Reference\" \"U1\")\n\
          (pad \"1\" smd custom (at 0 0) (size 1 1) (layers \"F.Cu\") (options (anchor rect)) \
@@ -300,9 +300,73 @@ fn an_arc_in_a_custom_pad_polygon_is_noted() {
          (width 0) (fill yes)))))\n)"
     );
     let o = read(&text).unwrap();
-    assert!(o.notes.iter().any(|n| n
-        .message
-        .contains("polygon arc(s) were drawn as straight edges")));
+    assert!(!o.notes.iter().any(|n| n.message.contains("straight edges")));
+    let shapes = o
+        .board
+        .copper
+        .iter()
+        .find_map(|c| match c {
+            board_model::CopperItem::PolygonPad { shapes, .. } => Some(shapes),
+            _ => None,
+        })
+        .unwrap();
+    // The anchor, and the polygon: three lines and one arc of radius 1 about (2, -1) from the pad, which sits at (5, -5) (Y is up).
+    let arcs: Vec<_> = shapes[1]
+        .segments
+        .iter()
+        .filter_map(|s| match s {
+            board_model::Segment::Arc { center, radius, .. } => Some((*center, *radius)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(arcs.len(), 1);
+    assert!((arcs[0].1 - 1.0).abs() < 1e-9);
+    assert!((arcs[0].0.x - 7.0).abs() < 1e-9 && (arcs[0].0.y + 6.0).abs() < 1e-9);
+}
+
+fn font_text(embedded: &str) -> String {
+    format!(
+        "{HEAD}(gr_text \"Hi\" (at 5 5 0) (layer \"F.Cu\") \
+         (effects (font (face \"Test Sans\") (size 1 1))))\n{embedded})"
+    )
+}
+
+#[test]
+fn a_font_the_board_does_not_embed_keeps_the_stroke_font_with_a_note_naming_it() {
+    let o = read(&font_text("")).unwrap();
+    assert!(matches!(
+        o.board.texts[0].font,
+        board_model::TextFont::Stroke { .. }
+    ));
+    assert!(o.fonts.is_empty());
+    assert!(o.notes.iter().any(|n| n.severity == Severity::Warning
+        && n.message.contains("\"Test Sans\"")
+        && n.message.contains("stroke font")));
+}
+
+#[test]
+fn hostile_embedded_font_data_is_a_note_not_a_panic() {
+    for data in [
+        "",
+        "|not base64!|",
+        "|AAAA|",
+        // zstd magic and a frame header declaring 4 GB.
+        "|KLUv/aD/////|",
+        // a valid zstd frame (an empty file) that is not a font.
+        "|KLUv/QBYAAA=|",
+    ] {
+        let embedded = format!(
+            "(embedded_fonts yes) (embedded_files (file (name \"x.ttf\") (type font) (data {data}) \
+             (checksum \"00\")))"
+        );
+        let o = read(&font_text(&embedded)).unwrap();
+        assert!(matches!(
+            o.board.texts[0].font,
+            board_model::TextFont::Stroke { .. }
+        ));
+        assert!(o.fonts.is_empty());
+        assert!(o.notes.iter().any(|n| n.severity == Severity::Warning));
+    }
 }
 
 fn zone_text(pts: &str) -> String {
@@ -436,4 +500,60 @@ fn an_empty_tenting_side_reads_as_covered() {
             ..
         }
     )));
+}
+
+fn arc_pad_board(prim: &str) -> board_model::ReadOutcome {
+    let text = format!(
+        "{HEAD}(footprint \"t:x\" (layer \"F.Cu\") (at 5 5) (property \"Reference\" \"U1\")\n\
+         (pad \"1\" smd custom (at 0 0) (size 1 1) (layers \"F.Cu\") (options (anchor rect)) \
+         (primitives {prim})))\n)"
+    );
+    read(&text).unwrap()
+}
+
+fn pad_shapes(o: &board_model::ReadOutcome) -> Vec<board_model::Contour> {
+    o.board
+        .copper
+        .iter()
+        .find_map(|c| match c {
+            board_model::CopperItem::PolygonPad { shapes, .. } => Some(shapes.clone()),
+            _ => None,
+        })
+        .unwrap()
+}
+
+#[test]
+fn a_clockwise_arc_stroke_and_its_counter_clockwise_twin_are_the_same_band() {
+    // A quarter circle of radius 2 about the pad's center, written both ways round, and the
+    // same with a half circle and with three quarters.
+    for (a, m, b) in [
+        ("2 0", "1.4142136 -1.4142136", "0 -2"),
+        ("2 0", "0 -2", "-2 0"),
+        ("2 0", "-2 0", "0 2"),
+    ] {
+        let one = arc_pad_board(&format!(
+            "(gr_arc (start {a}) (mid {m}) (end {b}) (width 0.3))"
+        ));
+        let twin = arc_pad_board(&format!(
+            "(gr_arc (start {b}) (mid {m}) (end {a}) (width 0.3))"
+        ));
+        // Shape 0 is the anchor; the stroke is what follows.
+        let (s1, s2) = (pad_shapes(&one), pad_shapes(&twin));
+        assert!(s1.len() >= 2, "{a} {m} {b}");
+        // The two read the circle from the same points in another order, so they agree to the
+        // last digits only: compare to six decimals.
+        let show = |v: &[board_model::Contour]| format!("{v:.6?}").replace("-0.000000", "0.000000");
+        assert_eq!(show(&s1), show(&s2), "{a} {m} {b}");
+        assert!(!one.notes.iter().any(|n| n.severity == Severity::Dropped));
+    }
+}
+
+#[test]
+fn a_gr_arc_through_points_on_one_line_is_a_straight_stroke() {
+    let o = arc_pad_board("(gr_arc (start 0 0) (mid 1 0) (end 2 0) (width 0.3))");
+    let shapes = pad_shapes(&o);
+    // The anchor and one capsule: two lines and two arcs, 2 + 0.3 long.
+    assert_eq!(shapes.len(), 2);
+    assert_eq!(shapes[1].segments.len(), 4);
+    assert!(!o.notes.iter().any(|n| n.severity == Severity::Dropped));
 }

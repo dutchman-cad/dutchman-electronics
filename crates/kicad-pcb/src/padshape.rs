@@ -5,6 +5,8 @@
 //! The corner and delta conventions come from KiCad's own Gerber export of our `pad-shapes`
 //! board (see its README.txt), not from any source code.
 
+use crate::geom::arc_through;
+use crate::sexpr::Node;
 use board_model::{Contour, Point, Segment};
 
 /// Which corners of a rectangle are chamfered.
@@ -222,5 +224,259 @@ pub fn placed(c: &Contour, at: Point, rotation_deg: f64) -> Contour {
                 },
             })
             .collect(),
+    }
+}
+
+/// The point list of a custom pad's `gr_poly` as a closed contour in the pad's frame (Y negated
+/// from the file), with `(arc (start) (mid) (end))` items kept as real arcs. `None` when fewer
+/// than three corners (and no arc) can be read.
+pub fn pts_contour(pts: &Node) -> Option<Contour> {
+    let local = |n: &Node| n.pair().map(|(x, y)| pt(x, -y));
+    let mut segments = Vec::new();
+    let (mut first, mut at): (Option<Point>, Option<Point>) = (None, None);
+    let mut corners = 0usize;
+    for item in pts.args() {
+        let (start, piece, end) = match item.head() {
+            Some("xy") => {
+                let Some(p) = local(item) else { continue };
+                (p, None, p)
+            }
+            Some("arc") => {
+                let (Some(s), Some(m), Some(e)) = (
+                    item.child("start").and_then(local),
+                    item.child("mid").and_then(local),
+                    item.child("end").and_then(local),
+                ) else {
+                    continue;
+                };
+                (s, arc_through(s, m, e).map(|a| a.segment()), e)
+            }
+            _ => continue,
+        };
+        corners += 1;
+        if let Some(prev) = at {
+            if (prev.x - start.x).hypot(prev.y - start.y) > 1e-9 {
+                segments.push(Segment::Line {
+                    from: prev,
+                    to: start,
+                });
+            }
+        }
+        match piece {
+            Some(seg) => segments.push(seg),
+            None if item.head() == Some("arc") => segments.push(Segment::Line {
+                from: start,
+                to: end,
+            }),
+            None => {}
+        }
+        first.get_or_insert(start);
+        at = Some(end);
+    }
+    // An arc alone is a shape: the closing edge joins its two ends.
+    if corners < 3 && !segments.iter().any(|s| matches!(s, Segment::Arc { .. })) {
+        return None;
+    }
+    if let (Some(a), Some(f)) = (at, first) {
+        if (a.x - f.x).hypot(a.y - f.y) > 1e-9 {
+            segments.push(Segment::Line { from: a, to: f });
+        }
+    }
+    Some(Contour { segments })
+}
+
+/// A stroke of `width` along a circular arc (counter-clockwise from `start_deg` to `end_deg`, or
+/// clockwise), with round ends. A sweep over 180 degrees is cut in two so each piece is a simple
+/// contour; the pieces overlap at their ends and are drawn together.
+pub fn arc_stroke(
+    center: Point,
+    radius: f64,
+    start_deg: f64,
+    end_deg: f64,
+    clockwise: bool,
+    width: f64,
+) -> Vec<Contour> {
+    let probe = Segment::Arc {
+        center,
+        radius,
+        start_deg,
+        end_deg,
+        clockwise,
+    };
+    let sweep = probe.sweep_deg().unwrap_or(360.0).abs();
+    // Counter-clockwise from `a0` for `sweep` degrees.
+    let a0 = if clockwise { end_deg } else { start_deg };
+    let h = width / 2.0;
+    if radius <= h {
+        // The stroke covers the arc's center, so it has no inner edge. A whole turn is one disk;
+        // anything less is the sector out to radius + h plus a disk at each end (the nearest
+        // point of the arc to any point outside the sector's angles is one of its ends).
+        if sweep >= 359.999 {
+            return vec![circle(center, radius + h)];
+        }
+        let on = |r: f64, a: f64| {
+            let (s, c) = a.to_radians().sin_cos();
+            pt(center.x + r * c, center.y + r * s)
+        };
+        let (p0, p1) = (on(radius + h, a0), on(radius + h, a0 + sweep));
+        let sector = Contour {
+            segments: vec![
+                Segment::Line {
+                    from: center,
+                    to: p0,
+                },
+                Segment::Arc {
+                    center,
+                    radius: radius + h,
+                    start_deg: a0,
+                    end_deg: a0 + sweep,
+                    clockwise: false,
+                },
+                Segment::Line {
+                    from: p1,
+                    to: center,
+                },
+            ],
+        };
+        return vec![
+            sector,
+            circle(on(radius, a0), h),
+            circle(on(radius, a0 + sweep), h),
+        ];
+    }
+    if sweep > 180.0 {
+        let half = sweep / 2.0;
+        return vec![
+            arc_band(center, radius, a0, a0 + half, width),
+            arc_band(center, radius, a0 + half, a0 + sweep, width),
+        ];
+    }
+    vec![arc_band(center, radius, a0, a0 + sweep, width)]
+}
+
+/// The outline of a stroke of `width` along a counter-clockwise arc from `a0` to `a1` degrees.
+fn arc_band(center: Point, radius: f64, a0: f64, a1: f64, width: f64) -> Contour {
+    let h = width / 2.0;
+    let on = |r: f64, a: f64| {
+        let (s, c) = a.to_radians().sin_cos();
+        pt(center.x + r * c, center.y + r * s)
+    };
+    let inner = (radius - h).max(0.0);
+    let ring = |r: f64, from: f64, to: f64, clockwise: bool| Segment::Arc {
+        center,
+        radius: r,
+        start_deg: from,
+        end_deg: to,
+        clockwise,
+    };
+    let cap = |at_deg: f64, from: f64| Segment::Arc {
+        center: on(radius, at_deg),
+        radius: h,
+        start_deg: from,
+        end_deg: from + 180.0,
+        clockwise: false,
+    };
+    let pieces = [
+        (
+            on(radius + h, a0),
+            Some(ring(radius + h, a0, a1, false)),
+            on(radius + h, a1),
+        ),
+        (on(radius + h, a1), Some(cap(a1, a1)), on(inner, a1)),
+        (
+            on(inner, a1),
+            (inner > 1e-9).then(|| ring(inner, a1, a0, true)),
+            on(inner, a0),
+        ),
+        (on(inner, a0), Some(cap(a0, a0 + 180.0)), on(radius + h, a0)),
+    ];
+    join(&pieces)
+}
+
+/// Round-ended strokes of `width` along every piece of `c`.
+pub fn stroke(c: &Contour, width: f64) -> Vec<Contour> {
+    let mut out = Vec::new();
+    for seg in &c.segments {
+        match *seg {
+            Segment::Line { from, to } => out.push(capsule(from, to, width)),
+            Segment::Arc {
+                center,
+                radius,
+                start_deg,
+                end_deg,
+                clockwise,
+            } => out.extend(arc_stroke(
+                center, radius, start_deg, end_deg, clockwise, width,
+            )),
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn p(x: f64, y: f64) -> Point {
+        Point { x, y }
+    }
+
+    #[test]
+    fn a_clockwise_stroke_is_its_counter_clockwise_twin() {
+        // The same arc from 20 to 100 degrees, written both ways round.
+        let c = p(1.0, 2.0);
+        let ccw = arc_stroke(c, 1.5, 20.0, 100.0, false, 0.4);
+        let cw = arc_stroke(c, 1.5, 100.0, 20.0, true, 0.4);
+        assert_eq!(ccw, cw);
+        // A turn of more than 180 degrees too.
+        assert_eq!(
+            arc_stroke(c, 1.5, 10.0, 300.0, false, 0.4),
+            arc_stroke(c, 1.5, 300.0, 10.0, true, 0.4)
+        );
+    }
+
+    #[test]
+    fn a_stroke_of_up_to_180_degrees_is_one_band_and_more_is_two() {
+        let c = p(0.0, 0.0);
+        assert_eq!(arc_stroke(c, 1.0, 0.0, 180.0, false, 0.2).len(), 1);
+        assert_eq!(arc_stroke(c, 1.0, 0.0, 90.0, false, 0.2).len(), 1);
+        assert_eq!(arc_stroke(c, 1.0, 0.0, 270.0, false, 0.2).len(), 2);
+        // A band: outer arc, cap, inner arc, cap.
+        let band = &arc_stroke(c, 1.0, 0.0, 90.0, false, 0.2)[0];
+        let arcs = band
+            .segments
+            .iter()
+            .filter(|s| matches!(s, Segment::Arc { .. }))
+            .count();
+        assert_eq!(arcs, 4);
+    }
+
+    #[test]
+    fn a_stroke_wider_than_twice_its_radius_has_no_inner_edge() {
+        let c = p(0.0, 0.0);
+        // A whole turn is one disk of radius radius + width / 2.
+        let ring = arc_stroke(c, 0.3, 0.0, 0.0, false, 1.0);
+        assert!(matches!(
+            ring[0].segments.as_slice(),
+            [Segment::Arc { radius, .. }] if ring.len() == 1 && (*radius - 0.8).abs() < 1e-12
+        ));
+        // A quarter turn is a sector and an end disk each, and no arc of radius 0.
+        let q = arc_stroke(c, 0.3, 0.0, 90.0, false, 1.0);
+        assert_eq!(q.len(), 3);
+        assert_eq!(q[0].segments.len(), 3);
+        assert!(q[0].segments.iter().all(|s| match s {
+            Segment::Arc { radius, .. } => (*radius - 0.8).abs() < 1e-12,
+            _ => true,
+        }));
+        assert_eq!(q[1], circle(p(0.3, 0.0), 0.5));
+        assert!(matches!(
+            q[2].segments.as_slice(),
+            [Segment::Arc { radius, .. }] if (*radius - 0.5).abs() < 1e-12
+        ));
+        // Exactly width = 2 * radius takes the same path.
+        assert_eq!(
+            arc_stroke(c, 0.5, 0.0, 0.0, false, 1.0),
+            vec![circle(c, 1.0)]
+        );
     }
 }

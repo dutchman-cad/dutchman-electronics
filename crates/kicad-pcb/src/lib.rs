@@ -11,6 +11,7 @@
 //! placement, side, rotation and 3D model references; tracks, arcs, vias, pads and filled zones;
 //! silkscreen lines, arcs, circles, polygons and texts. Anything else becomes a note.
 
+mod fonts;
 mod geom;
 mod outline;
 mod padshape;
