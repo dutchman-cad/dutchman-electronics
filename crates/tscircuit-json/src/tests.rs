@@ -184,8 +184,8 @@ fn silkscreen_path_oval_pill_and_bottom_layer() {
     };
     assert_eq!(o.board.layers[*layer].side, Some(Side::Bottom));
     assert!(close(*width, 0.2) && close(to.x, 1.0) && close(to.y, 1.0));
-    // An oval and a pill are each two lines and two arcs.
-    assert_eq!(g.len(), 2 + 4 + 4);
+    // An oval and a pill are each four arcs and four lines (a fully rounded rectangle).
+    assert_eq!(g.len(), 2 + 8 + 8);
     // The line with no end is unusable and counted.
     assert!(has_note(&o, "pcb_silkscreen_line"), "{:?}", o.notes);
 }

@@ -891,6 +891,31 @@ fn rect_shape(e: &Value, width: f64, height: f64) -> PadShape {
 
 fn smt_pad(e: &Value, layer: Option<usize>) -> Option<CopperItem> {
     let layer = layer?;
+    if text(e, "shape") == Some("polygon") {
+        let p = points(e, "points")?;
+        if p.len() < 3 {
+            return None;
+        }
+        // The pad's center when the element gives none: the middle of its bounding box.
+        let (lo_x, hi_x) = p.iter().fold((f64::MAX, f64::MIN), |(lo, hi), q| {
+            (lo.min(q.x), hi.max(q.x))
+        });
+        let (lo_y, hi_y) = p.iter().fold((f64::MAX, f64::MIN), |(lo, hi), q| {
+            (lo.min(q.y), hi.max(q.y))
+        });
+        let middle = Point {
+            x: (lo_x + hi_x) / 2.0,
+            y: (lo_y + hi_y) / 2.0,
+        };
+        return Some(CopperItem::PolygonPad {
+            layer,
+            at: xy(e).unwrap_or(middle),
+            shapes: vec![polygon(&p)],
+            drill: None,
+            plated: false,
+            owner: None,
+        });
+    }
     let at = xy(e)?;
     let (shape, size_x, size_y, rotation) = match text(e, "shape")? {
         "rect" | "rotated_rect" => {
@@ -901,21 +926,6 @@ fn smt_pad(e: &Value, layer: Option<usize>) -> Option<CopperItem> {
                 h,
                 angle(e, "ccw_rotation").unwrap_or(0.0),
             )
-        }
-        "polygon" => {
-            let p = points(e, "points")?;
-            let first = *p.first()?;
-            if p.len() < 3 {
-                return None;
-            }
-            return Some(CopperItem::PolygonPad {
-                layer,
-                at: xy(e).unwrap_or(first),
-                shapes: vec![polygon(&p)],
-                drill: None,
-                plated: false,
-                owner: None,
-            });
         }
         "circle" => {
             let d = length(e, "radius")? * 2.0;
