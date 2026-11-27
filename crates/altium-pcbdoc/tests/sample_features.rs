@@ -3,7 +3,7 @@
 //! origin and a solid 3D mask. Numbers to 0.001 mm, as AGENTS.md asks.
 
 use altium_pcbdoc::Altium;
-use board_model::{CopperItem, InputFormat, ModelSource, ReadOutcome, Segment, Severity};
+use board_model::{CopperItem, InputFormat, ModelSource, PadShape, ReadOutcome, Segment, Severity};
 
 const TOLERANCE: f64 = 0.001;
 
@@ -298,6 +298,45 @@ fn a_component_body_keeps_its_half_circles() -> Result<(), Box<dyn std::error::E
     assert!((x1 - 0.4).abs() <= TOLERANCE && y1.abs() <= TOLERANCE);
     assert!(
         out.notes.iter().all(|n| !n.message.contains("have arcs")),
+        "{:?}",
+        out.notes
+    );
+    Ok(())
+}
+
+/// pad-stack-tmb: one plated pad, top round 2.000, middle round 1.400, bottom rectangle
+/// 2.400 x 1.600, hole 0.800. The board model has one shape per pad, so it is read with the top
+/// size and shape, and a note says so.
+#[test]
+fn a_top_middle_bottom_pad_is_read_with_its_top_size() -> Result<(), Box<dyn std::error::Error>> {
+    let out = read("pad-stack-tmb.PcbDoc")?;
+    let pads: Vec<_> = out
+        .board
+        .copper
+        .iter()
+        .filter_map(|c| match c {
+            CopperItem::Pad {
+                at,
+                shape,
+                size_x,
+                size_y,
+                drill,
+                plated,
+                ..
+            } => Some((at, shape, size_x, size_y, drill, plated)),
+            _ => None,
+        })
+        .collect();
+    let [(at, shape, size_x, size_y, drill, plated)] = pads.as_slice() else {
+        return Err(format!("{pads:?}").into());
+    };
+    assert!((at.x - 25.0).abs() <= TOLERANCE && (at.y - 15.0).abs() <= TOLERANCE);
+    assert_eq!(**shape, PadShape::Round);
+    assert!((**size_x - 2.0).abs() <= TOLERANCE && (**size_y - 2.0).abs() <= TOLERANCE);
+    assert!(drill.is_some_and(|d| (d - 0.8).abs() <= TOLERANCE) && **plated);
+    assert!(
+        out.notes.iter().any(|n| n.message
+            == "1 pad(s) differ between top, middle and bottom; read with the top size and shape"),
         "{:?}",
         out.notes
     );
