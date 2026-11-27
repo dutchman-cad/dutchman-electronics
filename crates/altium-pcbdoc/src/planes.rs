@@ -49,6 +49,8 @@ const DEFAULT_CONNECT: Connect = Connect::Relief {
 };
 /// The relief spokes seen on our board, at 45 degrees plus each quarter turn.
 const SPOKES_DEG: [f64; 4] = [45.0, 135.0, 225.0, 315.0];
+/// The pull-back from the board edge Altium gives a new plane, used when the stack has none: 20 mil.
+const DEFAULT_PULL_BACK: f64 = 0.508;
 /// Arcs are cut into straight pieces of at most this many degrees to test where a hole lies.
 const FLATTEN_STEP_DEG: f64 = 5.0;
 
@@ -224,10 +226,13 @@ pub(crate) fn read(
     data: &[u8],
     layers: &CopperLayers,
     drills: &[Drill],
+    cutouts: &[Contour],
     rules: &Rules,
     notes: &mut Vec<Note>,
 ) -> Result<Planes, String> {
     let mut planes = Planes::default();
+    let mut cut = 0usize;
+    let mut default_pull_back = 0usize;
     let mut no_layer = 0usize;
     let mut unreadable = 0usize;
     for record in text_records(data, "/Polygons6/Data")? {
@@ -273,6 +278,25 @@ pub(crate) fn read(
                 }
             }
         }
+        // The region leaves the pull-back from the board's outer edge out, but not from a board
+        // cutout (#123): cut every cutout, grown by the plane's pull-back, out of it.
+        if !cutouts.is_empty() {
+            let pull_back = layers.pull_back(layer).unwrap_or_else(|| {
+                default_pull_back += 1;
+                DEFAULT_PULL_BACK
+            });
+            let region_box = bounds(&edge);
+            for cutout in cutouts {
+                let pieces = grown(cutout, pull_back);
+                let near = pieces
+                    .iter()
+                    .any(|piece| overlap(bounds(&flatten(piece)), region_box));
+                if near {
+                    holes.extend(pieces);
+                    cut += 1;
+                }
+            }
+        }
         planes.copper.push(CopperItem::Region {
             layer,
             contour,
@@ -291,6 +315,24 @@ pub(crate) fn read(
         notes.push(Note {
             severity: Severity::Dropped,
             message: format!("{unreadable} split-plane region(s) have an outline that is not read"),
+        });
+    }
+    if cut > 0 {
+        notes.push(Note {
+            severity: Severity::Info,
+            message: format!(
+                "board cutouts cut out of split-plane regions {cut} time(s), each grown by its \
+                 plane's pull-back from the board edge"
+            ),
+        });
+    }
+    if default_pull_back > 0 {
+        notes.push(Note {
+            severity: Severity::Info,
+            message: format!(
+                "{default_pull_back} split-plane region(s) on a plane whose pull-back the stack \
+                 does not give; Altium's default of 0.508 is used around cutouts"
+            ),
         });
     }
     if !planes.copper.is_empty() {
@@ -404,6 +446,105 @@ fn flatten(contour: &Contour) -> Vec<Point> {
     points
 }
 
+/// A board cutout grown by `by` on every side, as contours whose union is the grown shape: a
+/// round cutout (arcs about one center, one radius, a whole turn) as one larger circle; any other
+/// as the cutout itself and, along each straight piece of its edge (arcs cut as in [`flatten`]),
+/// a capsule reaching `by` to either side, round at both ends.
+fn grown(cutout: &Contour, by: f64) -> Vec<Contour> {
+    if let Some((center, radius)) = round(cutout) {
+        return vec![circle(center, radius + by)];
+    }
+    let points = flatten(cutout);
+    let next = points.iter().skip(1).chain(points.first());
+    let mut out = vec![cutout.clone()];
+    out.extend(
+        points
+            .iter()
+            .zip(next)
+            .filter_map(|(&a, &b)| capsule(a, b, by)),
+    );
+    out
+}
+
+/// The center and radius when every segment of `c` is an arc about one center with one radius
+/// (to 1e-9 mm) and the arcs make a whole turn.
+fn round(c: &Contour) -> Option<(Point, f64)> {
+    let mut first: Option<(Point, f64)> = None;
+    let mut turn = 0.0;
+    for s in &c.segments {
+        let Segment::Arc { center, radius, .. } = *s else {
+            return None;
+        };
+        let same = |(p, r): (Point, f64)| {
+            (p.x - center.x).abs() < 1e-9
+                && (p.y - center.y).abs() < 1e-9
+                && (r - radius).abs() < 1e-9
+        };
+        match first {
+            None => first = Some((center, radius)),
+            Some(f) if same(f) => {}
+            Some(_) => return None,
+        }
+        turn += s.sweep_deg().unwrap_or(0.0).abs();
+    }
+    first.filter(|_| (turn - 360.0).abs() < 1e-6)
+}
+
+/// The points within `by` of the segment `a`-`b`: two straight sides and a half circle at each
+/// end, counter-clockwise. `None` for a segment of no length.
+fn capsule(a: Point, b: Point, by: f64) -> Option<Contour> {
+    let (dx, dy) = (b.x - a.x, b.y - a.y);
+    let length = dx.hypot(dy);
+    if length <= 0.0 || by <= 0.0 {
+        return None;
+    }
+    let deg = dy.atan2(dx).to_degrees();
+    let (nx, ny) = (-dy / length * by, dx / length * by);
+    let at = |p: Point, sx: f64, sy: f64| Point {
+        x: p.x + sx,
+        y: p.y + sy,
+    };
+    let half = |center: Point, start_deg: f64| Segment::Arc {
+        center,
+        radius: by,
+        start_deg,
+        end_deg: start_deg + 180.0,
+        clockwise: false,
+    };
+    Some(Contour {
+        segments: vec![
+            Segment::Line {
+                from: at(a, -nx, -ny),
+                to: at(b, -nx, -ny),
+            },
+            half(b, deg - 90.0),
+            Segment::Line {
+                from: at(b, nx, ny),
+                to: at(a, nx, ny),
+            },
+            half(a, deg + 90.0),
+        ],
+    })
+}
+
+/// The smallest and largest x and y of `points`.
+fn bounds(points: &[Point]) -> (f64, f64, f64, f64) {
+    points.iter().fold(
+        (
+            f64::INFINITY,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NEG_INFINITY,
+        ),
+        |(x0, y0, x1, y1), p| (x0.min(p.x), y0.min(p.y), x1.max(p.x), y1.max(p.y)),
+    )
+}
+
+/// Whether two bounds overlap.
+fn overlap(a: (f64, f64, f64, f64), b: (f64, f64, f64, f64)) -> bool {
+    a.0 <= b.2 && b.0 <= a.2 && a.1 <= b.3 && b.1 <= a.3
+}
+
 /// Whether `p` lies inside the closed polygon `points` (even-odd rule).
 fn contains(points: &[Point], p: Point) -> bool {
     let mut inside = false;
@@ -444,6 +585,55 @@ mod tests {
 
     fn p(x: f64, y: f64) -> Point {
         Point { x, y }
+    }
+
+    fn square(x0: f64, y0: f64, x1: f64, y1: f64) -> Contour {
+        let c = [p(x0, y0), p(x1, y0), p(x1, y1), p(x0, y1)];
+        Contour {
+            segments: (0..4)
+                .map(|i| Segment::Line {
+                    from: c[i],
+                    to: c[(i + 1) % 4],
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn a_round_cutout_grows_into_one_larger_circle() {
+        let pieces = grown(&circle(p(46.5, 5.5), 1.5), 0.508);
+        assert_eq!(pieces.len(), 1);
+        assert_eq!(round(&pieces[0]), Some((p(46.5, 5.5), 2.008)));
+    }
+
+    #[test]
+    fn a_square_cutout_grows_by_a_capsule_along_each_edge() {
+        let cutout = square(10.0, 10.0, 12.0, 12.0);
+        assert_eq!(round(&cutout), None);
+        let pieces = grown(&cutout, 0.5);
+        // The cutout itself and four capsules.
+        assert_eq!(pieces.len(), 5);
+        assert_eq!(pieces[0], cutout);
+        // Every point of every capsule lies within 0.5 (to 1e-9) of the cutout's edge, and the
+        // capsules reach 0.5 out: the grown square spans 9.5 to 12.5.
+        let edge = flatten(&cutout);
+        let mut reach = (f64::INFINITY, f64::NEG_INFINITY);
+        for piece in &pieces[1..] {
+            for q in flatten(piece) {
+                assert!(distance(&edge, q) <= 0.5 + 1e-9, "{q:?}");
+                reach = (reach.0.min(q.x), reach.1.max(q.x));
+            }
+        }
+        assert!(
+            (reach.0 - 9.5).abs() < 1e-9 && (reach.1 - 12.5).abs() < 1e-9,
+            "{reach:?}"
+        );
+    }
+
+    #[test]
+    fn a_segment_of_no_length_gives_no_capsule() {
+        assert_eq!(capsule(p(1.0, 1.0), p(1.0, 1.0), 0.5), None);
+        assert_eq!(capsule(p(1.0, 1.0), p(2.0, 1.0), 0.0), None);
     }
 
     fn rule(kind_code: u16, text: &str) -> Vec<u8> {
