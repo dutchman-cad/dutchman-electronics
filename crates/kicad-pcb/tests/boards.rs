@@ -492,7 +492,7 @@ fn text_justification_and_pen_are_carried() {
     use board_model::{HorizontalAnchor as H, TextAnchor, TextFont, VerticalAnchor as V};
     let o = board("text-justify");
     let b = &o.board;
-    assert_eq!(b.texts.len(), 60, "{:?}", o.notes);
+    assert_eq!(b.texts.len(), 71, "{:?}", o.notes);
     assert!(!notes_contain(&o, "estimate"));
     // README: the first text is "HIH" at (12, 12), left and top, 2 mm high, 0.25 mm pen.
     let t = b.texts.iter().find(|t| at(t.at, 12.0, 12.0)).unwrap();
@@ -506,14 +506,14 @@ fn text_justification_and_pen_are_carried() {
     assert!(matches!(t.font, TextFont::Stroke { width, .. } if near(width, 0.25)));
     // Bottom-side texts are mirrored and keep "left" as the end their letters start from.
     let mirrored: Vec<_> = b.texts.iter().filter(|t| t.mirrored).collect();
-    assert_eq!(mirrored.len(), 18);
+    assert_eq!(mirrored.len(), 23);
     assert!(mirrored
         .iter()
         .any(|t| t.anchor.horizontal == H::Left && t.rotation_deg == 0.0));
     // Two lines are kept as one text.
     assert_eq!(
         b.texts.iter().filter(|t| t.content == "HIH\nHIH").count(),
-        8
+        16
     );
     // The 1 mm text asked to have a 0.3 mm pen is drawn with 0.25.
     let small = b.texts.iter().find(|t| near(t.height, 1.0)).unwrap();

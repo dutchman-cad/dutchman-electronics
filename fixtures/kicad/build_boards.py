@@ -703,6 +703,14 @@ for size, pen in ((1.2, 0.15), (3.0, 0.5)):
         cells.append(("F", 0.0, h, v, content, size, pen))
 for size, pen in ((2.0, 0.5), (3.0, 0.15), (1.0, 0.3)):
     cells.append(("F", 0.0, "left", "top", "HIH", size, pen))
+# Mirrored and turned 90 degrees, and two lines turned (30 and 90 degrees) and mirrored.
+for h, v in (("left", "top"), ("center", "center"), ("right", "bottom")):
+    cells.append(("B", 90.0, h, v, "HIH", 2.0, 0.25))
+for angle in (30.0, 90.0):
+    for h, v in (("left", "top"), ("center", "center"), ("right", "bottom")):
+        cells.append(("F", angle, h, v, "HIH\nHIH", 2.0, 0.25))
+for h, v in (("left", "top"), ("right", "bottom")):
+    cells.append(("B", 0.0, h, v, "HIH\nHIH", 2.0, 0.25))
 rows = (len(cells) + 3) // 4
 rect(b, (0, 0), (96, 24 * rows))
 for i, (side, angle, h, v, content, size, pen) in enumerate(cells):
@@ -718,3 +726,27 @@ for i, (side, angle, h, v, content, size, pen) in enumerate(cells):
     tx.SetMirrored(side == "B")
     b.Add(tx)
 save(b, "text-justify")
+
+# 18. text-strings: ordinary silkscreen strings ("R1", "GND", "0.1uF", "J3") at 1, 1.5 and 2.5 mm
+#     (pens 0.15, 0.2 and 0.3), centered and right-justified, vertically centered, on the top
+#     silkscreen, one per grid cell 24 mm apart in 4 columns, in that order (size, string,
+#     justification). Used to see how far KiCad's own letters differ from ours in placement.
+b = new_board()
+cells = []
+for size, pen in ((1.0, 0.15), (1.5, 0.2), (2.5, 0.3)):
+    for content in ("R1", "GND", "0.1uF", "J3"):
+        for h in ("center", "right"):
+            cells.append((h, content, size, pen))
+rows = (len(cells) + 3) // 4
+rect(b, (0, 0), (96, 24 * rows))
+for i, (h, content, size, pen) in enumerate(cells):
+    tx = pcbnew.PCB_TEXT(b)
+    tx.SetText(content)
+    tx.SetLayer(pcbnew.F_SilkS)
+    tx.SetPosition(p(12 + 24 * (i % 4), 12 + 24 * (i // 4)))
+    tx.SetTextSize(VECTOR2I(FromMM(size), FromMM(size)))
+    tx.SetTextThickness(FromMM(pen))
+    tx.SetHorizJustify(H_ALIGN[h])
+    tx.SetVertJustify(pcbnew.GR_TEXT_V_ALIGN_CENTER)
+    b.Add(tx)
+save(b, "text-strings")

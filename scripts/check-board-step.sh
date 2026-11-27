@@ -36,7 +36,8 @@ for board in "${boards[@]}"; do
   case "$name" in
     altium-four-layer|altium-four-layer-planes|altium-all-features|altium-vias-blind-buried) width=50; height=30; thickness=1.8122 ;;
     kicad-four-layer|kicad-k10-four-layer) width=50; height=30; thickness=1.2 ;;
-    kicad-text-justify) width=96; height=360; thickness=1.6 ;;
+    kicad-text-justify) width=96; height=432; thickness=1.6 ;;
+    kicad-text-strings) width=96; height=144; thickness=1.6 ;;
     open-GB-CARTPP-XC) width=80; height=55; thickness=1.0 ;;
     open-Franzininho-DIY) width=51.0675; height=30.03; thickness=1.6 ;;
     open-*) echo "::error::no expected size for $name"; failed=1; continue ;;
