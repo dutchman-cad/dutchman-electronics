@@ -326,7 +326,7 @@ fn an_arc_in_a_custom_pad_polygon_stays_an_arc() {
 
 fn font_text(embedded: &str) -> String {
     format!(
-        "{HEAD}(gr_text \"Hi\" (at 5 5 0) (layer \"F.SilkS\") \
+        "{HEAD}(gr_text \"Hi\" (at 5 5 0) (layer \"F.Cu\") \
          (effects (font (face \"Test Sans\") (size 1 1))))\n{embedded})"
     )
 }
