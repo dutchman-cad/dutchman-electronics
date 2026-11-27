@@ -296,7 +296,12 @@ pub(super) fn draw(text: &Text) -> Option<Drawn> {
     let rise = baseline_rise(text, widths.len(), line_units * scale);
     for (glyph, x0, squeeze, line) in placed {
         // The line's box reaches the side gap past its advance width on each side.
-        let gap = (TEXT_SIDE_GAP_PER_HEIGHT * text.height + TEXT_SIDE_GAP_PER_PEN * pen) / scale;
+        // The default anchor is the bare left end of the baseline, with no box around it.
+        let gap = if text.anchor == board_model::TextAnchor::default() {
+            0.0
+        } else {
+            (TEXT_SIDE_GAP_PER_HEIGHT * text.height + TEXT_SIDE_GAP_PER_PEN * pen) / scale
+        };
         let shift = widths.get(line).map_or(0.0, |w| {
             horizontal_share(text.anchor.horizontal) * (w + 2.0 * gap) - gap
         });

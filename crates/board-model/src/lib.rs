@@ -307,7 +307,8 @@ pub struct Text {
 /// tall, a capital's top lies [`TEXT_CAP_GAP`] heights below the box top and the baseline
 /// [`TEXT_BASELINE_GAP`] heights above its bottom (the room for descenders), and the box of a
 /// text of several lines is the first line's box plus one line pitch for every further line.
-/// Everything is in the text's own frame, before it is mirrored and turned about `at`, so a
+/// (The default anchor, the left end of the baseline, has no box around it: the point is the
+/// first glyph's origin.) Everything is in the text's own frame, before it is mirrored and turned about `at`, so a
 /// mirrored text's `Left` is the end its letters start from, on whichever side that falls.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TextAnchor {
