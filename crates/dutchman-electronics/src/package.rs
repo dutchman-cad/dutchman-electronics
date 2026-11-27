@@ -704,6 +704,7 @@ pub fn build_accepting(
         "roughness": BOARD_FINISH.roughness,
         "notes": board_notes,
     })];
+    let plated = plating(&board, &step);
     let mut files = vec![(BOARD_FILE.to_string(), step.text.into_bytes())];
     let recognizer = Recognizer::new(&board);
     let placed = components_with(
@@ -727,7 +728,6 @@ pub fn build_accepting(
     );
     parts.extend(placed.parts);
     notes.extend(placed.notes);
-    let plated = plating(&board, &step);
     notes.extend(plated.notes);
     // The plating takes the top finish; a process we do not know is named once, in a note.
     let (plating_look, _) = pad_look(board.appearance.top_finish.as_ref());
