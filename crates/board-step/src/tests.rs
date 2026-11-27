@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 
-use board_model::{Board, Contour, CopperItem, Outline, PadShape, Point, Segment, Severity};
+use board_model::{
+    Board, Contour, CopperItem, Layer, LayerKind, Outline, PadShape, Point, Segment, Severity, Side,
+    StackPosition,
+};
 
 use super::*;
 
@@ -604,6 +607,7 @@ fn tube(x: f64, y: f64, outer: f64, inner: f64) -> Tube {
         at: p(x, y),
         outer_radius: outer,
         inner_radius: inner,
+        span: None,
     }
 }
 
@@ -811,4 +815,105 @@ fn two_arcs_of_different_circles_meet_on_both_circles() {
         let prev = edges[(i + edges.len() - 1) % edges.len()];
         assert_eq!(prev.end, edges[i].start);
     }
+}
+
+/// A 1.6 mm board with four copper layers: top (index 0, depth 0), two inner ones at depths 0.5
+/// and 1.0, and bottom (index 3, depth 1.565), each 0.035 mm thick.
+fn four_layer(copper: Vec<CopperItem>) -> Board {
+    let layer = |name: &str, side: Option<Side>, depth: f64| Layer {
+        name: name.into(),
+        kind: LayerKind::Copper,
+        side,
+        position: Some(StackPosition {
+            depth,
+            thickness: 0.035,
+        }),
+    };
+    let mut b = board(rect(0.0, 0.0, 50.0, 30.0), vec![], copper);
+    b.layers = vec![
+        layer("F.Cu", Some(Side::Top), 0.0),
+        layer("In1.Cu", None, 0.5),
+        layer("In2.Cu", None, 1.0),
+        layer("B.Cu", Some(Side::Bottom), 1.565),
+    ];
+    b
+}
+
+fn via_on(x: f64, layers: Option<(usize, usize)>) -> CopperItem {
+    CopperItem::Via {
+        at: p(x, 5.0),
+        diameter: 0.8,
+        drill: 0.4,
+        tented: [None, None],
+        mask_expansion: None,
+        layers,
+    }
+}
+
+#[test]
+fn a_blind_via_is_a_pocket_open_on_one_face() {
+    // Top to In1: a pocket from the top face down to the lower face of In1 (1.6 - 0.535).
+    let out = write(&four_layer(vec![via_on(10.0, Some((0, 1)))]), "blind").unwrap();
+    assert!(out.notes.is_empty(), "{:?}", out.notes);
+    assert_eq!(out.holes.len(), 1);
+    let (low, high) = out.holes[0].span.unwrap();
+    assert!(
+        (low - 1.065).abs() < 1e-9 && (high - 1.6).abs() < 1e-9,
+        "{low} {high}"
+    );
+    // The top face has the rim as an inner loop; the pocket adds a floor and a wall (2 faces)
+    // to the 6 faces of the box.
+    assert_eq!(out.stats.openings, 1);
+    assert_eq!(out.stats.faces, 6 + 2 + 1);
+    check_topology(&out.text);
+
+    // The same from the bottom (In2 to bottom): a pocket open on the bottom face.
+    let out = write(&four_layer(vec![via_on(10.0, Some((3, 2)))]), "blind").unwrap();
+    let (low, high) = out.holes[0].span.unwrap();
+    assert!(
+        low.abs() < 1e-9 && (high - 0.565).abs() < 1e-9,
+        "{low} {high}"
+    );
+    assert_eq!(out.stats.openings, 0);
+    check_topology(&out.text);
+}
+
+#[test]
+fn a_buried_via_is_a_closed_void_inside_the_board() {
+    let out = write(&four_layer(vec![via_on(10.0, Some((1, 2)))]), "buried").unwrap();
+    let (low, high) = out.holes[0].span.unwrap();
+    assert!(
+        (low - 0.565).abs() < 1e-9 && (high - 1.1).abs() < 1e-9,
+        "{low} {high}"
+    );
+    assert!(out.text.contains("BREP_WITH_VOIDS"));
+    assert!(out.text.contains("ORIENTED_CLOSED_SHELL"));
+    assert_eq!(out.stats.openings, 0);
+    check_topology(&out.text);
+}
+
+#[test]
+fn a_span_over_every_layer_or_one_the_board_cannot_place_is_drilled_through() {
+    let out = write(&four_layer(vec![via_on(10.0, Some((0, 3)))]), "through").unwrap();
+    assert_eq!(out.holes[0].span, None);
+    assert_eq!(out.stats.openings, 1);
+    assert!(out.notes.is_empty(), "{:?}", out.notes);
+
+    let out = write(&four_layer(vec![via_on(10.0, Some((0, 9)))]), "unknown").unwrap();
+    assert_eq!(out.holes[0].span, None);
+    assert!(out
+        .notes
+        .iter()
+        .any(|n| n.severity == Severity::Warning && n.message.contains("cannot place")));
+    check_topology(&out.text);
+}
+
+#[test]
+fn tubes_can_cover_only_a_span() {
+    let mut t = tube(5.0, 5.0, 0.2, 0.17);
+    t.span = Some((1.0, 1.6));
+    let out = tubes(&[t], 0.0, 1.6, "plating").unwrap();
+    assert!(out.text.contains("1.6") && !out.text.contains("CARTESIAN_POINT('',(5.,5.,0.))"));
+    t.span = Some((1.0, 1.0));
+    assert!(tubes(&[t], 0.0, 1.6, "plating").is_err());
 }
