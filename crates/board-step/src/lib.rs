@@ -688,8 +688,7 @@ fn same_kind(a: Drill, b: Drill) -> bool {
 fn contains(outer: (usize, Drill), inner: (usize, Drill)) -> bool {
     let (i, o) = outer;
     let (j, n) = inner;
-    distance(o.at, n.at) + n.radius <= o.radius + 1e-3
-        && (o.radius > n.radius + TOLERANCE || i < j)
+    distance(o.at, n.at) + n.radius <= o.radius + 1e-3 && (o.radius > n.radius + TOLERANCE || i < j)
 }
 
 /// A hole, or overlapping holes of one kind, as it is cut.
@@ -810,7 +809,11 @@ fn merge_overlapping(kept: Vec<Drill>, notes: &mut Vec<Note>) -> Vec<Cut> {
             if let [hole] = rest.as_slice() {
                 merged_holes = merged_holes.saturating_add(total);
                 merged_openings = merged_openings.saturating_add(1);
-                out.push(Cut::Single { hole: *hole, also, unplaced });
+                out.push(Cut::Single {
+                    hole: *hole,
+                    also,
+                    unplaced,
+                });
                 continue;
             }
             match union_outline(&circles) {
@@ -869,7 +872,11 @@ fn keep_clear(group: Vec<Drill>, out: &mut Vec<Cut>, left_out: &mut usize) {
             *left_out = left_out.saturating_add(1);
         }
     }
-    out.extend(clear.into_iter().map(|hole| Cut::Single { hole, also: 0, unplaced: usize::from(hole.unplaced) }));
+    out.extend(clear.into_iter().map(|hole| Cut::Single {
+        hole,
+        also: 0,
+        unplaced: usize::from(hole.unplaced),
+    }));
 }
 
 /// One arc of a union outline, counter-clockwise on its circle.
@@ -919,6 +926,15 @@ fn union_outline(circles: &[(Point, f64)]) -> Option<Vec<(Edge2, usize)>> {
                     y: my - h * ux,
                 },
             ] {
+                // A third circle at the same crossing makes an ambiguous junction.
+                if crossings
+                    .get(i)?
+                    .iter()
+                    .chain(crossings.get(j)?.iter())
+                    .any(|(_, old)| distance(*old, p) < 1e-7)
+                {
+                    return None;
+                }
                 let on_i = (p.y - ci.y).atan2(p.x - ci.x);
                 let on_j = (p.y - cj.y).atan2(p.x - cj.x);
                 crossings.get_mut(i)?.push((on_i, p));
@@ -1222,7 +1238,10 @@ fn profile(board: &Board, thickness: f64, notes: &mut Vec<Note>) -> Result<Profi
         kept.push(hole);
     }
     for (count, why) in [
-        (crowded, "exceed the bounded neighboring-hole comparison limit"),
+        (
+            crowded,
+            "exceed the bounded neighboring-hole comparison limit",
+        ),
         (at_edge, "touch or cross the board edge"),
         (in_cutout, "touch or fall inside a cutout"),
         (touching, "touch another hole at a single point"),
@@ -1239,7 +1258,10 @@ fn profile(board: &Board, thickness: f64, notes: &mut Vec<Note>) -> Result<Profi
         }
     }
     let cuts = merge_overlapping(kept, notes);
-    let unplaced = cuts.iter().map(Cut::unplaced).fold(0usize, usize::saturating_add);
+    let unplaced = cuts
+        .iter()
+        .map(Cut::unplaced)
+        .fold(0usize, usize::saturating_add);
     if unplaced > 0 {
         notes.push(Note {
             severity: Severity::Warning,
