@@ -903,16 +903,24 @@ fn a_blind_via_is_a_pocket_open_on_one_face() {
 }
 
 #[test]
-fn a_buried_via_is_a_closed_void_inside_the_board() {
+fn a_buried_via_leaves_the_body_solid_and_keeps_its_span_for_the_plating() {
+    // In1 to In2: from the lower face of In2 (1.6 - 1.035 = 0.565) up to the upper face of In1
+    // (1.6 - 0.5 = 1.1).
     let out = write(&four_layer(vec![via_on(10.0, Some((1, 2)))]), "buried").unwrap();
     let (low, high) = out.holes[0].span.unwrap();
     assert!(
         (low - 0.565).abs() < 1e-9 && (high - 1.1).abs() < 1e-9,
         "{low} {high}"
     );
-    assert!(out.text.contains("BREP_WITH_VOIDS"));
-    assert!(out.text.contains("ORIENTED_CLOSED_SHELL"));
+    // The body is the plain box: 6 faces, no opening, no void.
     assert_eq!(out.stats.openings, 0);
+    assert_eq!(out.stats.faces, 6);
+    assert!(!out.text.contains("BREP_WITH_VOIDS"));
+    let note = "1 buried via(s) not drilled into the board body; they lie fully inside it";
+    assert!(out
+        .notes
+        .iter()
+        .any(|n| n.severity == Severity::Info && n.message == note));
     check_topology(&out.text);
 }
 

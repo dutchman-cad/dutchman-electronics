@@ -622,19 +622,15 @@ struct Profile {
     openings: Vec<Vec<Edge2>>,
     /// Blind holes, open on one face of the board.
     pockets: Vec<Pocket>,
-    /// Buried holes: closed voids inside the board.
-    voids: Vec<Pocket>,
     holes: Vec<CutHole>,
 }
 
-/// A hole that does not go through the board: a round pocket open on the top or bottom face, or
-/// (for a buried hole) a closed void. `edges` run clockwise for a pocket and counter-clockwise for
-/// a void.
+/// A blind hole: a round pocket open on the top or bottom face. `edges` run clockwise.
 struct Pocket {
     edges: Vec<Edge2>,
     /// Its lowest and highest height.
     z: (f64, f64),
-    /// For a pocket: open on the top face (otherwise the bottom face).
+    /// Open on the top face (otherwise the bottom face).
     from_top: bool,
 }
 
@@ -741,7 +737,7 @@ fn profile(board: &Board, thickness: f64, notes: &mut Vec<Note>) -> Result<Profi
     }
     let mut cut = Vec::new();
     let mut pockets = Vec::new();
-    let mut voids = Vec::new();
+    let mut buried = 0usize;
     for hole in kept {
         cut.push(CutHole {
             at: hole.at,
@@ -771,19 +767,23 @@ fn profile(board: &Board, thickness: f64, notes: &mut Vec<Note>) -> Result<Profi
                     from_top: false,
                 });
             }
-            // Counter-clockwise: the void's own faces point out of the void.
-            Some((low, high)) => voids.push(Pocket {
-                edges,
-                z: (low, high),
-                from_top: false,
-            }),
+            // A buried hole is invisible from outside: the body stays solid there. Its plating
+            // (a separate part) still follows the span.
+            Some(_) => buried = buried.saturating_add(1),
         }
+    }
+    if buried > 0 {
+        notes.push(Note {
+            severity: Severity::Info,
+            message: format!(
+                "{buried} buried via(s) not drilled into the board body; they lie fully inside it"
+            ),
+        });
     }
     Ok(Profile {
         outer,
         openings,
         pockets,
-        voids,
         holes: cut,
     })
 }
@@ -994,7 +994,7 @@ fn body(
     w: &mut Writer,
     outer: Vec<Edge2>,
     openings: Vec<Vec<Edge2>>,
-    (pockets, voids): (Vec<Pocket>, Vec<Pocket>),
+    pockets: Vec<Pocket>,
     (z0, z1): (f64, f64),
     name: &str,
     stats: &mut Stats,
@@ -1075,34 +1075,7 @@ fn body(
     stats.faces = stats.faces.saturating_add(faces.len());
 
     let shell = w.add(format!("CLOSED_SHELL('',({}))", ids(&faces)));
-    if voids.is_empty() {
-        return w.add(format!("MANIFOLD_SOLID_BREP({},#{shell})", text(name)));
-    }
-    // Buried holes: each a closed shell of its own, turned to face into the void.
-    let mut inner = Vec::new();
-    for void in voids {
-        let (v0, v1) = void.z;
-        let r = ring(w, void.edges, (v0, v1), stats);
-        let mut vfaces = Vec::new();
-        side_faces(w, &r, v0, &mut vfaces);
-        let up: Vec<(Edge3, bool)> = r.top.iter().map(|e| (*e, true)).collect();
-        let down: Vec<(Edge3, bool)> = r.bottom.iter().rev().map(|e| (*e, false)).collect();
-        for (z, normal, edges) in [(v1, 1.0, &up), (v0, -1.0, &down)] {
-            let lp = edge_loop(w, edges);
-            let bound = w.add(format!("FACE_OUTER_BOUND('',#{lp},.T.)"));
-            let plane = w.placement([0.0, 0.0, z], [0.0, 0.0, normal], [1.0, 0.0, 0.0]);
-            let surface = w.add(format!("PLANE('',#{plane})"));
-            vfaces.push(w.add(format!("ADVANCED_FACE('',(#{bound}),#{surface},.T.)")));
-        }
-        stats.faces = stats.faces.saturating_add(vfaces.len());
-        let void_shell = w.add(format!("CLOSED_SHELL('',({}))", ids(&vfaces)));
-        inner.push(w.add(format!("ORIENTED_CLOSED_SHELL('',*,#{void_shell},.F.)")));
-    }
-    w.add(format!(
-        "BREP_WITH_VOIDS({},#{shell},({}))",
-        text(name),
-        ids(&inner)
-    ))
+    w.add(format!("MANIFOLD_SOLID_BREP({},#{shell})", text(name)))
 }
 
 /// The ids as a STEP list: `#1,#2`.
@@ -1179,14 +1152,14 @@ fn finish(mut w: Writer, breps: &[usize], name: &str, description: &str) -> Stri
 fn solid(
     outer: Vec<Edge2>,
     openings: Vec<Vec<Edge2>>,
-    partial: (Vec<Pocket>, Vec<Pocket>),
+    pockets: Vec<Pocket>,
     z: (f64, f64),
     name: &str,
     description: &str,
     stats: &mut Stats,
 ) -> String {
     let mut w = Writer::default();
-    let brep = body(&mut w, outer, openings, partial, z, name, stats);
+    let brep = body(&mut w, outer, openings, pockets, z, name, stats);
     finish(w, &[brep], name, description)
 }
 
@@ -1219,7 +1192,7 @@ pub fn write(board: &Board, name: &str) -> Result<BoardStep, StepError> {
     let text = solid(
         profile.outer,
         profile.openings,
-        (profile.pockets, profile.voids),
+        profile.pockets,
         (0.0, thickness),
         name,
         "Board substrate",
@@ -1267,7 +1240,7 @@ pub fn prism(outline: &Contour, z0: f64, z1: f64, name: &str) -> Result<BoardSte
     let text = solid(
         outer,
         Vec::new(),
-        (Vec::new(), Vec::new()),
+        Vec::new(),
         (z0, z1),
         name,
         "Extruded body",
@@ -1348,7 +1321,7 @@ pub fn tubes(list: &[Tube], z0: f64, z1: f64, name: &str) -> Result<BoardStep, S
             &mut w,
             outer,
             vec![inner],
-            (Vec::new(), Vec::new()),
+            Vec::new(),
             z,
             name,
             &mut stats,
