@@ -69,9 +69,13 @@
 //!   0x01 bit set there too. On a linked pad bytes 121..125 are not kept in step (0.1 on P3,
 //!   Manual 0.2), so the bottom takes the top's value. Byte 125 is 1 on P8, whose expansion is
 //!   measured from the hole's edge. Bytes 97..100 are 1 on every pad but P1 and P8 here and on
-//!   every pad of the older boards; not read. The tenting and the expansion go on the pad; the
-//!   hole-edge measure and the paste expansion have no place in the board model, so the pads are
-//!   counted in a note and drawn from the pad's edge, paste not drawn.
+//!   every pad of the older boards; not read. The tenting and the expansion go on the pad. An
+//!   expansion measured from the hole's edge is turned into one from the pad's edge: the opening
+//!   reaches `hole / 2 + e` from the center and the pad `size / 2`, so it is
+//!   `(hole + 2 e - size) / 2`, with the shorter side as the size of a pad that is not round (P8:
+//!   (1.000 + 0.200 - 2.000) / 2 = -0.400), and a note counts the pads whose opening ends up
+//!   smaller than the pad. The paste expansion has no place in the board model and is only
+//!   counted in a note.
 //! - Pad shapes (`pad-shapes`, checked against the Gerber file Altium wrote for its top copper):
 //!   shape code 3 is an octagon, a rectangle of the pad's size with each corner cut off at 45
 //!   degrees by a quarter of the shorter side (0.25 on a 2.000 x 1.000 pad, 0.375 on 1.500 x
@@ -586,12 +590,17 @@ pub(crate) fn pads(
         let own = pad_mask(g);
         own_masks.count(&own);
         let tented = own.tented.map(|t| t.then_some(true));
-        let mask_expansion = match own.expansion {
-            Some([top, bottom]) => [Some(top), Some(bottom)],
-            None => [None, None],
-        };
         let [top, middle, bottom] = sizes;
         let (size_x, size_y) = top;
+        let mask_expansion = match own.expansion {
+            Some(sides) if own.from_hole_edge && hole > 0.0 => {
+                let from_pad = sides.map(|e| from_hole_edge(e, hole, size_x, size_y));
+                own_masks.inside_pad += usize::from(from_pad.iter().any(|&e| e < 0.0));
+                from_pad.map(Some)
+            }
+            Some(sides) => sides.map(Some),
+            None => [None, None],
+        };
         if middle != top || bottom != top || shapes.iter().any(|s| Some(s) != shapes.first()) {
             uneven += 1;
         }
@@ -699,28 +708,35 @@ pub(crate) fn pad_mask(g: &[u8]) -> PadMask {
     }
 }
 
-/// How many pads have mask settings the board model cannot hold: an expansion measured from the
-/// hole's edge (drawn from the pad's edge) and a paste mask expansion (paste is not drawn).
+/// A solder mask expansion `e` measured from the edge of the pad's hole, as one from the pad's
+/// edge: `(hole + 2 e - size) / 2`, with the shorter side as the size of a pad that is not round.
+fn from_hole_edge(e: f64, hole: f64, size_x: f64, size_y: f64) -> f64 {
+    (hole + 2.0 * e - size_x.min(size_y)) / 2.0
+}
+
+/// What the notes say about the pads' own mask settings: those whose expansion from the hole's
+/// edge leaves the opening smaller than the pad, and the paste mask expansions, which the board
+/// model has no place for (paste is not drawn).
 #[derive(Default)]
 struct OwnMasks {
-    from_hole_edge: usize,
+    inside_pad: usize,
     paste: usize,
 }
 
 impl OwnMasks {
     fn count(&mut self, mask: &PadMask) {
-        self.from_hole_edge += usize::from(mask.from_hole_edge);
         self.paste += usize::from(mask.paste.is_some());
     }
 
     fn into_note(self, notes: &mut Vec<Note>) {
-        if self.from_hole_edge > 0 {
+        if self.inside_pad > 0 {
             notes.push(Note {
-                severity: Severity::Warning,
+                severity: Severity::Info,
                 message: format!(
-                    "{} pad(s) measure their solder mask expansion from the hole's edge; it is \
-                     applied from the pad's edge",
-                    self.from_hole_edge
+                    "{} pad(s) measure their solder mask expansion from the hole's edge, which \
+                     leaves the opening smaller than the pad; read as the matching negative \
+                     expansion from the pad's edge",
+                    self.inside_pad
                 ),
             });
         }
