@@ -145,8 +145,9 @@ impl InputFormat for Altium {
 
         let mut notes = Vec::new();
         // The shape-based streams repeat these two, with arcs where an outline has them (see
-        // `shape_based.rs`). A region's arcs are read; a body's are not.
+        // `shape_based.rs`). A region's arcs and a component body's are read from there.
         let mut region_arcs = Vec::new();
+        let mut body_arcs = Vec::new();
         for (copy, plain, data, kind) in [
             (
                 "/ShapeBasedComponentBodies6/Data",
@@ -170,18 +171,7 @@ impl InputFormat for Altium {
                     message: format!("{copy} does not repeat {plain}; only {plain} was read"),
                 }),
                 Some(records) if kind == 0x0b => region_arcs = records,
-                Some(records) => {
-                    let arcs = records.iter().filter(|r| r.is_some()).count();
-                    if arcs > 0 {
-                        notes.push(Note {
-                            severity: Severity::Warning,
-                            message: format!(
-                                "{arcs} record(s) of {copy} have arcs, which are not read; only \
-                                 the straight-edged {plain} was read"
-                            ),
-                        });
-                    }
-                }
+                Some(records) => body_arcs = records,
             }
         }
         let record = board::board_record(&board6).map_err(ReadError::Invalid)?;
@@ -202,6 +192,7 @@ impl InputFormat for Altium {
         if let Some(data) = &bodies6 {
             let stored = models::attach(
                 data,
+                &body_arcs,
                 models6.as_deref(),
                 linked6.as_deref(),
                 &mut components,

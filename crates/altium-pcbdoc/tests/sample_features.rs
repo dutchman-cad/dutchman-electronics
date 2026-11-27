@@ -255,3 +255,51 @@ fn a_region_keeps_its_half_circles() -> Result<(), Box<dyn std::error::Error>> {
     );
     Ok(())
 }
+
+/// body-arc-outline: R1's extruded body is a rounded slot, box (24.2, 14.6) to (25.8, 15.4), ends
+/// of radius 0.4 about (24.6, 15) and (25.4, 15); in R1's own frame two lines at y -0.4 and 0.4
+/// and two half circles about (-0.4, 0) and (0.4, 0), standoff 0, height 0.5.
+#[test]
+fn a_component_body_keeps_its_half_circles() -> Result<(), Box<dyn std::error::Error>> {
+    let out = read("body-arc-outline.PcbDoc")?;
+    let r1 = out.board.components.first().ok_or("no R1")?;
+    let m = r1.model.as_ref().ok_or("R1 has no body")?;
+    let ModelSource::Extruded {
+        outline,
+        standoff,
+        height,
+    } = &m.source
+    else {
+        return Err(format!("{m:?}").into());
+    };
+    assert!(standoff.abs() <= TOLERANCE && (height - 0.5).abs() <= TOLERANCE);
+    let (mut lines, mut centers) = (Vec::new(), Vec::new());
+    for s in &outline.segments {
+        match s {
+            Segment::Line { from, to } => lines.push((from.x, from.y, to.x, to.y)),
+            Segment::Arc { center, radius, .. } => {
+                assert!((radius - 0.4).abs() <= TOLERANCE, "{s:?}");
+                let sweep = s.sweep_deg().ok_or("no sweep")?;
+                assert!((sweep.abs() - 180.0).abs() <= TOLERANCE, "{s:?}");
+                centers.push((center.x, center.y));
+            }
+        }
+    }
+    assert_eq!(lines.len(), 2, "{outline:?}");
+    for (x0, y0, x1, y1) in &lines {
+        assert!((y0 - y1).abs() <= TOLERANCE && (y0.abs() - 0.4).abs() <= TOLERANCE);
+        assert!((x0.abs() - 0.4).abs() <= TOLERANCE && (x1.abs() - 0.4).abs() <= TOLERANCE);
+    }
+    centers.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let [(x0, y0), (x1, y1)] = centers.as_slice() else {
+        return Err(format!("{outline:?}").into());
+    };
+    assert!((x0 + 0.4).abs() <= TOLERANCE && y0.abs() <= TOLERANCE);
+    assert!((x1 - 0.4).abs() <= TOLERANCE && y1.abs() <= TOLERANCE);
+    assert!(
+        out.notes.iter().all(|n| !n.message.contains("have arcs")),
+        "{:?}",
+        out.notes
+    );
+    Ok(())
+}
