@@ -372,3 +372,37 @@ fn a_hand_drawn_mask_opening_is_left_out_with_a_note() -> Result<(), Box<dyn std
     assert_eq!(regions, 1);
     Ok(())
 }
+
+/// overlapping-holes: two plated pads, round 1.600 with holes of 1.000, at (24.6, 15) and
+/// (25.4, 15), so the holes overlap by 0.200. Both are read with their holes; cutting two
+/// overlapping holes into the board is the board writer's (`board-step`), which today cuts one.
+#[test]
+fn overlapping_holes_are_both_read() -> Result<(), Box<dyn std::error::Error>> {
+    let out = read("overlapping-holes.PcbDoc")?;
+    let mut holes: Vec<(f64, f64, f64)> = out
+        .board
+        .copper
+        .iter()
+        .filter_map(|c| match c {
+            CopperItem::Pad {
+                at,
+                drill: Some(d),
+                plated: true,
+                ..
+            } => Some((at.x, at.y, *d)),
+            _ => None,
+        })
+        .collect();
+    holes.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let want = [(24.6, 15.0, 1.0), (25.4, 15.0, 1.0)];
+    assert_eq!(holes.len(), want.len(), "{holes:?}");
+    for (h, w) in holes.iter().zip(want) {
+        assert!(
+            (h.0 - w.0).abs() <= TOLERANCE
+                && (h.1 - w.1).abs() <= TOLERANCE
+                && (h.2 - w.2).abs() <= TOLERANCE,
+            "{holes:?}"
+        );
+    }
+    Ok(())
+}
