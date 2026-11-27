@@ -163,6 +163,9 @@ fn placement(record: &Properties, designator: String) -> Result<Placement, Strin
     })
 }
 
+/// The byte length of an empty `/WideStrings6/Data` entry: just its closing 0.
+const EMPTY_WIDE_STRING_LEN: usize = 2;
+
 /// Splits a run of `[u32 length][text]` records into their key-value pairs.
 pub(crate) fn text_records(data: &[u8], stream: &str) -> Result<Vec<Properties>, String> {
     let mut records = Vec::new();
@@ -184,6 +187,12 @@ pub(crate) fn text_records(data: &[u8], stream: &str) -> Result<Vec<Properties>,
 }
 
 /// The UTF-16 texts of `/WideStrings6/Data`, by index.
+///
+/// Each entry is a `u32` index, a `u32` byte length and the text with its closing 0, which the
+/// length counts. An empty text (`empty-texts`) is the exception: its length is 2, for the
+/// closing 0, but Altium writes no bytes after it, so the next entry's index follows at once.
+/// A length of 2 is therefore read as an empty text with no bytes unless the two bytes after it
+/// are a closing 0 (`00 00`); the next index starting `00 00` would need 65536 or more entries.
 pub(crate) fn wide_strings(data: &[u8]) -> Result<BTreeMap<usize, String>, String> {
     let mut strings = BTreeMap::new();
     let mut at = 0usize;
@@ -200,6 +209,15 @@ pub(crate) fn wide_strings(data: &[u8]) -> Result<BTreeMap<usize, String>, Strin
             .checked_add(4)
             .ok_or("/WideStrings6/Data: out of range")?;
         let len = read_u32(data, len_at).ok_or("/WideStrings6/Data: length cut short")?;
+        if len == EMPTY_WIDE_STRING_LEN {
+            let start = len_at + 4;
+            let closing_zero = data.get(start..start + 2) == Some(&[0, 0][..]);
+            if !closing_zero {
+                strings.entry(index).or_insert_with(String::new);
+                at = start;
+                continue;
+            }
+        }
         let (start, end) = span(len_at, 4, len, data.len())
             .ok_or("/WideStrings6/Data: entry is longer than the stream")?;
         let bytes = data
@@ -296,6 +314,38 @@ pub(crate) fn span(at: usize, header: usize, len: usize, total: usize) -> Option
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn entry(index: u32, len: u32, bytes: &[u8]) -> Vec<u8> {
+        let mut out = index.to_le_bytes().to_vec();
+        out.extend(len.to_le_bytes());
+        out.extend(bytes);
+        out
+    }
+
+    /// `empty-texts`: an empty text's entry has length 2 and no bytes, in the middle of the
+    /// stream and at its end.
+    #[test]
+    fn an_empty_wide_string_has_no_bytes() -> Result<(), String> {
+        let mut data = entry(0, 4, b"B   ");
+        data.extend(entry(1, 2, &[]));
+        data.extend(entry(2, 4, b"A   "));
+        data.extend(entry(6, 2, &[]));
+        let strings = wide_strings(&data)?;
+        let found: Vec<(usize, &str)> = strings.iter().map(|(i, s)| (*i, s.as_str())).collect();
+        assert_eq!(found, [(0, "B"), (1, ""), (2, "A"), (6, "")]);
+        Ok(())
+    }
+
+    /// An entry of length 2 that does hold its closing 0 is read with it.
+    #[test]
+    fn a_two_byte_entry_with_its_closing_zero_is_read_too() -> Result<(), String> {
+        let mut data = entry(0, 2, &[0, 0]);
+        data.extend(entry(1, 4, b"C   "));
+        let strings = wide_strings(&data)?;
+        assert_eq!(strings.get(&0).map(String::as_str), Some(""));
+        assert_eq!(strings.get(&1).map(String::as_str), Some("C"));
+        Ok(())
+    }
 
     fn record(text: &str) -> Vec<u8> {
         let mut bytes = (text.len() as u32 + 1).to_le_bytes().to_vec();
