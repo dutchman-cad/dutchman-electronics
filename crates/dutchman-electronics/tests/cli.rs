@@ -1126,3 +1126,84 @@ fn read_writes_an_extruded_body_with_arcs_as_exact_cylinders(
     assert!(radii.iter().all(|r| (r - 0.4).abs() < 0.001), "{radii:?}");
     Ok(())
 }
+
+/// pour-modes (tests/boards/README.txt): the Top copper of each 10 x 10 pour, y 10 to 20. Solid
+/// (x 2 to 12) is the whole 100.000 mm2. The 90 degree hatch (x 14 to 24) of 0.300 tracks on a
+/// 1.000 grid leaves 100 open squares of 0.700, 49.000 mm2. The None pour (x 38 to 48) is only
+/// its outline: one ring of 0.300 tracks around a single opening of 9.700 x 9.700, 94.090 mm2,
+/// so nothing inside it is copper. The ring's outer edge has round corners, drawn within the
+/// package's 0.02 mm, so its area is checked to 0.005 mm2 (10.3 x 10.3 less (4 - pi) 0.15^2).
+#[cfg(feature = "altium")]
+#[test]
+fn read_draws_hatched_and_outline_pours_as_altium_pours_them(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let out = std::env::temp_dir().join(format!("de-pours-{}", std::process::id()));
+    let board = test_board("pour-modes.PcbDoc");
+    let result = run(&[
+        "read",
+        &board.to_string_lossy(),
+        "--out",
+        &out.to_string_lossy(),
+        "--json",
+    ]);
+    std::fs::remove_dir_all(&out).ok();
+    let (ok, v) = result?;
+    assert!(ok, "{v}");
+    let ring = |r: &serde_json::Value| -> Vec<(f64, f64)> {
+        r.as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|p| Some((p[0].as_f64()?, p[1].as_f64()?)))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let area = |r: &[(f64, f64)]| {
+        let n = r.len();
+        (0..n)
+            .map(|i| {
+                let (a, b) = (r[i], r[(i + 1) % n]);
+                a.0 * b.1 - b.0 * a.1
+            })
+            .sum::<f64>()
+            .abs()
+            / 2.0
+    };
+    let copper = v["overlays"]
+        .as_array()
+        .and_then(|o| o.iter().find(|o| o["name"] == "Copper top"))
+        .ok_or("no top copper")?;
+    let areas = copper["areas"].as_array().ok_or("no areas")?;
+    assert_eq!(areas.len(), 4, "one copper area per pour");
+    // (left x, outer area, tolerance, hole count, holes' area) by pour.
+    let mut found: Vec<(f64, f64, usize, f64)> = areas
+        .iter()
+        .map(|a| {
+            let outer = ring(&a["outer"]);
+            let holes: Vec<Vec<(f64, f64)>> = a["holes"]
+                .as_array()
+                .map(|h| h.iter().map(ring).collect())
+                .unwrap_or_default();
+            let left = outer.iter().map(|p| p.0).fold(f64::MAX, f64::min);
+            (
+                left,
+                area(&outer),
+                holes.len(),
+                holes.iter().map(|h| area(h)).sum(),
+            )
+        })
+        .collect();
+    found.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let [solid, h90, _h45, none] = found.as_slice() else {
+        return Err(format!("{found:?}").into());
+    };
+    assert!((solid.1 - 100.0).abs() < 0.001 && solid.2 == 0, "{solid:?}");
+    assert!(h90.2 == 100 && (h90.3 - 49.0).abs() < 0.001, "{h90:?}");
+    let outer = 10.3 * 10.3 - (4.0 - std::f64::consts::PI) * 0.15 * 0.15;
+    assert!((none.1 - outer).abs() < 0.005, "{none:?}");
+    assert!(
+        none.2 == 1 && (none.3 - 9.7 * 9.7).abs() < 0.001,
+        "{none:?}"
+    );
+    Ok(())
+}

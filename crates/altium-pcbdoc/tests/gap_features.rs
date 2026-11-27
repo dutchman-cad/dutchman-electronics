@@ -125,3 +125,46 @@ fn slot_and_square_holes_are_read_as_round_with_a_note() -> Result<(), Box<dyn s
     );
     Ok(())
 }
+
+/// pour-modes: four 10 x 10 GND pours on Top Layer, y 10 to 20. What Altium poured is read as
+/// copper: the Solid pour (x 2 to 12) as one region, the 90 degree hatch (x 14 to 24) as 24
+/// tracks, the 45 degree hatch (x 26 to 36) as 34 and the None pour (x 38 to 48) as its four
+/// outline tracks only, all 0.300 wide; nothing fills the None pour.
+#[test]
+fn each_pour_is_read_as_altium_poured_it() -> Result<(), Box<dyn std::error::Error>> {
+    let out = read("pour-modes.PcbDoc")?;
+    let mut tracks = [0usize; 4];
+    let mut regions = [0usize; 4];
+    let pour = |x: f64| ((x - 1.0) / 12.0).floor().clamp(0.0, 3.0) as usize;
+    for c in &out.board.copper {
+        match c {
+            CopperItem::Track {
+                from, to, width, ..
+            } => {
+                assert!((width - 0.3).abs() <= TOLERANCE, "{c:?}");
+                let p = pour((from.x + to.x) / 2.0);
+                for q in [from, to] {
+                    assert!(q.y >= 10.0 - TOLERANCE && q.y <= 20.0 + TOLERANCE, "{c:?}");
+                    let (lo, hi) = (2.0 + 12.0 * p as f64, 12.0 + 12.0 * p as f64);
+                    assert!(q.x >= lo - TOLERANCE && q.x <= hi + TOLERANCE, "{c:?}");
+                }
+                if let Some(n) = tracks.get_mut(p) {
+                    *n += 1;
+                }
+            }
+            CopperItem::Region { contour, .. } => {
+                let x = contour.segments.iter().find_map(|s| match s {
+                    board_model::Segment::Line { from, .. } => Some(from.x),
+                    _ => None,
+                });
+                if let Some(n) = x.and_then(|x| regions.get_mut(pour(x))) {
+                    *n += 1;
+                }
+            }
+            other => return Err(format!("{other:?}").into()),
+        }
+    }
+    assert_eq!(tracks, [0, 24, 34, 4]);
+    assert_eq!(regions, [1, 0, 0, 0]);
+    Ok(())
+}
