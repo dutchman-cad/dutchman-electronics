@@ -1387,3 +1387,41 @@ fn one_font_under_two_names_is_handed_over_once() {
         assert!(o.font(&t.font).is_some(), "{}", t.content);
     }
 }
+
+#[test]
+fn a_pour_over_a_board_cutout_leaves_the_cutout_and_the_edge_clearance_out() {
+    // k10-zone-cutout.README.txt: a circle cutout of radius 3 at (25, 15) inside a GND zone (5, 5)
+    // to (45, 25); KiCad's fill keeps 0.5 (the copper-to-edge clearance) from the cut, so the
+    // copper has one hole, a polygon 3.5 from the cutout's center, and covers 761.458 mm2.
+    let o = board("k10-zone-cutout");
+    nets_ok(&o);
+    let b = &o.board;
+    assert_eq!(b.outline.cutouts.len(), 1);
+    let regions: Vec<_> = b
+        .copper
+        .iter()
+        .filter_map(|c| match c {
+            CopperItem::Region { contour, holes, .. } => Some((contour, holes)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(regions.len(), 1);
+    let (contour, holes) = regions[0];
+    let (x0, y0, x1, y1) = bounds(contour);
+    assert!(near(x0, 105.0) && near(x1, 145.0) && near(y0, -125.0) && near(y1, -105.0));
+    assert!((area(contour) - 800.0).abs() < 0.05, "{}", area(contour));
+    assert_eq!(holes.len(), 1);
+    for s in &holes[0].segments {
+        let Segment::Line { from, .. } = s else {
+            panic!("fills are polygons")
+        };
+        let d = (from.x - 125.0).hypot(from.y + 115.0);
+        assert!((d - 3.5).abs() < 0.01, "{d}");
+    }
+    let hole = area(&holes[0]);
+    assert!(
+        (hole - std::f64::consts::PI * 3.5 * 3.5).abs() < 0.1,
+        "{hole}"
+    );
+    assert!((area(contour) - hole - 761.458).abs() < 0.01);
+}
