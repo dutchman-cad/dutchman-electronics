@@ -691,6 +691,9 @@ pub fn build_accepting(
 
     let mut notes: Vec<Value> = outcome.notes.iter().map(note).collect();
     let board_notes: Vec<Value> = step.notes.iter().map(note).collect();
+    // What was left out of the board solid is said in the package's own notes too, not only on
+    // the Board part.
+    notes.extend(board_notes.iter().cloned());
     let mut models = vec![json!({ "id": BOARD_MODEL, "file": BOARD_FILE })];
     let mut parts = vec![json!({
         "name": BOARD_PART,
@@ -701,6 +704,7 @@ pub fn build_accepting(
         "roughness": BOARD_FINISH.roughness,
         "notes": board_notes,
     })];
+    let plated = plating(&board, &step);
     let mut files = vec![(BOARD_FILE.to_string(), step.text.into_bytes())];
     let recognizer = Recognizer::new(&board);
     let placed = components_with(
@@ -724,7 +728,6 @@ pub fn build_accepting(
     );
     parts.extend(placed.parts);
     notes.extend(placed.notes);
-    let plated = plating(&board, &step.holes, step.thickness);
     notes.extend(plated.notes);
     // The plating takes the top finish; a process we do not know is named once, in a note.
     let (plating_look, _) = pad_look(board.appearance.top_finish.as_ref());
@@ -810,13 +813,15 @@ struct Plating {
 }
 
 /// The copper lining the plated holes: one tube for each, from the board's bottom (z 0) to its top
-/// (z = `thickness`), in the Board's frame. Plated holes are every via, and every pad whose drill
-/// the board model marks `plated`, but only those the board solid was actually cut with (`cut`,
-/// from `board_step::write`): a tube in a hole that was not cut would float in the air or run
-/// through the substrate. A tube's outer radius is the drill radius, its inner one that less
+/// (z = `thickness`), in the Board's frame; for overlapping holes cut as one opening, one tube
+/// following the union's wall. Plated holes are every via, and every pad whose drill the board
+/// model marks `plated`, but only those the board solid was actually cut with (`step`, from
+/// `board_step::write`): a tube in a hole that was not cut would float in the air or run through
+/// the substrate. A tube's outer radius is the drill radius, its inner one that less
 /// [`PLATING_THICKNESS`]. No text when no hole is plated, or when the tubes cannot be written;
 /// a hole not cut, too small to line, or past the cap, or a failure, says so in a note.
-fn plating(board: &Board, cut: &[board_step::CutHole], thickness: f64) -> Plating {
+fn plating(board: &Board, step: &board_step::BoardStep) -> Plating {
+    let thickness = step.thickness;
     let wanted = board
         .copper
         .iter()
@@ -827,14 +832,14 @@ fn plating(board: &Board, cut: &[board_step::CutHole], thickness: f64) -> Platin
             _ => false,
         })
         .count();
-    let plated_cut: Vec<&board_step::CutHole> = cut.iter().filter(|h| h.plated).collect();
-    let not_cut = wanted.saturating_sub(plated_cut.len());
+    let not_cut = wanted.saturating_sub(step.plated_holes_cut());
     let mut list = Vec::new();
+    let mut unions = Vec::new();
     let mut left_out = 0usize;
-    for hole in plated_cut {
+    for hole in step.holes.iter().filter(|h| h.plated) {
         let inner_radius = hole.radius - PLATING_THICKNESS;
         if inner_radius <= board_step::TOLERANCE || list.len() >= board_step::MAX_TUBES {
-            left_out = left_out.saturating_add(1);
+            left_out = left_out.saturating_add(hole.also.saturating_add(1));
             continue;
         }
         list.push(board_step::Tube {
@@ -844,12 +849,41 @@ fn plating(board: &Board, cut: &[board_step::CutHole], thickness: f64) -> Platin
             span: hole.span,
         });
     }
+    for merged in step.merged.iter().filter(|m| m.plated) {
+        let lined = merged
+            .circles
+            .iter()
+            .all(|(_, radius)| radius - PLATING_THICKNESS > board_step::TOLERANCE);
+        if !lined || list.len().saturating_add(unions.len()) >= board_step::MAX_TUBES {
+            left_out = left_out.saturating_add(merged.circles.len().saturating_add(merged.also));
+            continue;
+        }
+        let tube = board_step::UnionTube {
+            circles: merged.circles.clone(),
+            wall: PLATING_THICKNESS,
+            span: merged.span,
+        };
+        // A failed union must not prevent the other openings from receiving copper.
+        if board_step::tubes_and_unions(
+            &[],
+            std::slice::from_ref(&tube),
+            0.0,
+            thickness,
+            PLATING_PART,
+        )
+        .is_err()
+        {
+            left_out = left_out.saturating_add(merged.circles.len().saturating_add(merged.also));
+            continue;
+        }
+        unions.push(tube);
+    }
     let mut notes = Vec::new();
     if not_cut > 0 {
         notes.push(json!({
             "severity": "Dropped",
             "message": format!(
-                "{not_cut} plated hole(s) were not cut into the board, so have no plating"
+                "{not_cut} plated drilled hole(s) were not cut into the board, so have no plating"
             ),
         }));
     }
@@ -857,16 +891,16 @@ fn plating(board: &Board, cut: &[board_step::CutHole], thickness: f64) -> Platin
         notes.push(json!({
             "severity": "Dropped",
             "message": format!(
-                "{left_out} plated hole(s) are too small to line with {PLATING_THICKNESS} mm of \
-                 plating, or past the first {} tubes, and have no plating",
+                "{left_out} plated drilled hole(s) are too small to line with {PLATING_THICKNESS} mm of \
+                 plating, have an outline that cannot be lined, or are past the first {} tubes, and have no plating",
                 board_step::MAX_TUBES
             ),
         }));
     }
-    if list.is_empty() {
+    if list.is_empty() && unions.is_empty() {
         return Plating { text: None, notes };
     }
-    match board_step::tubes(&list, 0.0, thickness, PLATING_PART) {
+    match board_step::tubes_and_unions(&list, &unions, 0.0, thickness, PLATING_PART) {
         Ok(step) => {
             notes.push(json!({
                 "severity": "Info",
@@ -2897,7 +2931,136 @@ mod tests {
             radius,
             plated,
             span: None,
+            also: 0,
         }
+    }
+
+    /// A board solid that was cut with exactly these holes, 1.6 mm thick.
+    fn solid_with(holes: Vec<board_step::CutHole>) -> board_step::BoardStep {
+        board_step::BoardStep {
+            text: String::new(),
+            notes: Vec::new(),
+            stats: board_step::Stats::default(),
+            thickness: 1.6,
+            holes,
+            merged: Vec::new(),
+        }
+    }
+
+    #[cfg(feature = "kicad")]
+    #[test]
+    fn board_info_and_dropped_notes_reach_the_manifest() {
+        let bytes = br#"(kicad_pcb (version 20241229) (generator "pcbnew")
+          (general (thickness 1.6))
+          (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+          (footprint "test" (layer "F.Cu") (at 0 0)
+            (pad "1" thru_hole circle (at 10 5) (size 2 2) (drill 1) (layers "*.Cu" "*.Mask"))
+            (pad "2" thru_hole circle (at 10.8 5) (size 2 2) (drill 1) (layers "*.Cu" "*.Mask"))
+            (pad "3" thru_hole circle (at 0 0) (size 2 2) (drill 1) (layers "*.Cu" "*.Mask")))
+          (gr_rect (start 0 0) (end 20 10) (stroke (width 0.1) (type default)) (fill no) (layer "Edge.Cuts")))"#;
+        let package = build(
+            Path::new("notes.kicad_pcb"),
+            bytes,
+            &[],
+            &[],
+            crate::overlay::Copper::Outer,
+        )
+        .unwrap();
+        let notes = package.manifest["notes"].as_array().unwrap();
+        assert!(notes.iter().any(|n| n["severity"] == "Info"
+            && n["message"]
+                .as_str()
+                .unwrap()
+                .contains("2 overlapping drilled hole(s)")));
+        assert!(notes
+            .iter()
+            .any(|n| n["severity"] == "Dropped"
+                && n["message"].as_str().unwrap().contains("board edge")));
+    }
+
+    #[test]
+    fn overlapping_plated_holes_have_one_tube() {
+        use board_model::{Board, CopperItem, Outline};
+        let via = |x: f64| CopperItem::Via {
+            at: Point { x, y: 5.0 },
+            diameter: 1.8,
+            drill: 1.0,
+            tented: [None, None],
+            mask_expansion: [None, None],
+            layers: None,
+        };
+        // Two 1.000 holes 0.8 apart overlap: one opening, one tube round the union, and nothing
+        // said about a hole left unplated.
+        let board = Board {
+            thickness: Some(1.6),
+            outline: Outline {
+                outer: rect(0.0, 0.0, 20.0, 10.0),
+                cutouts: Vec::new(),
+            },
+            copper: vec![via(9.6), via(10.4)],
+            ..Board::default()
+        };
+        let step = board_step::write(&board, "t").unwrap();
+        assert!(step.holes.is_empty());
+        assert_eq!(step.merged.len(), 1);
+        let p = plating(&board, &step);
+        let text = p.text.unwrap();
+        assert_eq!(text.matches("MANIFOLD_SOLID_BREP(").count(), 1);
+        assert!(
+            p.notes.iter().all(|n| n["severity"] == "Info"),
+            "{:?}",
+            p.notes
+        );
+    }
+
+    #[test]
+    fn small_merged_drills_and_other_holes_keep_their_plating() {
+        let via = |x, drill| CopperItem::Via {
+            at: Point { x, y: 5.0 },
+            diameter: 1.8,
+            drill,
+            tented: [None, None],
+            mask_expansion: [None, None],
+            layers: None,
+        };
+        let board = Board {
+            thickness: Some(1.6),
+            outline: board_model::Outline {
+                outer: rect(0.0, 0.0, 20.0, 10.0),
+                cutouts: Vec::new(),
+            },
+            copper: vec![via(5.0, 0.11), via(5.01, 0.11), via(10.0, 1.0)],
+            ..Board::default()
+        };
+        let mut step = board_step::write(&board, "small").unwrap();
+        assert_eq!((step.merged.len(), step.holes.len()), (1, 1));
+        let p = plating(&board, &step);
+        assert_eq!(p.text.unwrap().matches("MANIFOLD_SOLID_BREP(").count(), 2);
+        assert!(p.notes.iter().all(|n| n["severity"] == "Info"));
+
+        // A union whose outline cannot be lined leaves both usable tubes intact.
+        step.merged.push(board_step::MergedHole {
+            circles: vec![
+                (Point { x: 15.0, y: 5.0 }, 0.5),
+                (
+                    Point {
+                        x: 15.99999,
+                        y: 5.0,
+                    },
+                    0.5,
+                ),
+            ],
+            plated: true,
+            span: None,
+            also: 0,
+        });
+        let p = plating(&board, &step);
+        assert_eq!(p.text.unwrap().matches("MANIFOLD_SOLID_BREP(").count(), 2);
+        assert!(p.notes.iter().any(|n| n["severity"] == "Dropped"
+            && n["message"]
+                .as_str()
+                .unwrap()
+                .starts_with("2 plated drilled")));
     }
 
     #[test]
@@ -2916,7 +3079,7 @@ mod tests {
             copper: vec![via(0.1)],
             ..Board::default()
         };
-        let p = plating(&small, &[cut(1.0, 0.025, true)], 1.6);
+        let p = plating(&small, &solid_with(vec![cut(1.0, 0.025, true)]));
         assert!(p.text.is_none());
         assert_eq!(p.notes.len(), 1);
         assert_eq!(p.notes[0]["severity"], "Dropped");
@@ -2925,9 +3088,24 @@ mod tests {
             copper: vec![via(0.05), via(0.3)],
             ..Board::default()
         };
-        let p = plating(&both, &[cut(1.0, 0.025, true), cut(3.0, 0.15, true)], 1.6);
+        let p = plating(
+            &both,
+            &solid_with(vec![cut(1.0, 0.025, true), cut(3.0, 0.15, true)]),
+        );
         assert!(p.text.is_some());
         assert!(p.notes.iter().any(|n| n["severity"] == "Dropped"));
+    }
+
+    #[test]
+    fn unlined_contained_drills_are_all_counted() {
+        let mut small = cut(1.0, 0.025, true);
+        small.also = 2;
+        let p = plating(&Board::default(), &solid_with(vec![small]));
+        assert!(p.text.is_none());
+        assert!(p.notes[0]["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("3 plated drilled"));
     }
 
     #[test]
@@ -2955,13 +3133,13 @@ mod tests {
         };
         let step = board_step::write(&board, "t").unwrap();
         assert_eq!(step.holes.len(), 1);
-        let p = plating(&board, &step.holes, step.thickness);
+        let p = plating(&board, &step);
         let text = p.text.unwrap();
         assert_eq!(text.matches("MANIFOLD_SOLID_BREP(").count(), 1);
         let said = p.notes.iter().any(|n| {
             n["severity"] == "Dropped"
                 && n["message"]
-                    == "2 plated hole(s) were not cut into the board, so have no plating"
+                    == "2 plated drilled hole(s) were not cut into the board, so have no plating"
         });
         assert!(said, "{:?}", p.notes);
         // A board whose only plated hole is not cut has no plating at all.
@@ -2970,7 +3148,7 @@ mod tests {
             ..board
         };
         let step = board_step::write(&edge, "t").unwrap();
-        let p = plating(&edge, &step.holes, step.thickness);
+        let p = plating(&edge, &step);
         assert!(p.text.is_none());
         assert_eq!(p.notes.len(), 1);
     }

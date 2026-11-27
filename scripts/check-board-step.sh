@@ -17,8 +17,27 @@ set -euo pipefail
 module="$1"; solidcraft="$2"; cadmpeg="$3"
 work=$(mktemp -d)
 failed=0
+# A board written here, by hand from KiCad's published file-format documentation: two plated holes
+# of 1.000 mm at x = 24.6 and 25.4 (0.8 apart, so they overlap), and a chain of three at x = 10,
+# 10.8 and 11.6 (neighbors overlap, the outer two do not). Each group must be cut as one opening
+# and lined with one tube, so the plating holds 2 tubes.
+cat > "$work/overlapping-holes.kicad_pcb" <<'KICAD'
+(kicad_pcb (version 20241229) (generator "pcbnew") (generator_version "9.0")
+  (general (thickness 1.6))
+  (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+  (net 0 "")
+  (footprint "test:Holes" (layer "F.Cu") (at 100 100)
+    (pad "1" thru_hole circle (at 24.6 15) (size 1.8 1.8) (drill 1) (layers "*.Cu" "*.Mask"))
+    (pad "2" thru_hole circle (at 25.4 15) (size 1.8 1.8) (drill 1) (layers "*.Cu" "*.Mask"))
+    (pad "3" thru_hole circle (at 10 15) (size 1.8 1.8) (drill 1) (layers "*.Cu" "*.Mask"))
+    (pad "4" thru_hole circle (at 10.8 15) (size 1.8 1.8) (drill 1) (layers "*.Cu" "*.Mask"))
+    (pad "5" thru_hole circle (at 11.6 15) (size 1.8 1.8) (drill 1) (layers "*.Cu" "*.Mask"))
+  )
+  (gr_rect (start 100 100) (end 150 130) (stroke (width 0.1) (type default)) (fill no) (layer "Edge.Cuts"))
+)
+KICAD
 boards=(crates/altium-pcbdoc/tests/boards/*.PcbDoc crates/kicad-pcb/tests/boards/*.kicad_pcb
-        crates/kicad-pcb/tests/open-hardware/*/*.kicad_pcb)
+        crates/kicad-pcb/tests/open-hardware/*/*.kicad_pcb "$work/overlapping-holes.kicad_pcb")
 # Fail loudly if a pattern matched nothing (an unmatched glob stays as its own text).
 for board in "${boards[@]}"; do
   [ -e "$board" ] || { echo "::error::no test board at $board"; exit 1; }
@@ -139,6 +158,13 @@ PY
       elif [ "$(grep -c 'MANIFOLD_SOLID_BREP' "$plating" || true)" != 1 ]; then
         echo "::error::$name plating.step does not hold exactly 1 tube"; failed=1
       fi ;;
+    kicad-overlapping-holes)
+      # Two groups of overlapping plated holes: one tube round each union.
+      if [ ! -e "$plating" ]; then
+        echo "::error::$name has plated holes but no plating.step"; failed=1
+      elif [ "$(grep -c 'MANIFOLD_SOLID_BREP' "$plating" || true)" != 2 ]; then
+        echo "::error::$name plating.step does not hold exactly 2 tubes"; failed=1
+      fi ;;
   esac
   if [ -e "$plating" ]; then
     tubes=$(grep -c 'MANIFOLD_SOLID_BREP' "$plating" || true)
@@ -163,6 +189,19 @@ bodies = report.get("bodies", [])
 problems = [f"feature error: {e}" for e in errors]
 if len(bodies) != tubes:
     problems.append(f"{len(bodies)} bodies, expected {tubes}")
+if name == "kicad-overlapping-holes plating":
+    # Pair: r=0.5, d=0.8, t=0.025 mm. Each exposed arc sweeps theta =
+    # 2*pi - 2*acos(d/(2*r)); its annular band is theta*t*(r-t/2).
+    # The two inward bends each add phi*t*t/2, phi=2*atan(0.4/0.3).
+    # Pair area = 2*theta*t*(r-t/2) + phi*t*t = 0.1229410818 mm2;
+    # volume = area*1.6 = 0.1967057309 mm3. Check the pair by its x range.
+    import math
+    theta = 2 * math.pi - 2 * math.acos(0.8)
+    phi = 2 * math.atan(0.4 / 0.3)
+    want = (2 * theta * 0.025 * (0.5 - 0.025 / 2) + phi * 0.025**2) * 1.6
+    pair = [b for b in bodies if abs(b["bbox"]["min"][0] - 124.1) < 0.001]
+    if len(pair) != 1 or abs(pair[0].get("volume_mm3", 0) - want) > want * 0.005:
+        problems.append(f"merged pair plating volume differs from {want:.9f} mm3")
 for b in bodies:
     if not b.get("closed"):
         problems.append("a body is not closed")

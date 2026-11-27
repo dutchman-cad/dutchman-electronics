@@ -275,26 +275,27 @@ fn holes_that_cannot_be_cut_are_reported() {
         vec![rect(30.0, 10.0, 40.0, 20.0)],
         vec![
             hole(10.0, 15.0, 3.0),
-            hole(11.0, 15.0, 3.0),  // overlaps the first
-            hole(0.5, 15.0, 3.0),   // crosses the board edge
-            hole(35.0, 15.0, 2.0),  // inside the cutout
-            hole(90.0, 90.0, 1.0),  // off the board
+            hole(11.0, 15.0, 3.0), // overlaps the first: both are cut as one opening
+            hole(0.5, 15.0, 3.0),  // crosses the board edge
+            hole(35.0, 15.0, 2.0), // inside the cutout
+            hole(90.0, 90.0, 1.0), // off the board
             hole(20.0, 15.0, -1.0), // unusable size
         ],
     );
     let out = write(&b, "messy").unwrap();
-    assert_eq!(out.stats.openings, 2, "the cutout and the first hole");
+    assert_eq!(out.stats.openings, 2, "the cutout and the merged pair");
     let messages: Vec<&str> = out.notes.iter().map(|n| n.message.as_str()).collect();
-    assert!(out.notes.iter().all(|n| n.severity == Severity::Dropped));
+    assert!(out
+        .notes
+        .iter()
+        .all(|n| n.severity == Severity::Dropped || n.severity == Severity::Info));
     assert!(messages
         .iter()
         .any(|m| m.starts_with("2 drilled hole(s) touch or cross the board edge")));
     assert!(messages
         .iter()
         .any(|m| m.starts_with("1 drilled hole(s) touch or fall inside a cutout")));
-    assert!(messages
-        .iter()
-        .any(|m| m.starts_with("1 drilled hole(s) overlap another hole")));
+    assert!(messages.contains(&"2 overlapping drilled hole(s) were cut as 1 merged opening(s)"));
     assert!(messages
         .iter()
         .any(|m| m.starts_with("1 drilled hole(s) with an unusable size")));
@@ -1131,4 +1132,524 @@ fn the_same_sphere_gives_the_same_file() {
         sphere(0.5, "b").unwrap().text,
         sphere(0.5, "b").unwrap().text
     );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Overlapping holes
+// ---------------------------------------------------------------------------------------------
+
+fn plated_hole(x: f64, y: f64, drill: f64) -> CopperItem {
+    match hole(x, y, drill) {
+        CopperItem::Pad {
+            layer,
+            at,
+            shape,
+            size_x,
+            size_y,
+            rotation_deg,
+            drill,
+            owner,
+            tented,
+            mask_expansion,
+            ..
+        } => CopperItem::Pad {
+            layer,
+            at,
+            shape,
+            size_x,
+            size_y,
+            rotation_deg,
+            drill,
+            plated: true,
+            owner,
+            tented,
+            mask_expansion,
+        },
+        other => other,
+    }
+}
+
+/// The signed area of a closed loop of lines and arcs, exactly (Green's theorem): counter-
+/// clockwise is positive.
+fn exact_area(edges: &[Edge2]) -> f64 {
+    let mut twice = 0.0;
+    for e in edges {
+        twice += match e.kind {
+            Kind2::Line => e.start.x * e.end.y - e.end.x * e.start.y,
+            Kind2::Arc {
+                center,
+                radius,
+                ccw,
+            } => {
+                let a0 = (e.start.y - center.y).atan2(e.start.x - center.x);
+                let delta = if ccw { sweep(e) } else { -sweep(e) };
+                let a1 = a0 + delta;
+                radius * radius * delta
+                    + radius * (center.x * (a1.sin() - a0.sin()) - center.y * (a1.cos() - a0.cos()))
+            }
+        };
+    }
+    twice / 2.0
+}
+
+fn two_circles() -> Vec<(Point, f64)> {
+    vec![(p(24.6, 15.0), 0.5), (p(25.4, 15.0), 0.5)]
+}
+
+#[test]
+fn two_overlapping_holes_are_cut_as_one_opening() {
+    // Two 1.000 holes (radius 0.5) at x = 24.6 and 25.4, y = 15: centers 0.8 apart. The circles
+    // cross where x = 25.0 (half way) and (y - 15)^2 = 0.5^2 - 0.4^2 = 0.09: at (25.0, 15.3) and
+    // (25.0, 14.7).
+    let b = board(
+        rect(0.0, 0.0, 50.0, 30.0),
+        vec![],
+        vec![hole(24.6, 15.0, 1.0), hole(25.4, 15.0, 1.0)],
+    );
+    let out = write(&b, "overlapping-holes").unwrap();
+    assert_eq!(out.stats.openings, 1);
+    assert!(out.holes.is_empty());
+    assert_eq!(out.merged.len(), 1);
+    assert_eq!(out.merged[0].circles, two_circles());
+    assert_eq!(out.notes.len(), 1, "{:?}", out.notes);
+    assert_eq!(out.notes[0].severity, Severity::Info);
+    assert_eq!(
+        out.notes[0].message,
+        "2 overlapping drilled hole(s) were cut as 1 merged opening(s)"
+    );
+    // Each circle keeps the arc outside the other: 2 pi - 2 acos(0.4 / 0.5) = 4.996 rad, past a
+    // half circle, so two edges each: four cylinder faces.
+    assert_eq!(out.text.matches("CYLINDRICAL_SURFACE(").count(), 4);
+    check_topology(&out.text);
+
+    let pieces = union_outline(&two_circles()).unwrap();
+    assert_eq!(pieces.len(), 4);
+    let corners: Vec<Point> = pieces.iter().map(|(e, _)| e.start).collect();
+    for want in [p(25.0, 15.3), p(25.0, 14.7)] {
+        assert!(
+            corners.iter().any(|c| distance(*c, want) < 1e-9),
+            "{want:?} in {corners:?}"
+        );
+    }
+    // The union's area is two disks less their lens: the lens is
+    // 2 r^2 acos(d / 2r) - (d / 2) sqrt(4 r^2 - d^2) = 0.5 * acos(0.8) - 0.4 * 0.6 = 0.0817505545,
+    // and 2 pi 0.25 = 1.5707963268, so 1.4890457723 mm2.
+    let outline: Vec<Edge2> = pieces.iter().map(|(e, _)| *e).collect();
+    assert!((exact_area(&outline) - 1.489_045_772_3).abs() < 1e-9);
+}
+
+#[test]
+fn the_plating_of_a_merged_opening_is_one_closed_tube() {
+    let wall = 0.025;
+    let pieces = union_outline(&two_circles()).unwrap();
+    let inner = inset_outline(&pieces, &two_circles(), wall).unwrap();
+    // The band is each wall arc's annular sector, theta t (r - t / 2) with theta = 2 pi - 2
+    // acos(0.8) = 4.9961832 rad, plus a sector of radius t at each of the two corners, over the
+    // angle between the normals there, 2 atan(0.4 / 0.3) = 1.8545904 rad: half of it times t^2.
+    // 2 * 4.9961832 * 0.025 * 0.4875 + 2 * 0.5 * 1.8545904 * 0.025^2 = 0.1217818 + 0.0011591.
+    let theta = 2.0 * PI - 2.0 * 0.8f64.acos();
+    let phi = 2.0 * (0.4f64 / 0.3).atan();
+    let band = 2.0 * theta * wall * (0.5 - wall / 2.0) + phi * wall * wall;
+    assert!((band - 0.122_941).abs() < 1e-6, "{band}");
+    let outer: Vec<Edge2> = pieces.iter().map(|(e, _)| *e).collect();
+    let ring = exact_area(&outer) - exact_area(&inner);
+    assert!((ring - band).abs() < 1e-9, "{ring} against {band}");
+    // Every vertex of the inner wall is the wall's thickness from the outer one.
+    for e in &inner {
+        let near = outer
+            .iter()
+            .map(|o| distance_to_edge(o, e.start))
+            .fold(f64::MAX, f64::min);
+        assert!((near - wall).abs() < 1e-9, "{near}");
+    }
+    let union = UnionTube {
+        circles: two_circles(),
+        wall,
+        span: None,
+    };
+    let out = tubes_and_unions(&[], std::slice::from_ref(&union), 0.0, 1.6, "plating").unwrap();
+    assert_eq!(out.text.matches("MANIFOLD_SOLID_BREP(").count(), 1);
+    // Four outer and four inner arcs, and two bends.
+    assert_eq!(out.text.matches("CYLINDRICAL_SURFACE(").count(), 10);
+    check_topology(&out.text);
+    // The span of a blind hole, and a lining that does not fit, as for round tubes.
+    let blind = UnionTube {
+        span: Some((0.0, 0.8)),
+        ..union.clone()
+    };
+    assert!(tubes_and_unions(&[], &[blind], 0.0, 1.6, "t").is_ok());
+    for bad in [
+        UnionTube {
+            wall: 0.5,
+            ..union.clone()
+        },
+        UnionTube {
+            wall: f64::NAN,
+            ..union.clone()
+        },
+        UnionTube {
+            circles: vec![(p(0.0, 0.0), 0.5), (p(5.0, 0.0), 0.5)],
+            ..union
+        },
+    ] {
+        assert!(matches!(
+            tubes_and_unions(&[], &[bad], 0.0, 1.6, "t"),
+            Err(StepError::Size(_))
+        ));
+    }
+}
+
+#[test]
+fn three_holes_in_a_chain_are_one_opening() {
+    // Holes of radius 0.5 at x = 24.6, 25.4 and 26.2: neighbors 0.8 apart overlap, the outer two
+    // (1.6 apart) do not. Area: three disks (3 pi / 4 = 2.3561944902) less two lenses of
+    // 0.0817505545 each (they lie at x 24.9 to 25.1 and 25.7 to 25.9: apart): 2.1926933812.
+    let b = board(
+        rect(0.0, 0.0, 50.0, 30.0),
+        vec![],
+        vec![
+            hole(26.2, 15.0, 1.0),
+            hole(24.6, 15.0, 1.0),
+            hole(25.4, 15.0, 1.0),
+        ],
+    );
+    let out = write(&b, "chain").unwrap();
+    assert_eq!(out.stats.openings, 1);
+    assert_eq!(out.merged.len(), 1);
+    assert_eq!(out.merged[0].circles.len(), 3);
+    assert!(out
+        .notes
+        .iter()
+        .any(|n| n.message == "3 overlapping drilled hole(s) were cut as 1 merged opening(s)"));
+    check_topology(&out.text);
+    let circles: Vec<(Point, f64)> = out.merged[0].circles.clone();
+    let pieces = union_outline(&circles).unwrap();
+    // The end circles one arc each, the middle one a top and a bottom arc (each under a half
+    // circle), the left and right ones past it (split in two).
+    assert_eq!(pieces.len(), 6);
+    let outline: Vec<Edge2> = pieces.iter().map(|(e, _)| *e).collect();
+    assert!((exact_area(&outline) - 2.192_693_381_2).abs() < 1e-9);
+    let union = UnionTube {
+        circles,
+        wall: 0.025,
+        span: None,
+    };
+    let tube = tubes_and_unions(&[], &[union], 0.0, 1.6, "plating").unwrap();
+    check_topology(&tube.text);
+}
+
+#[test]
+fn a_hole_wholly_inside_another_is_redundant() {
+    // A hole of radius 0.2 whose center is 0.2 from that of a hole of radius 1: it reaches 0.4
+    // out of the other's 1.
+    let b = board(
+        rect(0.0, 0.0, 50.0, 30.0),
+        vec![],
+        vec![hole(25.2, 15.0, 0.4), hole(25.0, 15.0, 2.0)],
+    );
+    let out = write(&b, "inside").unwrap();
+    assert_eq!(out.stats.openings, 1);
+    assert!(out.merged.is_empty());
+    assert_eq!(out.holes.len(), 1);
+    assert_eq!((out.holes[0].radius, out.holes[0].also), (1.0, 1));
+    assert_eq!(out.text.matches("CYLINDRICAL_SURFACE(").count(), 2);
+    assert!(out
+        .notes
+        .iter()
+        .any(|n| n.message == "2 overlapping drilled hole(s) were cut as 1 merged opening(s)"));
+    check_topology(&out.text);
+    // The same hole twice leaves one.
+    let twice = board(
+        rect(0.0, 0.0, 50.0, 30.0),
+        vec![],
+        vec![hole(25.0, 15.0, 1.0), hole(25.0, 15.0, 1.0)],
+    );
+    let out = write(&twice, "twice").unwrap();
+    assert_eq!((out.holes.len(), out.holes[0].also), (1, 1));
+    check_topology(&out.text);
+}
+
+#[test]
+fn holes_touching_at_a_point_cannot_both_be_cut() {
+    // Radius 0.5 at 24.5 and 25.5: 1.0 apart, tangent at (25, 15). Two openings meeting at a
+    // point is no solid, and a union with a pinch is no simple loop: the second is skipped.
+    let b = board(
+        rect(0.0, 0.0, 50.0, 30.0),
+        vec![],
+        vec![hole(24.5, 15.0, 1.0), hole(25.5, 15.0, 1.0)],
+    );
+    let out = write(&b, "tangent").unwrap();
+    assert_eq!(out.stats.openings, 1);
+    assert!(out.merged.is_empty());
+    assert_eq!(out.notes.len(), 1, "{:?}", out.notes);
+    assert_eq!(out.notes[0].severity, Severity::Dropped);
+    assert_eq!(
+        out.notes[0].message,
+        "1 drilled hole(s) touch another hole at a single point and were not cut"
+    );
+    check_topology(&out.text);
+    // A hair apart (1.001 between centers) they are two clean openings.
+    let apart = board(
+        rect(0.0, 0.0, 50.0, 30.0),
+        vec![],
+        vec![hole(24.5, 15.0, 1.0), hole(25.501, 15.0, 1.0)],
+    );
+    let out = write(&apart, "apart").unwrap();
+    assert_eq!(out.stats.openings, 2);
+    assert!(out.notes.is_empty(), "{:?}", out.notes);
+}
+
+#[test]
+fn overlapping_holes_of_another_kind_stay_separate_and_say_so() {
+    let b = board(
+        rect(0.0, 0.0, 50.0, 30.0),
+        vec![],
+        vec![plated_hole(24.6, 15.0, 1.0), hole(25.4, 15.0, 1.0)],
+    );
+    let out = write(&b, "kinds").unwrap();
+    assert_eq!(out.stats.openings, 1);
+    assert_eq!(out.holes.len(), 1);
+    assert!(out.holes[0].plated);
+    assert_eq!(out.notes.len(), 1, "{:?}", out.notes);
+    assert_eq!(
+        out.notes[0].message,
+        "1 drilled hole(s) overlap a hole with a different layer span or plating and were not cut"
+    );
+    // Spans are compared the same way.
+    let drill = |plated, span| Drill {
+        at: p(0.0, 0.0),
+        radius: 0.5,
+        plated,
+        span,
+        unplaced: false,
+    };
+    assert!(same_kind(drill(true, None), drill(true, None)));
+    assert!(same_kind(
+        drill(true, Some((0.0, 0.8))),
+        drill(true, Some((0.0, 0.8)))
+    ));
+    assert!(!same_kind(drill(true, None), drill(true, Some((0.0, 0.8)))));
+    assert!(!same_kind(
+        drill(true, Some((0.0, 0.8))),
+        drill(true, Some((0.8, 1.6)))
+    ));
+    assert!(!same_kind(drill(true, None), drill(false, None)));
+}
+
+#[test]
+fn a_group_too_large_or_tangled_to_merge_reports_dropped_holes() {
+    // 70 holes of radius 0.5, 0.8 apart in a row: each overlaps the next, one group of 70, past
+    // the bound of 64. Hole 0 is kept, 1 overlaps it and is not, 2 is clear of 0, and so on.
+    let row: Vec<CopperItem> = (0..70)
+        .map(|i| hole(5.0 + 0.8 * f64::from(i), 15.0, 1.0))
+        .collect();
+    let b = board(rect(0.0, 0.0, 100.0, 30.0), vec![], row);
+    let out = write(&b, "row").unwrap();
+    assert!(out.merged.is_empty());
+    assert_eq!(out.holes.len(), 35);
+    assert_eq!(out.stats.openings, 35);
+    let warning = out
+        .notes
+        .iter()
+        .find(|n| n.severity == Severity::Dropped)
+        .unwrap();
+    assert!(
+        warning
+            .message
+            .starts_with("35 drilled hole(s) in groups of overlapping holes"),
+        "{}",
+        warning.message
+    );
+    check_topology(&out.text);
+
+    // Three circles of radius 0.5 round a triangle of side 0.9 leave an island of material in the
+    // middle (its circumradius 0.5196 is more than 0.5): the union has two loops, so no outline.
+    let side = 0.9;
+    let height = side * 3f64.sqrt() / 2.0;
+    let triangle = vec![
+        (p(0.0, 0.0), 0.5),
+        (p(side, 0.0), 0.5),
+        (p(side / 2.0, height), 0.5),
+    ];
+    assert!(union_outline(&triangle).is_none());
+    let b = board(
+        rect(0.0, 0.0, 50.0, 30.0),
+        vec![],
+        triangle
+            .iter()
+            .map(|(c, _)| hole(20.0 + c.x, 15.0 + c.y, 1.0))
+            .collect(),
+    );
+    let out = write(&b, "island").unwrap();
+    assert_eq!((out.holes.len(), out.merged.len()), (1, 0));
+    assert!(out.notes.iter().any(|n| n.severity == Severity::Dropped
+        && n.message
+            .starts_with("2 drilled hole(s) in groups of overlapping holes")));
+    check_topology(&out.text);
+    // Circles that barely cross (their crossings 0.0063 apart) leave a neck too thin for any
+    // lining: no outline either.
+    assert!(union_outline(&[(p(0.0, 0.0), 0.5), (p(0.999_99, 0.0), 0.5)]).is_none());
+    assert!(union_outline(&[(p(0.0, 0.0), 0.5)]).is_none());
+}
+
+#[test]
+fn hostile_dense_and_chained_drills_have_bounded_work() {
+    for spacing in [0.0, 0.8] {
+        let holes = (0..5000)
+            .map(|i| hole(5.0 + f64::from(i) * spacing, 15.0, 1.0))
+            .collect();
+        let b = board(rect(0.0, 0.0, 4010.0, 30.0), vec![], holes);
+        let start = std::time::Instant::now();
+        let out = write(&b, "bounded").unwrap();
+        assert!(start.elapsed() < std::time::Duration::from_secs(10));
+        assert!(out.holes.len() <= MAX_MERGED_HOLES);
+        assert!(out.notes.iter().any(|n| n.severity == Severity::Dropped));
+        assert_eq!(out.holes.len(), if spacing == 0.0 { 1 } else { 64 });
+    }
+}
+
+#[test]
+fn merged_group_limit_includes_64_but_excludes_65() {
+    for count in [64, 65] {
+        let holes = (0..count)
+            .map(|i| hole(5.0 + 0.8 * f64::from(i), 15.0, 1.0))
+            .collect();
+        let b = board(rect(0.0, 0.0, 100.0, 30.0), vec![], holes);
+        let out = write(&b, "cap").unwrap();
+        if count == 64 {
+            assert_eq!(out.merged.len(), 1);
+            assert_eq!(out.merged[0].circles.len(), 64);
+            assert!(out.notes.iter().all(|n| n.severity == Severity::Info));
+        } else {
+            assert!(out.merged.is_empty());
+            assert_eq!(out.holes.len(), 33);
+            assert!(out.notes.iter().any(|n| n.severity == Severity::Dropped));
+        }
+    }
+}
+
+#[test]
+fn holes_half_a_micrometer_apart_share_one_round_opening() {
+    let b = board(
+        rect(0.0, 0.0, 50.0, 30.0),
+        vec![],
+        vec![
+            plated_hole(25.0, 15.0, 1.0),
+            plated_hole(25.0005, 15.0, 1.0),
+        ],
+    );
+    let out = write(&b, "near-duplicate").unwrap();
+    assert!(out.merged.is_empty());
+    assert_eq!(out.holes.len(), 1);
+    assert_eq!(out.holes[0].also, 1);
+    assert_eq!(out.plated_holes_cut(), 2);
+    assert_eq!(out.notes[0].severity, Severity::Info);
+    check_topology(&out.text);
+}
+
+#[test]
+fn contained_and_merged_via_notes_count_drills_instead_of_openings() {
+    for spacing in [0.0, 0.3] {
+        let unknown = four_layer(vec![
+            via_on(10.0, Some((0, 99))),
+            via_on(10.0 + spacing, Some((0, 99))),
+        ]);
+        let out = write(&unknown, "unplaced").unwrap();
+        assert!(out
+            .notes
+            .iter()
+            .any(|n| n.message.starts_with("2 blind or buried via(s)")));
+        let buried = four_layer(vec![
+            via_on(10.0, Some((1, 2))),
+            via_on(10.0 + spacing, Some((1, 2))),
+        ]);
+        let out = write(&buried, "buried").unwrap();
+        assert!(out
+            .notes
+            .iter()
+            .any(|n| n.message.starts_with("2 buried via(s)")));
+    }
+}
+
+#[test]
+fn unequal_drills_form_a_closed_union_with_clockwise_hole_loops() {
+    let b = board(
+        rect(0.0, 0.0, 50.0, 30.0),
+        vec![],
+        vec![plated_hole(24.6, 15.0, 1.2), plated_hole(25.4, 15.0, 1.0)],
+    );
+    let out = write(&b, "unequal").unwrap();
+    assert_eq!(out.merged.len(), 1);
+    let mut notes = Vec::new();
+    let profile = profile(&b, 1.6, &mut notes).unwrap();
+    assert!(profile.openings.iter().all(|e| exact_area(e) < 0.0));
+    let tube = UnionTube {
+        circles: out.merged[0].circles.clone(),
+        wall: 0.025,
+        span: None,
+    };
+    let plating = tubes_and_unions(&[], &[tube], 0.0, 1.6, "unequal").unwrap();
+    check_topology(&out.text);
+    check_topology(&plating.text);
+}
+
+#[test]
+fn three_circles_through_one_point_fall_back_with_a_loss_note() {
+    // Three unit circles through (0, 0), centered 120 degrees apart. Their boundary
+    // meets at the origin, so chaining has multiple choices and cannot form one loop.
+    let height = 3f64.sqrt() / 2.0;
+    let circles = [
+        (p(1.0, 0.0), 1.0),
+        (p(-0.5, height), 1.0),
+        (p(-0.5, -height), 1.0),
+    ];
+    assert!(union_outline(&circles).is_none());
+    let b = board(
+        rect(0.0, 0.0, 50.0, 30.0),
+        vec![],
+        circles
+            .iter()
+            .map(|(c, r)| hole(25.0 + c.x, 15.0 + c.y, 2.0 * r))
+            .collect(),
+    );
+    let out = write(&b, "triple").unwrap();
+    assert_eq!(out.holes.len(), 1);
+    assert!(out.notes.iter().any(|n| n.severity == Severity::Dropped));
+    check_topology(&out.text);
+}
+
+#[test]
+fn merged_blind_drills_keep_their_plating_height_after_write() {
+    let b = four_layer(vec![via_on(10.0, Some((0, 1))), via_on(10.3, Some((0, 1)))]);
+    let out = write(&b, "blind-union").unwrap();
+    assert_eq!(out.merged.len(), 1);
+    assert_eq!(out.merged[0].span, Some((1.065, 1.6)));
+    check_topology_blind(&out.text, 1);
+    let mut notes = Vec::new();
+    let profile = profile(&b, 1.6, &mut notes).unwrap();
+    assert!(profile.pockets.iter().all(|p| exact_area(&p.edges) < 0.0));
+    let tube = UnionTube {
+        circles: out.merged[0].circles.clone(),
+        wall: 0.025,
+        span: out.merged[0].span,
+    };
+    let plating = tubes_and_unions(&[], &[tube], 0.0, 1.6, "blind").unwrap();
+    let all = entities(&plating.text);
+    let heights: Vec<f64> = all
+        .values()
+        .filter(|(name, _)| name == "VERTEX_POINT")
+        .map(|(_, args)| {
+            let point = &all[&refs(args)[0]].1;
+            point
+                .trim_end_matches(')')
+                .rsplit(',')
+                .next()
+                .unwrap()
+                .parse()
+                .unwrap()
+        })
+        .collect();
+    assert!((heights.iter().copied().fold(f64::INFINITY, f64::min) - 1.065).abs() < 1e-9);
+    assert!((heights.iter().copied().fold(f64::NEG_INFINITY, f64::max) - 1.6).abs() < 1e-9);
+    check_topology(&plating.text);
 }
