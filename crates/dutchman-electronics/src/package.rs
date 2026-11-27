@@ -1579,12 +1579,16 @@ mod tests {
                 assert_eq!(o["group"], GROUP_LAYERS);
                 assert!(overlay_area(o) > 0.0, "{}: {o}", path.display());
                 let z = o["z"].as_f64().unwrap();
-                // Copper and mask start at the face, silkscreen on top of the copper, and the
-                // bottom side mirrors the top below z = 0.
+                // Laminate, copper and mask start at the face, the finish on top of the copper,
+                // silkscreen on top of the mask (0.035 of copper plus 0.010), and the bottom
+                // side mirrors the top below z = 0.
+                let name = o["name"].as_str().unwrap();
                 let (offset, thickness) = match o["kind"].as_str().unwrap() {
+                    "laminate" => (0.0, 0.005),
+                    "copper" if name.starts_with("Finish") => (0.035, 0.004),
                     "copper" => (0.0, 0.035),
-                    "mask" => (0.0, 0.020),
-                    _ => (0.035, 0.015),
+                    "mask" => (0.0, 0.045),
+                    _ => (0.045, 0.015),
                 };
                 let want = if o["side"] == "top" {
                     t + offset
@@ -1604,7 +1608,9 @@ mod tests {
                     path.display()
                 );
                 if o["kind"] == "mask" {
-                    assert_eq!(o["opacity"], 1.0);
+                    // The file's own opacity, or 0.75 where it gives none.
+                    let opacity = o["opacity"].as_f64().unwrap();
+                    assert!(opacity > 0.0 && opacity <= 1.0, "{}: {o}", path.display());
                 } else {
                     assert!(o.get("opacity").is_none(), "{}: {o}", path.display());
                 }
@@ -1617,6 +1623,13 @@ mod tests {
                 .filter(|o| o["kind"] == "mask")
                 .count();
             assert_eq!(masks, 2, "{}", path.display());
+            let laminates = package.manifest["overlays"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|o| o["kind"] == "laminate")
+                .count();
+            assert_eq!(laminates, 2, "{}", path.display());
             seen += 1;
         }
         assert!(seen >= 37, "{seen} boards");
@@ -1634,7 +1647,7 @@ mod tests {
 
     #[cfg(feature = "altium")]
     #[test]
-    fn the_solder_mask_is_the_board_less_pads_copper_and_drills() {
+    fn the_solder_mask_is_the_board_less_openings_and_drills() {
         let mask = |board: &str, side: &str| {
             let package = package_of(board);
             overlay_area(overlay_named(
@@ -1650,13 +1663,10 @@ mod tests {
         // is 1500 - 2 * 1.2 = 1497.6; the bottom has no pads, so it stays 1500.
         assert!((mask("one-resistor", "top") - 1497.6).abs() < 1e-3);
         assert!((mask("one-resistor", "bottom") - 1500.0).abs() < 1e-3);
-        // one-via: the mask stops at the via's copper (1.0 mm across, under the mask) and covers
-        // no drill, so a whole 1.0 mm circle is open: 1500 - pi * 0.5^2 = 1499.21460. It is drawn
-        // as a 32-sided polygon, a little under the circle (16 * 0.5^2 * sin(11.25 deg) =
-        // 0.78036 mm2 against 0.78540), so the tolerance is 0.01.
-        let open_via = 1500.0 - std::f64::consts::PI * 0.25;
-        assert!((mask("one-via", "top") - open_via).abs() < 0.01);
-        assert!((mask("one-via", "bottom") - open_via).abs() < 0.01);
+        // one-via: the via is tented, so the mask has no opening and lies over its copper: the
+        // whole 1500 mm2.
+        assert!((mask("one-via", "top") - 1500.0).abs() < 1e-3);
+        assert!((mask("one-via", "bottom") - 1500.0).abs() < 1e-3);
         // one-plated-pad: a round 2.0 mm pad on all layers with a 1.0 mm hole. Its opening is the
         // pad grown by the board's mask expansion rule of 0.1 mm to a radius of 1.1, on both
         // faces: 1500 - pi * 1.1^2 = 1496.19867, less a little for the 32-sided polygon
@@ -1727,17 +1737,18 @@ mod tests {
         let color = |name: &str| overlay_named(m, "one-plated-pad", name)["color"].clone();
         for side in ["top", "bottom"] {
             assert_eq!(color(&format!("Solder mask {side}")), "#247832");
-            assert_eq!(color(&format!("Copper {side} pads")), "#d4af37");
+            assert_eq!(color(&format!("Finish {side}")), "#d4af37");
         }
         assert_eq!(part_named(m, "Board")["color"], "#c8b27a");
         assert_eq!(part_named(m, "Board")["metallic"], 0.0);
         assert_eq!(part_named(m, "Board")["roughness"], 0.9);
         assert_eq!(
-            overlay_named(m, "one-plated-pad", "Copper top pads")["roughness"],
+            overlay_named(m, "one-plated-pad", "Finish top")["roughness"],
             0.45
         );
         let mask = overlay_named(m, "one-plated-pad", "Solder mask top");
-        assert_eq!(mask["opacity"], 1.0);
+        let opacity = mask["opacity"].as_f64().unwrap();
+        assert!(opacity > 0.0 && opacity <= 1.0, "{opacity}");
         assert_eq!(
             (&mask["metallic"], &mask["roughness"]),
             (&json!(0.0), &json!(0.35))
@@ -1747,12 +1758,16 @@ mod tests {
         assert!((mask["z"].as_f64().unwrap() - 1.6).abs() < 1e-4);
         let bottom = overlay_named(m, "one-plated-pad", "Solder mask bottom");
         assert_eq!(bottom["z"].as_f64().unwrap(), 0.0);
-        // Masked copper and silkscreen: boards that have them.
+        // Copper is copper-colored whatever the mask, over a dark laminate sheet.
         let track = package_of("one-track");
         assert_eq!(
             overlay_named(&track.manifest, "one-track", "Copper top")["color"],
-            "#328b3a"
+            "#b87333"
         );
+        let laminate = overlay_named(&track.manifest, "one-track", "Laminate top");
+        assert_eq!(laminate["kind"], "laminate");
+        assert_eq!(laminate["color"], "#2a2f1c");
+        assert!(laminate.get("opacity").is_none());
         let silk = package_of("one-overlay-line");
         assert_eq!(
             overlay_named(&silk.manifest, "one-overlay-line", "Silkscreen top")["color"],
@@ -1775,7 +1790,8 @@ mod tests {
         for side in ["top", "bottom"] {
             let mask = overlay_named(&blue.manifest, "blue", &format!("Solder mask {side}"));
             assert_eq!(mask["color"], "#1155cc");
-            assert_eq!(mask["opacity"], 1.0);
+            // Altium's mask opacity for this board (README.txt): 0.6.
+            assert_eq!(mask["opacity"], 0.6);
         }
         // Those two boards have no track and no silkscreen line, so the copper under the mask
         // and the silkscreen are drawn from the same boards with one-track's copper and
@@ -1807,8 +1823,8 @@ mod tests {
                 .unwrap_or_else(|| panic!("no {name}"))
                 .clone()
         };
-        // The copper under the mask follows the mask, a little lighter and warmer.
-        assert_eq!(find(&overlays, "Copper top")["color"], "#1862ec");
+        // Copper keeps its own color under any mask.
+        assert_eq!(find(&overlays, "Copper top")["color"], "#b87333");
         let mut yellow_board = read("one-yellow-silkscreen-resistor");
         yellow_board.graphics = line.graphics.clone();
         let (overlays, _) = crate::overlay::overlays(
@@ -1838,11 +1854,11 @@ mod tests {
         // of one-resistor holds its two SMD pads; the bottom has none to draw.
         let enig = package_of("one-enig-resistor");
         let hasl = package_of("one-hasl-resistor");
-        let gold = overlay_named(&enig.manifest, "enig", "Copper top pads");
+        let gold = overlay_named(&enig.manifest, "enig", "Finish top");
         assert_eq!(gold["color"], "#d4af37");
         assert_eq!(gold["roughness"], 0.45);
         assert_eq!(gold["metallic"], 0.0);
-        let silver = overlay_named(&hasl.manifest, "hasl", "Copper top pads");
+        let silver = overlay_named(&hasl.manifest, "hasl", "Finish top");
         assert_eq!(silver["color"], "#c9ccd1");
         assert_eq!(silver["roughness"], 0.4);
         assert_eq!(silver["metallic"], 0.0);
@@ -1940,18 +1956,18 @@ mod tests {
             crate::overlay::overlays(&board, &[], 1.6, BOARD_PART, crate::overlay::Copper::Outer);
         let pads = overlays
             .iter()
-            .find(|o| o["name"] == "Copper bottom pads")
+            .find(|o| o["name"] == "Finish bottom")
             .unwrap();
         assert_eq!(pads["color"], "#c9ccd1");
         assert_eq!(pads["roughness"], 0.4);
-        assert!(overlays.iter().all(|o| o["name"] != "Copper top pads"));
+        assert!(overlays.iter().all(|o| o["name"] != "Finish top"));
         // The same board with no finish keeps the gold default.
         board.appearance.bottom_finish = None;
         let (overlays, _) =
             crate::overlay::overlays(&board, &[], 1.6, BOARD_PART, crate::overlay::Copper::Outer);
         let pads = overlays
             .iter()
-            .find(|o| o["name"] == "Copper bottom pads")
+            .find(|o| o["name"] == "Finish bottom")
             .unwrap();
         assert_eq!(pads["color"], "#d4af37");
     }
@@ -2465,10 +2481,10 @@ mod tests {
         assert!((area_of("one-track", "Copper top") - track).abs() < 0.01);
         assert!((area_of("one-bottom-track", "Copper bottom") - track).abs() < 0.01);
         // one-resistor: two SMD pads 0.8 x 1.0 on Top Layer.
-        assert!((area_of("one-resistor", "Copper top pads") - 1.6).abs() < 1e-3);
+        assert!((area_of("one-resistor", "Finish top") - 1.6).abs() < 1e-3);
         // one-plated-pad: round 2, hole 1, on both faces.
         let ring = std::f64::consts::PI * 0.75;
-        assert!((area_of("one-plated-pad", "Copper bottom pads") - ring).abs() < 0.02);
+        assert!((area_of("one-plated-pad", "Finish bottom") - ring).abs() < 0.02);
         // one-overlay-line: (10, 10) to (20, 10), 0.2 wide.
         let line = 2.0 + std::f64::consts::PI * 0.01;
         assert!((area_of("one-overlay-line", "Silkscreen top") - line).abs() < 0.01);
