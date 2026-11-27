@@ -715,7 +715,7 @@ impl Reader {
             diameter: size,
             drill,
             tented,
-            mask_expansion: None,
+            mask_expansion: [None, None],
             layers,
         });
     }
@@ -813,13 +813,19 @@ impl Reader {
             .unwrap_or("")
             .to_string();
         let owner = (!designator.is_empty()).then_some(designator.as_str());
+        // `solder_mask_margin`: how far the mask opens past a pad's edge. A pad's own value wins
+        // over its footprint's; both sides of the pad get it.
+        let footprint_margin = fp
+            .child("solder_mask_margin")
+            .and_then(|m| m.num(0))
+            .filter(|m| m.is_finite());
         let lib_id = fp.str_at(0).unwrap_or("");
         let name = lib_id.rsplit(':').next().unwrap_or(lib_id).to_string();
 
         for item in fp.args() {
             let Some(head) = item.head() else { continue };
             match head {
-                "pad" => self.pad(item, &frame, owner),
+                "pad" => self.pad(item, &frame, owner, footprint_margin),
                 "property" => {
                     if let (Some(spot), Some(text)) = (Self::text_spot(item), item.str_at(1)) {
                         if matches!(item.str_at(0), Some("Reference") | Some("Value")) {
@@ -1034,7 +1040,7 @@ impl Reader {
         out
     }
 
-    fn pad(&mut self, pad: &Node, f: &Frame, owner: Option<&str>) {
+    fn pad(&mut self, pad: &Node, f: &Frame, owner: Option<&str>, footprint_margin: Option<f64>) {
         let kind = pad.str_at(1).unwrap_or("");
         let shape_name = pad.str_at(2).unwrap_or("");
         let at = pad.child("at");
@@ -1186,6 +1192,11 @@ impl Reader {
         targets.sort_unstable();
         targets.dedup();
         let hole_only_note = targets.is_empty();
+        let margin = pad
+            .child("solder_mask_margin")
+            .and_then(|m| m.num(0))
+            .filter(|m| m.is_finite())
+            .or(footprint_margin);
         for layer in targets {
             if let Some(shapes) = &polygon {
                 self.copper.push(CopperItem::PolygonPad {
@@ -1198,6 +1209,8 @@ impl Reader {
                     drill,
                     plated,
                     owner: owner.map(str::to_string),
+                    tented: [None, None],
+                    mask_expansion: [margin, margin],
                 });
                 continue;
             }
@@ -1211,6 +1224,8 @@ impl Reader {
                 drill,
                 plated,
                 owner: owner.map(str::to_string),
+                tented: [None, None],
+                mask_expansion: [margin, margin],
             });
         }
         if hole_only_note {

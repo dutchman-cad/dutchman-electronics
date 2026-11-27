@@ -607,6 +607,8 @@ pub(crate) fn pads(
                     drill: (hole > 0.0).then_some(hole),
                     plated,
                     owner: components.owner(g),
+                    tented: [None, None],
+                    mask_expansion: [None, None],
                 });
                 continue;
             }
@@ -632,6 +634,8 @@ pub(crate) fn pads(
             drill: (hole > 0.0).then_some(hole),
             plated,
             owner: components.owner(g),
+            tented: [None, None],
+            mask_expansion: [None, None],
         });
     }
     if uneven > 0 {
@@ -865,7 +869,7 @@ pub(crate) fn vias(
             diameter,
             drill,
             tented,
-            mask_expansion,
+            mask_expansion: [mask_expansion, mask_expansion],
             layers: span,
         });
     }

@@ -1082,7 +1082,7 @@ fn vias(o: &ReadOutcome) -> Vec<ViaView> {
                 layers,
                 ..
             } => {
-                assert_eq!(*mask_expansion, None);
+                assert_eq!(*mask_expansion, [None, None]);
                 let span = layers.map(|(a, b)| {
                     (
                         o.board.layers[a].name.clone(),

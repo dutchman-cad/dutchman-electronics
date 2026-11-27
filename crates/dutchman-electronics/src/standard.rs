@@ -1860,6 +1860,8 @@ mod tests {
                     drill: None,
                     plated: false,
                     owner: Some("U1".into()),
+                    tented: [None, None],
+                    mask_expansion: [None, None],
                 })
                 .collect(),
             ..Board::default()
