@@ -305,6 +305,33 @@ pub fn build(
     )
 }
 
+/// The overlay kinds a loader says it can draw beyond the ones every loader knows (`--accept-overlay`).
+/// Without one, the package holds only `copper`, `silkscreen` and `mask`, and the mask is opaque.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Accept {
+    /// The loader draws `laminate` overlays and see-through masks.
+    pub laminate: bool,
+}
+
+impl Accept {
+    /// The overlay kinds that can be negotiated.
+    pub const KINDS: &'static [&'static str] = &["laminate"];
+
+    /// Adds the kind named `kind`, or says which kinds there are.
+    pub fn accept(&mut self, kind: &str) -> Result<(), String> {
+        match kind {
+            "laminate" => self.laminate = true,
+            other => {
+                return Err(format!(
+                    "--accept-overlay {other}: not a kind we can negotiate; accepted: {}",
+                    Self::KINDS.join(", ")
+                ))
+            }
+        }
+        Ok(())
+    }
+}
+
 /// [`build`], with the choice of which bodies the parts get (`--bodies`, see [`Bodies`]).
 pub fn build_with_bodies(
     path: &Path,
@@ -313,6 +340,29 @@ pub fn build_with_bodies(
     model_folders: &[PathBuf],
     copper: crate::overlay::Copper,
     bodies: Bodies,
+) -> Result<Package, String> {
+    build_accepting(
+        path,
+        bytes,
+        parameters,
+        model_folders,
+        copper,
+        bodies,
+        Accept::default(),
+    )
+}
+
+/// [`build_with_bodies`], with the overlay kinds the loader accepts (`--accept-overlay`). Without
+/// `laminate` there is no laminate overlay and the mask's `opacity` is 1.0, so an older loader
+/// gets a correct board: copper hidden under an opaque mask.
+pub fn build_accepting(
+    path: &Path,
+    bytes: &[u8],
+    parameters: &[(String, String)],
+    model_folders: &[PathBuf],
+    copper: crate::overlay::Copper,
+    bodies: Bodies,
+    accept: Accept,
 ) -> Result<Package, String> {
     let extension = path.extension().and_then(|e| e.to_str());
     let head = bytes.get(..bytes.len().min(4096)).unwrap_or_default();
@@ -411,8 +461,11 @@ pub fn build_with_bodies(
         }));
         files.push((PLATING_FILE.to_string(), text.into_bytes()));
     }
-    let (overlays, overlay_notes) =
+    let (mut overlays, overlay_notes) =
         crate::overlay::overlays(&board, &outcome.fonts, step.thickness, BOARD_PART, copper);
+    if !accept.laminate {
+        negotiate_down(&mut overlays);
+    }
     notes.extend(overlay_notes);
     let manifest = json!({
         "schema": PARTS_SCHEMA,
@@ -426,6 +479,17 @@ pub fn build_with_bodies(
         "notes": notes,
     });
     Ok(Package { manifest, files })
+}
+
+/// Makes the overlays what a loader that knows only `copper`, `silkscreen` and `mask` can draw:
+/// no `laminate` overlay, and an opaque mask.
+fn negotiate_down(list: &mut Vec<Value>) {
+    list.retain(|o| o["kind"] != "laminate");
+    for o in list.iter_mut().filter(|o| o["kind"] == "mask") {
+        if let Some(map) = o.as_object_mut() {
+            map.insert("opacity".into(), json!(1.0));
+        }
+    }
 }
 
 /// An Info note for each side whose surface finish process we do not know, whose pads are drawn
@@ -1300,14 +1364,79 @@ mod tests {
             env!("CARGO_MANIFEST_DIR")
         );
         let bytes = std::fs::read(&path).unwrap();
-        build(
+        build_laminate(Path::new(&path), &bytes, crate::overlay::Copper::Outer)
+    }
+
+    /// The package of a loader that accepts every overlay kind.
+    #[cfg(feature = "altium")]
+    fn build_laminate(path: &Path, bytes: &[u8], copper: crate::overlay::Copper) -> Package {
+        build_accepting(
+            path,
+            bytes,
+            &[],
+            &[],
+            copper,
+            Bodies::default(),
+            Accept { laminate: true },
+        )
+        .unwrap()
+    }
+
+    #[cfg(feature = "altium")]
+    #[test]
+    fn without_accept_overlay_there_is_no_laminate_and_the_mask_is_opaque() {
+        let path = format!(
+            "{}/../altium-pcbdoc/tests/boards/one-blue-mask-resistor.PcbDoc",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let bytes = std::fs::read(&path).unwrap();
+        let kinds = |p: &Package| -> Vec<String> {
+            p.manifest["overlays"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|o| o["kind"].as_str().unwrap().to_string())
+                .collect()
+        };
+        let old = build(
             Path::new(&path),
             &bytes,
             &[],
             &[],
             crate::overlay::Copper::Outer,
         )
-        .unwrap()
+        .unwrap();
+        assert!(!kinds(&old).contains(&"laminate".to_string()));
+        assert!(kinds(&old).contains(&"mask".to_string()));
+        for o in old.manifest["overlays"].as_array().unwrap() {
+            if o["kind"] == "mask" {
+                assert_eq!(o["opacity"], 1.0, "{o}");
+            }
+        }
+        let new = build_laminate(Path::new(&path), &bytes, crate::overlay::Copper::Outer);
+        assert_eq!(kinds(&new).iter().filter(|k| *k == "laminate").count(), 2);
+        for o in new.manifest["overlays"].as_array().unwrap() {
+            if o["kind"] == "mask" {
+                let opacity = o["opacity"].as_f64().unwrap();
+                assert!((0.75..1.0).contains(&opacity), "{o}");
+            }
+        }
+        // Everything else is the same.
+        let others = |p: &Package| -> Vec<String> {
+            kinds(p).into_iter().filter(|k| k != "laminate").collect()
+        };
+        assert_eq!(others(&old), others(&new));
+    }
+
+    #[test]
+    fn accept_takes_laminate_and_refuses_the_rest_listing_what_is_accepted() {
+        let mut a = Accept::default();
+        assert!(!a.laminate);
+        a.accept("laminate").unwrap();
+        a.accept("laminate").unwrap();
+        assert!(a.laminate);
+        let err = a.accept("glass").unwrap_err();
+        assert!(err.contains("glass") && err.contains("laminate"), "{err}");
     }
 
     /// Equal to the 0.001 mm the boards' README.txt gives.
@@ -1549,7 +1678,7 @@ mod tests {
                 continue;
             }
             let bytes = std::fs::read(&path).unwrap();
-            let package = build(&path, &bytes, &[], &[], crate::overlay::Copper::Outer).unwrap();
+            let package = build_laminate(&path, &bytes, crate::overlay::Copper::Outer);
             // The board's thickness T: the top face of its STEP solid.
             let (_, step) = package
                 .files

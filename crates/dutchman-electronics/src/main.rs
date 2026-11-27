@@ -8,6 +8,8 @@
 //! draw inner copper layers too (the default, `--copper outer`, draws the top and bottom only),
 //! and `--bodies standard` to give recognized packages a standard body in place of a plain
 //! extruded one (the default, `--bodies file`, only gives one to a part with no model at all).
+//! `--accept-overlay <kind>` (repeatable; only `laminate` today) to say which newer overlay kinds
+//! the loader draws: without `laminate` there is no laminate overlay and the mask is opaque.
 //! For people: `formats`, `streams <file>` and
 //! `privacy-check <file> [--watch WORD]... [--all-text]`.
 
@@ -34,6 +36,7 @@ const USAGE: &str = "usage: dutchman-electronics info [--json]
                                 [--param NAME=VALUE]... [--board NAME] [--project FILE]
                                 [--models <dir>]... [--copper outer|all]
                                 [--bodies file|standard]
+                                [--accept-overlay laminate]...
        dutchman-electronics formats
        dutchman-electronics streams <board.PcbDoc>
        dutchman-electronics privacy-check <board.PcbDoc|project.PrjPcb> [--watch WORD]... [--all-text]";
@@ -194,6 +197,8 @@ struct ReadArgs {
     copper: dutchman_electronics::overlay::Copper,
     /// Which bodies parts get.
     bodies: dutchman_electronics::package::Bodies,
+    /// Overlay kinds the loader accepts.
+    accept: dutchman_electronics::package::Accept,
 }
 
 /// Parses the words after `read`, or says what is wrong.
@@ -224,6 +229,15 @@ fn read_args(words: &[&str]) -> Result<ReadArgs, String> {
                     Some("standard") => dutchman_electronics::package::Bodies::Standard,
                     _ => return Err("--bodies needs file or standard".into()),
                 };
+            }
+            "--accept-overlay" => {
+                let kind = rest.next().ok_or_else(|| {
+                    format!(
+                        "--accept-overlay needs a kind: {}",
+                        dutchman_electronics::package::Accept::KINDS.join(", ")
+                    )
+                })?;
+                args.accept.accept(kind)?;
             }
             "--models" => {
                 let folder = rest.next().ok_or("--models needs a folder")?;
@@ -268,13 +282,14 @@ fn read(args: &ReadArgs) -> ExitCode {
         parameters: &args.parameters,
     };
     let built = package::open(path, &with).and_then(|input| {
-        package::build_with_bodies(
+        package::build_accepting(
             &input.path,
             &input.bytes,
             &input.parameters,
             &args.models,
             args.copper,
             args.bodies,
+            args.accept,
         )
     });
     let written = built.and_then(|p| package::write(std::path::Path::new(out), &p).map(|()| p));
@@ -377,6 +392,10 @@ mod tests {
             "all",
             "--bodies",
             "standard",
+            "--accept-overlay",
+            "laminate",
+            "--accept-overlay",
+            "laminate",
         ])?;
         assert_eq!(
             args,
@@ -393,6 +412,7 @@ mod tests {
                 models: vec!["lib".into(), "more".into()],
                 copper: dutchman_electronics::overlay::Copper::All,
                 bodies: dutchman_electronics::package::Bodies::Standard,
+                accept: dutchman_electronics::package::Accept { laminate: true },
             }
         );
         Ok(())
@@ -419,6 +439,8 @@ mod tests {
             &["b.PcbDoc", "--out", "d", "--copper", "inner"],
             &["b.PcbDoc", "--out", "d", "--bodies"],
             &["b.PcbDoc", "--out", "d", "--bodies", "all"],
+            &["b.PcbDoc", "--out", "d", "--accept-overlay"],
+            &["b.PcbDoc", "--out", "d", "--accept-overlay", "glass"],
         ] {
             assert!(read_args(words).is_err(), "{words:?}");
         }
