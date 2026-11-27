@@ -1154,7 +1154,7 @@ closing 0 in its length.
 
 Features seen on other people's boards (mask-opacity-100, origin-moved, overlay-region-fill,
 body-two-extruded, body-cylinder, body-sphere, arc-region, pad-stack-tmb, solder-mask-region,
-overlapping-holes)
+overlapping-holes, body-arc-outline)
 ---------------------------------------------------------------------------------------------
 Made on 2026-11-27, each from a file copy of one of our own boards, one feature per board, so the
 reader can learn features that public sample boards use (only our converter's notes on those
@@ -1254,6 +1254,18 @@ overlapping-holes.PcbDoc  (from empty-outline)
     By my own script, two free pads (no component, no net), simple pad stack, Multi-Layer, round
     1.600, plated hole 1.000: "1" at (24.6, 15) and "2" at (25.4, 15). Their centers are 0.800
     apart, so the two holes overlap by 0.200 and the two pads by 0.800.
+
+body-arc-outline.PcbDoc  (from one-resistor)
+    R1's extruded body replaced by one whose outline has arcs, made as for arc-region's body. By
+    my own script: R1's body removed, and a rounded slot drawn on Mechanical 1 (width 0.100):
+    tracks (24.6, 14.6) to (25.4, 14.6) and (24.6, 15.4) to (25.4, 15.4), arcs center
+    (25.4, 15) and (24.6, 15), radius 0.400, 270 to 90 and 90 to 270 degrees. By hand: Tools >
+    Convert > Create 3D Body From selected primitives. By my own script: the four tracks and
+    arcs removed, and the new body given to R1 with standoff 0 and overall height 0.500. Read
+    back: Mechanical 2 (Top 3D Body), owned by R1, extruded, box (24.2, 14.6) to (25.8, 15.4),
+    color 128, 128, 128, opacity 1. The record reads ISSHAPEBASED=TRUE, MODEL.MODELTYPE=0,
+    STANDOFFHEIGHT=0mil, OVERALLHEIGHT=19.685mil, MODEL.EXTRUDED.MINZ=0mil and
+    MAXZ=19.685mil, MODEL.2D.X=984.2519mil, MODEL.2D.Y=590.5511mil (25.000, 15.000).
 
 Saving embedded Arial in each of them (none of their texts uses it); it was removed as before
 (see "Paths inside the files").
