@@ -166,6 +166,11 @@ const MASK_MANUAL: u8 = 2;
 const MAX_ANGLE_DEG: f64 = 360.0;
 const PAD_BLOCKS: usize = 6;
 const PAD_GEOMETRY_BLOCK: usize = 4;
+/// The pad block with its designator: a length byte, then that many bytes (`\x01R` for "R").
+const PAD_NAME_BLOCK: usize = 0;
+/// Geometry bytes 7..9: the component index, `ff ff` for a free pad.
+const COMPONENT_INDEX_AT: usize = 7;
+const NO_COMPONENT_INDEX: u16 = 0xffff;
 /// The pad block with a size, shape and corner per layer (only rounded rectangles have one).
 const PAD_LAYER_TABLE_BLOCK: usize = 5;
 /// Where in that block the top layer's shape is, and its corner percentage.
@@ -204,6 +209,19 @@ pub(crate) struct Drill {
     /// The hole diameter.
     pub hole: f64,
     pub net: Option<String>,
+    /// What the hole is, for the plane rules' scopes.
+    pub of: DrillOf,
+}
+
+/// What a drilled hole belongs to, as a rule's scope sees it.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum DrillOf {
+    Via,
+    /// A pad with the name Altium's queries give it: `Free-` and its designator for a pad of no
+    /// component (`plane-polygon-connect`: `Name = 'Free-D'` matched pad D).
+    Pad(String),
+    /// A pad of a component, whose name in a query no test board shows yet.
+    ComponentPad,
 }
 
 /// The copper layers of a board, built from `/Board6/Data`.
@@ -706,6 +724,12 @@ pub(crate) fn tracks(
     Ok(items)
 }
 
+/// A pad's designator from its name block: a length byte and that many bytes.
+fn pad_designator(block: &[u8]) -> String {
+    let n = block.first().copied().map_or(0, usize::from);
+    String::from_utf8_lossy(block.get(1..1 + n).unwrap_or_default()).into_owned()
+}
+
 /// Reads the pads from `/Pads6/Data`. Each through-hole pad's hole also goes into `drills`.
 pub(crate) fn pads(
     data: &[u8],
@@ -740,6 +764,7 @@ pub(crate) fn pads(
         let mut cursor = at + 1;
         let mut geometry: Option<&[u8]> = None;
         let mut layer_table: &[u8] = &[];
+        let mut name_block: &[u8] = &[];
         for block in 0..PAD_BLOCKS {
             let len = read_u32(data, cursor).ok_or("pad block length cut short")?;
             let start = cursor + 4;
@@ -747,7 +772,9 @@ pub(crate) fn pads(
                 .checked_add(len)
                 .filter(|&e| e <= data.len())
                 .ok_or("pad block is longer than the stream")?;
-            if block == PAD_GEOMETRY_BLOCK {
+            if block == PAD_NAME_BLOCK {
+                name_block = data.get(start..end).unwrap_or_default();
+            } else if block == PAD_GEOMETRY_BLOCK {
                 geometry = data.get(start..end);
             } else if block == PAD_LAYER_TABLE_BLOCK {
                 layer_table = data.get(start..end).unwrap_or_default();
@@ -780,6 +807,10 @@ pub(crate) fn pads(
                 at: at_point,
                 hole,
                 net: layers.net(g).ok().flatten(),
+                of: match read_u16(g, COMPONENT_INDEX_AT) {
+                    Some(c) if c != NO_COMPONENT_INDEX => DrillOf::ComponentPad,
+                    _ => DrillOf::Pad(format!("Free-{}", pad_designator(name_block))),
+                },
             });
         }
         let shapes = g.get(49..52).ok_or("pad shapes cut short")?;
@@ -1116,6 +1147,7 @@ pub(crate) fn vias(
             at,
             hole: drill,
             net: layers.net(body).ok().flatten(),
+            of: DrillOf::Via,
         });
         items.push(CopperItem::Via {
             at,

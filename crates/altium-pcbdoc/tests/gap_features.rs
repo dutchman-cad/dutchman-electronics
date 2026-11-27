@@ -284,3 +284,107 @@ fn teardrops_are_copper_regions() -> Result<(), Box<dyn std::error::Error>> {
     );
     Ok(())
 }
+
+/// A hole's box (x0, x1, y0, y1) and its radius when it is a whole circle.
+type NearHole = ((f64, f64, f64, f64), Option<f64>);
+
+/// The holes of the copper regions on one layer that lie near (x, 25): their boxes, and the
+/// radius of each that is one whole circle (two half arcs).
+fn holes_near(out: &ReadOutcome, layer: &str, x: f64) -> Vec<NearHole> {
+    let mut found = Vec::new();
+    for c in &out.board.copper {
+        let CopperItem::Region {
+            layer: l, holes, ..
+        } = c
+        else {
+            continue;
+        };
+        if out.board.layers.get(*l).map(|l| l.name.as_str()) != Some(layer) {
+            continue;
+        }
+        for h in holes {
+            let b = contour_box(h);
+            let (cx, cy) = ((b.0 + b.1) / 2.0, (b.2 + b.3) / 2.0);
+            if (cx - x).abs() < 1.5 && (cy - 25.0).abs() < 1.5 {
+                let radius = match h.segments.as_slice() {
+                    [board_model::Segment::Arc { radius: a, .. }, board_model::Segment::Arc { radius: b, .. }]
+                        if (a - b).abs() < 1e-9 =>
+                    {
+                        Some(*a)
+                    }
+                    _ => None,
+                };
+                found.push((b, radius));
+            }
+        }
+    }
+    found
+}
+
+/// plane-polygon-connect: free GND pads R, D and N (round 1.600, hole 0.800) at (6, 25),
+/// (12, 25) and (18, 25) under a GND pour on Top Layer and on the GND plane Layer 1, with rules
+/// NoConnect for N (priority 1), Direct for D (2) and the board's Relief (3).
+/// - Top Layer (Altium's pour, read as poured): R four relief gaps, D none, N one round
+///   clearance 2.126 across.
+/// - Layer 1 (rebuilt from the rules): R a relief, its ring from 0.400 + 0.508 = 0.908 to 1.162
+///   about the center, crossed by spokes; D nothing (solid to the drill); N a round clearance of
+///   0.400 + 0.300 = 0.700, as Layer 2 (another net) has round all three.
+#[test]
+fn plane_and_pour_joins_follow_the_rules_for_single_pads() -> Result<(), Box<dyn std::error::Error>>
+{
+    let out = read("plane-polygon-connect.PcbDoc")?;
+    let near = |a: f64, b: f64| (a - b).abs() <= TOLERANCE;
+
+    // Top Layer pour.
+    assert_eq!(holes_near(&out, "Top Layer", 6.0).len(), 4);
+    assert!(holes_near(&out, "Top Layer", 12.0).is_empty());
+    let n = holes_near(&out, "Top Layer", 18.0);
+    let [(b, _)] = n.as_slice() else {
+        return Err(format!("{n:?}").into());
+    };
+    assert!(near(b.1 - b.0, 2.126) && near(b.3 - b.2, 2.126), "{b:?}");
+
+    // Layer 1 plane.
+    let r = holes_near(&out, "Layer 1", 6.0);
+    assert_eq!(r.len(), 4, "{r:?}");
+    for (b, _) in &r {
+        // Each piece of air lies between 0.908 and 1.162 from (6, 25) along an axis.
+        let far = (b.0 - 6.0)
+            .abs()
+            .max((b.1 - 6.0).abs())
+            .max((b.2 - 25.0).abs())
+            .max((b.3 - 25.0).abs());
+        assert!(far <= 1.162 + TOLERANCE, "{b:?}");
+    }
+    let outer: f64 = r
+        .iter()
+        .map(|(b, _)| (b.1 - 6.0).max(6.0 - b.0))
+        .fold(0.0, f64::max);
+    assert!(near(outer, 0.907), "{outer}");
+    assert!(holes_near(&out, "Layer 1", 12.0).is_empty());
+    let n = holes_near(&out, "Layer 1", 18.0);
+    let [(b, Some(radius))] = n.as_slice() else {
+        return Err(format!("{n:?}").into());
+    };
+    assert!(
+        near(*radius, 0.7) && near((b.0 + b.1) / 2.0, 18.0),
+        "{b:?} {radius}"
+    );
+
+    // Layer 2, another net: a round clearance of 0.700 round each.
+    for x in [6.0, 12.0, 18.0] {
+        let h = holes_near(&out, "Layer 2", x);
+        assert!(
+            matches!(h.as_slice(), [(_, Some(r))] if near(*r, 0.7)),
+            "{x}: {h:?}"
+        );
+    }
+    assert!(
+        out.notes
+            .iter()
+            .all(|n| !n.message.contains("for some objects only")),
+        "{:?}",
+        out.notes
+    );
+    Ok(())
+}
