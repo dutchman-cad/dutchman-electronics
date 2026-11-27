@@ -1,0 +1,16 @@
+Original test board made for Dutchman Electronics. Released under CC0 1.0 (public domain): https://creativecommons.org/publicdomain/zero/1.0/
+
+k10-zone-cutout: a copper pour that a board cutout passes through, to check that the fill leaves the cutout out (issue #123).
+
+Made with KiCad 10.0.8 (file version 20260206) by fixtures/kicad/build_k10_boards.py and fixtures/kicad/fill_zones.py (KiCad fills the zone). KiCad shows coordinates in millimeters with Y pointing down; the board's top-left corner is at page position (100, 100), and every number below is relative to that corner (so add 100 to x and y for the page position). The reader gives Y up: model x = 100 + X, model y = -(100 + Y).
+
+- Outline: rectangle (0,0) to (50,30) on Edge.Cuts, line width 0.1; thickness 1.6.
+- Cutout: circle on Edge.Cuts centered on (25,15), radius 3, line width 0.1.
+- Copper-to-edge clearance 0.5 (KiCad's default; KiCad keeps it in the project file, which is not shipped, so the board file does not hold it).
+- Net: GND (1).
+- Zone on F.Cu, net GND, outline (5,5), (45,5), (45,25), (5,25); minimum width 0.25, zone clearance 0.3. The cutout lies wholly inside it.
+- KiCad filled it (read back with KiCad's own scripting): one polygon, saved with a zero-width bridge along Y = 14.828 from the left edge to the hole.
+  - Outer contour: the zone outline 40 x 20 = 800 mm2, corners rounded off by KiCad (under 0.02 mm2).
+  - Exactly one hole: KiCad's polygon of the circle of radius 3 + 0.5 = 3.5 centered on (25,15) (its corners 3.5000 to 3.5005 from the center). The zone clearance 0.3 is not what applies at the board edge; the edge clearance 0.5 is. Area pi * 3.5^2 = 38.485 mm2.
+  - Copper area as KiCad gives it: 761.458 mm2 (800 less the hole and the rounded corners).
+- The reader gives the same: one region, one hole 3.5 from (25,15), copper 761.458 mm2.

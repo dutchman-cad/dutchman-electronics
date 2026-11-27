@@ -15,6 +15,10 @@ for v in 9.0 10.0; do
     python3 /work/fixtures/kicad/embed_fonts.py /work/$dir/embedded-font.kicad_pcb \"Regular 123=DejaVu Sans Mono\" \"Bold 456=DejaVu Sans Mono\" &&
     python3 /work/fixtures/kicad/add_stackup.py /work/$dir/four-layer-stackup.kicad_pcb /work/fixtures/kicad/stackup-four-layer.sexp"
 done
+# The boards made only with KiCad 10 (already named k10-<name>).
+podman run --rm --userns=keep-id -v "$PWD:/work:Z" docker.io/kicad/kicad:10.0 sh -c "
+  python3 /work/fixtures/kicad/build_k10_boards.py /work/$out &&
+  python3 /work/fixtures/kicad/fill_zones.py /work/$out/k10-zone-cutout.kicad_pcb"
 # The project files KiCad writes beside each board are not needed.
 rm -f "$out"/*.kicad_pro "$out"/*.kicad_prl "$out"/k10-work/*.kicad_pro "$out"/k10-work/*.kicad_prl
 for f in "$out"/k10-work/*.kicad_pcb; do
