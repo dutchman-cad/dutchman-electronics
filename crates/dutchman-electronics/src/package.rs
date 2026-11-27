@@ -234,7 +234,8 @@ fn parameters_next_to(board: &Path) -> (Vec<(String, String)>, Vec<Value>) {
     let mut notes = Vec::new();
     if too_many {
         notes.push(warn(format!(
-            "more than {MAX_PROJECTS_NEXT_TO_BOARD} project files (.PrjPcb) next to the board;              only {MAX_PROJECTS_NEXT_TO_BOARD} were looked at. Use --project to name the project"
+            "more than {MAX_PROJECTS_NEXT_TO_BOARD} project files (.PrjPcb) next to the board; \
+             only {MAX_PROJECTS_NEXT_TO_BOARD} were looked at. Use --project to name the project"
         )));
     }
     let mut linking: Vec<(String, Vec<(String, String)>)> = Vec::new();
@@ -291,7 +292,8 @@ fn parameters_next_to(board: &Path) -> (Vec<(String, String)>, Vec<Value>) {
         n => {
             let names: Vec<String> = linking.into_iter().map(|(name, _)| name).collect();
             notes.push(warn(format!(
-                "{n} projects next to the board link it ({}); none of their parameters are                  used. Use --project to name the one to take them from",
+                "{n} projects next to the board link it ({}); none of their parameters are \
+             used. Use --project to name the one to take them from",
                 names.join(", ")
             )));
             (Vec::new(), notes)
