@@ -1,14 +1,16 @@
 //! Fonts embedded in a board: `(embedded_files (file (name ..) (type font) (data |..|)))`.
 //!
 //! Worked out from the file-format documentation (which says only that a `data` token holds the
-//! file) and from boards KiCad 9 wrote with a font embedded (`tests/boards/embedded-font`): the
+//! file), from the public OpenType specification (the `name` and `head` tables) and RFC 8878 (the
+//! zstd frame header), and from boards KiCad 9 wrote with a font embedded (`tests/boards/embedded-font`): the
 //! data is the font file compressed with zstd, then written in base64 between two `|` characters
 //! over several lines. A font's family, style and bold and italic marks are not in the board
 //! file, so they are read from the font file's own `name` and `head` tables.
 //!
 //! The data is untrusted. Every step is bounded: at most [`MAX_FILES`] files, [`MAX_PACKED`]
-//! bytes of base64 each, and [`MAX_TOTAL`] bytes unpacked for all files together, with the zstd
-//! window capped at [`MAX_WINDOW`]. A file that cannot be read gets a note and is left out.
+//! bytes of base64 each, and [`MAX_TOTAL`] bytes unpacked for all files together (a file that
+//! fails still costs what it unpacked before failing), with the zstd window capped at
+//! [`MAX_WINDOW`]. A file that cannot be read gets a note and is left out.
 
 use std::io::Read;
 
@@ -18,8 +20,9 @@ use board_model::{EmbeddedFont, Note, Severity};
 const MAX_FILES: usize = 64;
 /// The most base64 characters of one file.
 const MAX_PACKED: usize = 48 << 20;
-/// The most bytes all fonts together may unpack to.
-const MAX_TOTAL: usize = 64 << 20;
+/// The most bytes all fonts together may unpack to. Every file counts against it, one that
+/// fails or is not a font too.
+const MAX_TOTAL: usize = 16 << 20;
 /// The largest zstd window a font may ask for.
 const MAX_WINDOW: u64 = 32 << 20;
 
@@ -74,9 +77,12 @@ pub fn read(root: &crate::sexpr::Node, notes: &mut Vec<Note>) -> Vec<Embedded> {
                     ))),
                 }
             }
-            Err(why) => notes.push(warn(format!(
-                "the embedded font {name} could not be unpacked ({why}); texts in it keep the stroke font"
-            ))),
+            Err((why, spent)) => {
+                budget = budget.saturating_sub(spent);
+                notes.push(warn(format!(
+                    "the embedded font {name} could not be unpacked ({why}); texts in it keep the stroke font"
+                )));
+            }
         }
     }
     if skipped_kind > 0 {
@@ -95,26 +101,38 @@ fn warn(message: String) -> Note {
     }
 }
 
-/// base64, then zstd, within `limit` unpacked bytes.
-fn unpack(data: &str, limit: usize) -> Result<Vec<u8>, String> {
+/// base64, then zstd, within `limit` unpacked bytes. An error carries what the attempt cost
+/// against the budget: the bytes it unpacked before failing, or the packed size when it stopped
+/// before unpacking.
+fn unpack(data: &str, limit: usize) -> Result<Vec<u8>, (String, usize)> {
     if data.len() > MAX_PACKED {
-        return Err(format!("its data is longer than {MAX_PACKED} characters"));
+        return Err((
+            format!("its data is longer than {MAX_PACKED} characters"),
+            0,
+        ));
     }
-    let packed = base64(data).ok_or("the data is not base64")?;
-    check_frame(&packed, limit)?;
+    let packed = base64(data).ok_or(("the data is not base64".to_string(), data.len() / 4 * 3))?;
+    let early = |why: String| (why, packed.len());
+    check_frame(&packed, limit).map_err(early)?;
     let mut decoder =
         ruzstd::decoding::StreamingDecoder::new_with_max_window_size(packed.as_slice(), MAX_WINDOW)
-            .map_err(|e| format!("not zstd data ({e})"))?;
+            .map_err(|e| early(format!("not zstd data ({e})")))?;
     let mut out = Vec::new();
     let cap = limit as u64;
-    let n = decoder
+    let read = decoder
         .by_ref()
         .take(cap.saturating_add(1))
-        .read_to_end(&mut out)
-        .map_err(|e| format!("damaged zstd data ({e})"))?;
-    if n > limit {
-        return Err(format!(
-            "it unpacks to more than the {limit} bytes left for fonts"
+        .read_to_end(&mut out);
+    if let Err(e) = read {
+        return Err((
+            format!("damaged zstd data ({e})"),
+            out.len().max(packed.len()),
+        ));
+    }
+    if out.len() > limit {
+        return Err((
+            format!("it unpacks to more than the {limit} bytes left for fonts"),
+            limit,
         ));
     }
     Ok(out)
@@ -261,7 +279,9 @@ fn describe(file_name: &str, bytes: Vec<u8>) -> Result<Embedded, String> {
     } else {
         0
     };
-    let magic = bytes.get(start..start + 4).ok_or("not a font file")?;
+    let magic = bytes
+        .get(start..start.checked_add(4).ok_or("not a font file")?)
+        .ok_or("not a font file")?;
     if !(magic == [0, 1, 0, 0] || magic == b"true" || magic == b"OTTO") {
         return Err("not a TrueType or OpenType file".into());
     }
@@ -306,6 +326,124 @@ mod tests {
         assert_eq!(base64("aG=s"), None);
     }
 
+    fn base64_of(bytes: &[u8]) -> String {
+        const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut out = String::new();
+        for c in bytes.chunks(3) {
+            let n = c
+                .iter()
+                .enumerate()
+                .fold(0u32, |n, (i, b)| n | (u32::from(*b) << (16 - 8 * i)));
+            for i in 0..=c.len() {
+                out.push(char::from(A[((n >> (18 - 6 * i)) & 63) as usize]));
+            }
+            out.extend(std::iter::repeat_n('=', 2 - (c.len() - 1)));
+        }
+        out
+    }
+
+    /// A zstd frame with a 2 MiB window and no declared size, made of `blocks` run-length blocks of
+    /// 128 KiB zeros each (the last one marked last), so it unpacks to 128 KiB per block.
+    fn zero_frame(blocks: usize) -> Vec<u8> {
+        let mut f = vec![0x28, 0xB5, 0x2F, 0xFD, 0x00, 0x58];
+        for i in 0..blocks {
+            let last = u32::from(i + 1 == blocks);
+            let header = (131_072u32 << 3) | (1 << 1) | last;
+            f.extend_from_slice(&header.to_le_bytes()[..3]);
+            f.push(0);
+        }
+        f
+    }
+
+    #[test]
+    fn a_frame_is_unpacked_and_one_that_expands_past_the_limit_is_refused() {
+        let ok = unpack(&base64_of(&zero_frame(2)), 1 << 20).unwrap();
+        assert_eq!(ok.len(), 2 * 131_072);
+        // Declares no size, but unpacks to 4 blocks of 128 KiB: more than the 300 KB allowed.
+        let (why, spent) = unpack(&base64_of(&zero_frame(4)), 300_000).unwrap_err();
+        assert!(why.contains("more than"), "{why}");
+        assert_eq!(spent, 300_000);
+    }
+
+    #[test]
+    fn a_frame_that_declares_a_small_size_and_holds_more_is_an_error() {
+        // Single segment, one size byte saying 10, then three 128 KiB blocks.
+        let mut f = vec![0x28, 0xB5, 0x2F, 0xFD, 0x20, 10];
+        for i in 0..3 {
+            let header = (131_072u32 << 3) | (1 << 1) | u32::from(i == 2);
+            f.extend_from_slice(&header.to_le_bytes()[..3]);
+            f.push(0);
+        }
+        let r = unpack(&base64_of(&f), 300_000);
+        match r {
+            Err(_) => {}
+            Ok(out) => assert!(out.len() <= 300_000),
+        }
+    }
+
+    #[test]
+    fn a_window_over_the_cap_a_cut_frame_and_a_bad_header_are_errors() {
+        // Window descriptor 0xF8: exponent 31, a 2 TiB window.
+        let huge = [0x28, 0xB5, 0x2F, 0xFD, 0x00, 0xF8, 0x01, 0x00, 0x00, 0x00];
+        assert!(unpack(&base64_of(&huge), 1 << 20).is_err());
+        // The first frame cut in the middle of its second block, and cut right after a header.
+        let f = zero_frame(3);
+        for cut in [f.len() - 2, 6 + 4 + 2, 6 + 2, 5, 4, 2] {
+            // Never a panic; if the decoder hands back what it had, it is never more than the whole.
+            if let Ok(out) = unpack(&base64_of(&f[..cut]), 1 << 20) {
+                assert!(out.len() < 3 * 131_072, "cut at {cut}");
+            }
+        }
+        // Wrong magic number.
+        assert!(unpack(&base64_of(&[1, 2, 3, 4, 5, 6]), 100).is_err());
+    }
+
+    #[test]
+    fn a_failed_file_still_costs_the_budget() {
+        let (_, spent) = unpack(&base64_of(&zero_frame(4)), 300_000).unwrap_err();
+        assert_eq!(spent, 300_000);
+        let (_, spent) = unpack("AAAAAAAAAAAA", 100).unwrap_err();
+        assert!(spent > 0);
+    }
+
+    /// A font file with one table record `tag` at `offset` for `len` bytes, and nothing else.
+    fn sfnt(tag: &[u8; 4], offset: u32, len: u32) -> Vec<u8> {
+        let mut f = vec![0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0];
+        f.extend_from_slice(tag);
+        f.extend_from_slice(&[0; 4]);
+        f.extend_from_slice(&offset.to_be_bytes());
+        f.extend_from_slice(&len.to_be_bytes());
+        f
+    }
+
+    #[test]
+    fn hostile_font_files_are_errors_not_panics() {
+        assert!(describe("x.ttf", vec![0; 3]).is_err());
+        assert!(describe("x.ttf", vec![0, 1, 0, 0, 0xFF, 0xFF, 0, 0, 0, 0, 0, 0]).is_err());
+        // The name table starts past the end, or runs past it, or wraps.
+        for (off, len) in [(1 << 30, 10), (28, 1 << 30), (u32::MAX, u32::MAX), (28, 0)] {
+            assert!(
+                describe("x.ttf", sfnt(b"name", off, len)).is_err(),
+                "{off} {len}"
+            );
+        }
+        // A name table claiming 65535 records and a string area past the end.
+        let mut f = sfnt(b"name", 28, 6);
+        f.extend_from_slice(&[0, 0, 0xFF, 0xFF, 0xFF, 0xFF]);
+        assert!(describe("x.ttf", f).is_err());
+        // A collection whose first font is past the end, and one pointing at itself.
+        let mut c = b"ttcf".to_vec();
+        c.extend_from_slice(&[0, 1, 0, 0, 0, 0, 0, 1, 0xFF, 0xFF, 0xFF, 0xFF]);
+        assert!(describe("x.ttc", c).is_err());
+        let mut c = b"ttcf".to_vec();
+        c.extend_from_slice(&[0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 12]);
+        assert!(describe("x.ttc", c).is_err());
+        // An offset that makes `start + 4` wrap.
+        let mut c = b"ttcf".to_vec();
+        c.extend_from_slice(&[0, 1, 0, 0, 0, 0, 0, 1, 0xFF, 0xFF, 0xFF, 0xFD]);
+        assert!(describe("x.ttc", c).is_err());
+    }
+
     #[test]
     fn hostile_data_is_an_error_not_a_panic() {
         assert!(unpack("", 100).is_err());
@@ -317,7 +455,5 @@ mod tests {
         assert!(check_frame(&frame, 1 << 20)
             .unwrap_err()
             .contains("declares"));
-        assert!(describe("x.ttf", vec![0; 3]).is_err());
-        assert!(describe("x.ttf", vec![0, 1, 0, 0, 0xFF, 0xFF, 0, 0, 0, 0, 0, 0]).is_err());
     }
 }
