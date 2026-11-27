@@ -857,12 +857,12 @@ fn overlays_within(
     // Real fabs open the mask a little wider than each pad (and than each via not tented).
     let usable = |e: &f64| e.is_finite() && (0.0..=MAX_MASK_EXPANSION).contains(e);
     let via_usable = |e: &f64| e.is_finite() && e.abs() <= MAX_MASK_EXPANSION;
-    // A pad's or via's own expansion on one side (negative allowed), else the board's.
-    let side_expansion = |own: Option<f64>| own.filter(via_usable).unwrap_or(expansion);
     let expansion = board
         .solder_mask_expansion
         .filter(usable)
         .unwrap_or(DEFAULT_SOLDER_MASK_EXPANSION);
+    // A pad's or via's own expansion on one side (negative allowed), else the board's.
+    let side_expansion = |own: Option<f64>| own.filter(via_usable).unwrap_or(expansion);
     // Whether a via with this span reaches a face: one of its end layers is that face's copper.
     let reaches = |span: Option<(usize, usize)>, side: Side| match span {
         None => true,
