@@ -278,7 +278,7 @@ fn a_top_resistor_with_a_model_reference() {
     assert!(at(p.at, 25.0, 15.0));
     assert!(near(p.rotation_deg, 0.0));
     assert_eq!(p.side, Side::Top);
-    let m = p.model.as_ref().unwrap();
+    let m = p.models.first().unwrap();
     assert_eq!(m.name, "box-1608.step");
     assert!(matches!(&m.source, ModelSource::External { file, .. } if file == "box-1608.step"));
     assert!(notes_contain(&o, "3D model file"));

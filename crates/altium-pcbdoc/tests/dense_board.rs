@@ -118,7 +118,7 @@ fn its_bodies_have_their_colors_and_two_parts_carry_the_step_box(
         ("R1", color(40, 40, 40), 0.45),
         ("C11", color(190, 150, 100), 0.5),
     ] {
-        let model = part(&out, designator)?.model.as_ref().ok_or("no model")?;
+        let model = part(&out, designator)?.models.first().ok_or("no model")?;
         let ModelSource::Extruded { height: h, .. } = &model.source else {
             return Err(format!("{designator}: {model:?}").into());
         };
@@ -127,8 +127,8 @@ fn its_bodies_have_their_colors_and_two_parts_carry_the_step_box(
     }
     let id = |designator| -> Result<String, String> {
         match &part(&out, designator)?
-            .model
-            .as_ref()
+            .models
+            .first()
             .ok_or("no model")?
             .source
         {

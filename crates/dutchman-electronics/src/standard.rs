@@ -1843,7 +1843,7 @@ mod tests {
                 at: Point { x: 0.0, y: 0.0 },
                 rotation_deg: 0.0,
                 side: Side::Top,
-                model: None,
+                models: Vec::new(),
                 comment: String::new(),
             }],
             copper: (0..20_000)

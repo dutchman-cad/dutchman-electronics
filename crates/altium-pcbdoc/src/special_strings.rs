@@ -290,7 +290,7 @@ mod tests {
                 at: Point { x: 25.0, y: 15.0 },
                 rotation_deg: 0.0,
                 side: Side::Top,
-                model: None,
+                models: Vec::new(),
                 comment: "10k".into(),
             }],
             texts,

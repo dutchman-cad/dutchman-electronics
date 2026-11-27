@@ -879,7 +879,7 @@ impl Reader {
             at: pos,
             rotation_deg: angle,
             side: if bottom { Side::Bottom } else { Side::Top },
-            model,
+            models: model.into_iter().collect(),
             comment: String::new(),
         });
     }

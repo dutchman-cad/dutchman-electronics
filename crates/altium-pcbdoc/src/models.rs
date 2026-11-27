@@ -170,7 +170,7 @@ pub(crate) fn attach(
         let Some(placement) = components.placements.get_mut(index) else {
             continue;
         };
-        if placement.model.is_some() {
+        if !placement.models.is_empty() {
             extra += 1;
             continue;
         }
@@ -179,7 +179,7 @@ pub(crate) fn attach(
                 if !color_read {
                     no_color += 1;
                 }
-                placement.model = Some(m);
+                placement.models.push(m);
             }
             Err(why) => *unread.entry(why).or_default() += 1,
         }
@@ -275,15 +275,13 @@ fn unpack_within(
 ) -> Vec<EmbeddedModel> {
     let mut users: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for p in placements.iter() {
-        if let Some(ModelRef {
-            source: ModelSource::Embedded { id },
-            ..
-        }) = &p.model
-        {
-            users
-                .entry(id.clone())
-                .or_default()
-                .push(p.designator.clone());
+        for m in &p.models {
+            if let ModelSource::Embedded { id } = &m.source {
+                users
+                    .entry(id.clone())
+                    .or_default()
+                    .push(p.designator.clone());
+            }
         }
     }
     let limit = budget;
@@ -327,10 +325,9 @@ fn unpack_within(
         }
     }
     for p in placements.iter_mut() {
-        if matches!(&p.model, Some(ModelRef { source: ModelSource::Embedded { id }, .. }) if failed.contains(id))
-        {
-            p.model = None;
-        }
+        p.models.retain(
+            |m| !matches!(&m.source, ModelSource::Embedded { id } if failed.contains(id)),
+        );
     }
     models
 }
@@ -788,13 +785,13 @@ mod tests {
             at: Point::default(),
             rotation_deg: 0.0,
             side: Side::Top,
-            model: Some(ModelRef {
+            models: vec![ModelRef {
                 name: String::new(),
                 source: ModelSource::Embedded { id: id.into() },
                 offset: [0.0; 3],
                 rotation_deg: [0.0; 3],
                 color: None,
-            }),
+            }],
             comment: String::new(),
         }
     }
@@ -842,7 +839,7 @@ mod tests {
             ("good", "good.step")
         );
         assert_eq!(models[0].step, b"ISO-10303-21;");
-        let have_model: Vec<bool> = parts.iter().map(|p| p.model.is_some()).collect();
+        let have_model: Vec<bool> = parts.iter().map(|p| !p.models.is_empty()).collect();
         assert_eq!(have_model, [true, true, false, false]);
         assert_eq!(notes.len(), 2, "{notes:?}");
         assert!(notes.iter().all(|n| n.severity == Severity::Dropped));
@@ -856,7 +853,7 @@ mod tests {
         let mut notes = Vec::new();
         let models = unpack_within(&mut parts, &stored(), streams, 5, &mut notes);
         assert!(models.is_empty());
-        assert!(parts[0].model.is_none());
+        assert!(parts[0].models.is_empty());
         assert!(notes[0].message.contains("more than 5 bytes"), "{notes:?}");
     }
 

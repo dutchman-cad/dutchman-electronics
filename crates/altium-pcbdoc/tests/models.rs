@@ -46,7 +46,7 @@ fn r1_model(out: &ReadOutcome) -> Option<&ModelRef> {
         return None;
     };
     (r1.designator == "R1")
-        .then_some(r1.model.as_ref())
+        .then_some(r1.models.first())
         .flatten()
 }
 
@@ -191,7 +191,7 @@ fn one_step_header_is_a_through_hole_part_with_its_step_model(
         assert!(near(got.0, want.0) && got.1 == want.1, "{pads:?}");
     }
     // The model: embedded, at J1's centre, not turned or raised.
-    let model = j1.model.as_ref().ok_or("J1 has no model")?;
+    let model = j1.models.first().ok_or("J1 has no model")?;
     assert_eq!(model.name, "header-1x4.step");
     assert_eq!(
         model.source,
@@ -292,7 +292,7 @@ fn parts(out: &ReadOutcome) -> Vec<(String, f64, f64, Option<String>)> {
         .components
         .iter()
         .map(|p| {
-            let id = match p.model.as_ref().map(|m| &m.source) {
+            let id = match p.models.first().map(|m| &m.source) {
                 Some(ModelSource::Embedded { id }) => Some(id.clone()),
                 _ => None,
             };
