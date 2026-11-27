@@ -128,6 +128,18 @@ Rules for such a folder (the test `boards_are_ours.rs` enforces them):
 - The board is privacy-scanned before it is committed (paths, e-mail addresses, computer names:
   the checks `privacy-check` runs, repeated on the KiCad text by a test in `crates/dutchman-electronics`).
 
+## Fuzz the readers
+
+A bad file must never crash the program, so GitHub also feeds the readers random and mangled input ([cargo-fuzz](https://rust-fuzz.github.io/book/cargo-fuzz.html), in the `fuzz/` folder). The `Fuzz` workflow runs every night and on request (Actions, Fuzz, Run workflow); it keeps any crashing input as an artifact. To run one target yourself (needs a nightly Rust and `cargo install cargo-fuzz`):
+
+```sh
+fuzz/seed.sh                              # copies our test boards in as starting points
+cd fuzz
+cargo +nightly fuzz run kicad_pcb -- -max_total_time=600 -timeout=10
+```
+
+The targets are `altium_pcbdoc`, `altium_project`, `kicad_pcb`, `package_build` (read, STEP and every overlay) and `truetype_text`. A crash lands in `fuzz/artifacts/<target>/`. Fix it, and add the (shrunk) input as a test fixture with a test that reads it: `cargo fuzz tmin <target> <file>` shrinks it.
+
 ## Make a change, step by step
 
 1. Pick one roadmap step in the README, or an open issue. Comment "I'll take this" so nobody doubles up.
