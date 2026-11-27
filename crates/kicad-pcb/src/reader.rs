@@ -1457,7 +1457,7 @@ pub fn read(mut root: Node) -> ReadOutcome {
         embedded: Vec::new(),
     };
     let mut font_notes = Vec::new();
-    r.embedded = crate::fonts::read(&root, &mut font_notes);
+    r.embedded = crate::fonts::read(root, &mut font_notes);
     r.fonts_unused = vec![true; r.embedded.len()];
     for n in font_notes {
         r.tally.add(n.severity, n.message);

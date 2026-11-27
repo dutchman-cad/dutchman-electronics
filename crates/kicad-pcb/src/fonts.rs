@@ -127,7 +127,12 @@ fn check_frame(packed: &[u8], limit: usize) -> Result<(), String> {
     }
     let d = *packed.get(4).ok_or("a zstd frame cut short")?;
     let single = d & 0x20 != 0;
-    let dict_id = [0usize, 1, 2, 4][usize::from(d & 3)];
+    let dict_id = match d & 3 {
+        0 => 0usize,
+        1 => 1,
+        2 => 2,
+        _ => 4,
+    };
     let at = 5 + usize::from(!single) + dict_id;
     let size_bytes = match d >> 6 {
         0 => usize::from(single),
@@ -189,13 +194,13 @@ fn base64(text: &str) -> Option<Vec<u8>> {
 }
 
 fn u16_at(d: &[u8], at: usize) -> Option<usize> {
-    let b = d.get(at..at.checked_add(2)?)?;
-    Some(usize::from(u16::from_be_bytes([b[0], b[1]])))
+    let b: [u8; 2] = d.get(at..at.checked_add(2)?)?.try_into().ok()?;
+    Some(usize::from(u16::from_be_bytes(b)))
 }
 
 fn u32_at(d: &[u8], at: usize) -> Option<usize> {
-    let b = d.get(at..at.checked_add(4)?)?;
-    usize::try_from(u32::from_be_bytes([b[0], b[1], b[2], b[3]])).ok()
+    let b: [u8; 4] = d.get(at..at.checked_add(4)?)?.try_into().ok()?;
+    usize::try_from(u32::from_be_bytes(b)).ok()
 }
 
 /// The table `tag` of the font file, as its bytes.
@@ -229,8 +234,10 @@ fn name_of(t: &[u8], id: usize) -> Option<String> {
             3 | 0 => (
                 0,
                 String::from_utf16_lossy(
-                    &raw.chunks_exact(2)
-                        .map(|c| u16::from_be_bytes([c[0], c[1]]))
+                    &raw.as_chunks::<2>()
+                        .0
+                        .iter()
+                        .map(|c| u16::from_be_bytes(*c))
                         .collect::<Vec<_>>(),
                 ),
             ),
