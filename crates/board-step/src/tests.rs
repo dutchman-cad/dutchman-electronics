@@ -295,7 +295,7 @@ fn holes_that_cannot_be_cut_are_reported() {
     assert!(messages
         .iter()
         .any(|m| m.starts_with("1 drilled hole(s) touch or fall inside a cutout")));
-    assert!(messages.contains(&"2 overlapping holes were cut as 1 merged openings"));
+    assert!(messages.contains(&"2 overlapping drilled hole(s) were cut as 1 merged opening(s)"));
     assert!(messages
         .iter()
         .any(|m| m.starts_with("1 drilled hole(s) with an unusable size")));
@@ -1215,7 +1215,7 @@ fn two_overlapping_holes_are_cut_as_one_opening() {
     assert_eq!(out.notes[0].severity, Severity::Info);
     assert_eq!(
         out.notes[0].message,
-        "2 overlapping holes were cut as 1 merged openings"
+        "2 overlapping drilled hole(s) were cut as 1 merged opening(s)"
     );
     // Each circle keeps the arc outside the other: 2 pi - 2 acos(0.4 / 0.5) = 4.996 rad, past a
     // half circle, so two edges each: four cylinder faces.
@@ -1320,7 +1320,7 @@ fn three_holes_in_a_chain_are_one_opening() {
     assert!(out
         .notes
         .iter()
-        .any(|n| n.message == "3 overlapping holes were cut as 1 merged openings"));
+        .any(|n| n.message == "3 overlapping drilled hole(s) were cut as 1 merged opening(s)"));
     check_topology(&out.text);
     let circles: Vec<(Point, f64)> = out.merged[0].circles.clone();
     let pieces = union_outline(&circles).unwrap();
@@ -1356,7 +1356,7 @@ fn a_hole_wholly_inside_another_is_redundant() {
     assert!(out
         .notes
         .iter()
-        .any(|n| n.message == "2 overlapping holes were cut as 1 merged openings"));
+        .any(|n| n.message == "2 overlapping drilled hole(s) were cut as 1 merged opening(s)"));
     check_topology(&out.text);
     // The same hole twice leaves one.
     let twice = board(
@@ -1437,7 +1437,7 @@ fn overlapping_holes_of_another_kind_stay_separate_and_say_so() {
 }
 
 #[test]
-fn a_group_too_large_or_tangled_to_merge_falls_back_with_a_warning() {
+fn a_group_too_large_or_tangled_to_merge_reports_dropped_holes() {
     // 70 holes of radius 0.5, 0.8 apart in a row: each overlaps the next, one group of 70, past
     // the bound of 64. Hole 0 is kept, 1 overlaps it and is not, 2 is clear of 0, and so on.
     let row: Vec<CopperItem> = (0..70)
@@ -1451,7 +1451,7 @@ fn a_group_too_large_or_tangled_to_merge_falls_back_with_a_warning() {
     let warning = out
         .notes
         .iter()
-        .find(|n| n.severity == Severity::Warning)
+        .find(|n| n.severity == Severity::Dropped)
         .unwrap();
     assert!(
         warning
@@ -1482,7 +1482,7 @@ fn a_group_too_large_or_tangled_to_merge_falls_back_with_a_warning() {
     );
     let out = write(&b, "island").unwrap();
     assert_eq!((out.holes.len(), out.merged.len()), (1, 0));
-    assert!(out.notes.iter().any(|n| n.severity == Severity::Warning
+    assert!(out.notes.iter().any(|n| n.severity == Severity::Dropped
         && n.message
             .starts_with("2 drilled hole(s) in groups of overlapping holes")));
     check_topology(&out.text);
