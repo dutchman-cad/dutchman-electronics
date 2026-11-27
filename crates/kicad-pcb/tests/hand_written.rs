@@ -540,7 +540,10 @@ fn a_clockwise_arc_stroke_and_its_counter_clockwise_twin_are_the_same_band() {
         // Shape 0 is the anchor; the stroke is what follows.
         let (s1, s2) = (pad_shapes(&one), pad_shapes(&twin));
         assert!(s1.len() >= 2, "{a} {m} {b}");
-        assert_eq!(s1, s2, "{a} {m} {b}");
+        // The two read the circle from the same points in another order, so they agree to the
+        // last digits only: compare to six decimals.
+        let show = |v: &[board_model::Contour]| format!("{v:.6?}").replace("-0.000000", "0.000000");
+        assert_eq!(show(&s1), show(&s2), "{a} {m} {b}");
         assert!(!one.notes.iter().any(|n| n.severity == Severity::Dropped));
     }
 }
