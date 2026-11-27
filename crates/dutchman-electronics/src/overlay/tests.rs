@@ -159,6 +159,9 @@ fn the_mask_is_the_outline_less_cutouts_pads_copper_and_drills() {
                 at: p(15.0, 5.0),
                 diameter: 1.0,
                 drill: 0.5,
+                tented: [None, None],
+                mask_expansion: None,
+                layers: None,
             },
         ],
         vec![],
@@ -290,6 +293,9 @@ fn a_via_is_a_tented_disc_on_both_faces() {
         at: p(25.0, 15.0),
         diameter: 1.0,
         drill: 0.5,
+        tented: [None, None],
+        mask_expansion: None,
+        layers: None,
     };
     let mut b = board(vec![via], vec![]);
     b.outline.outer = square(0.0, 0.0, 50.0, 30.0);
@@ -674,6 +680,9 @@ fn silkscreen_is_not_printed_over_holes_or_pads() {
         at: p(5.0, 0.0),
         diameter: 1.0,
         drill: 0.5,
+        tented: [None, None],
+        mask_expansion: None,
+        layers: None,
     };
     let (list, _) = overlays(&board(vec![via], vec![line]), 1.6, "Board");
     let o = named(&list, "Silkscreen top");
@@ -739,6 +748,9 @@ fn a_tented_via_gets_no_mask_expansion() {
             at: p(5.0, 5.0),
             diameter: 1.0,
             drill: 0.5,
+            tented: [None, None],
+            mask_expansion: None,
+            layers: None,
         }],
         vec![],
     );

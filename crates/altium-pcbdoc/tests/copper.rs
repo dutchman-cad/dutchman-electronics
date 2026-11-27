@@ -139,6 +139,7 @@ fn one_via_is_1_mm_with_a_0_5_mm_hole() -> Result<(), Box<dyn std::error::Error>
         at,
         diameter,
         drill,
+        ..
     } = &out.board.copper[0]
     else {
         panic!("expected a via, got {:?}", out.board.copper[0]);
@@ -433,6 +434,7 @@ fn four_layer_has_inner_layers_with_a_track_each() -> Result<(), Box<dyn std::er
                 at,
                 diameter,
                 drill,
+                ..
             } => vias.push((*at, *diameter, *drill)),
             other => return Err(format!("unexpected copper item {other:?}").into()),
         }

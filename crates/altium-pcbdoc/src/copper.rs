@@ -677,6 +677,9 @@ pub(crate) fn vias(
             at,
             diameter,
             drill,
+            tented: [None, None],
+            mask_expansion: None,
+            layers: None,
         });
     }
     if partial > 0 {

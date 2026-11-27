@@ -876,6 +876,7 @@ fn overlays_within(
                     at,
                     diameter,
                     drill,
+                    ..
                 } => {
                     match circle(*at, diameter / 2.0) {
                         Some(ring) => {

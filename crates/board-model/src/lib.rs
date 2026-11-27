@@ -195,10 +195,22 @@ pub enum CopperItem {
         width: f64,
         net: Option<String>,
     },
+    /// A via: a plated hole joining copper layers, with a ring of `diameter` around it.
     Via {
         at: Point,
         diameter: f64,
         drill: f64,
+        /// Whether the solder mask covers (tents) the via: index 0 is the top side, 1 the
+        /// bottom. `Some(true)` is covered, `Some(false)` is open, `None` means the file
+        /// does not say.
+        tented: [Option<bool>; 2],
+        /// How far the mask opening extends beyond the via's ring, in mm, when the file
+        /// gives a per-via value. `None` means the file does not say.
+        mask_expansion: Option<f64>,
+        /// The copper layers the via joins, as `(first, last)` indexes into [`Board::layers`].
+        /// `None` means it runs through the whole board; a span that stops short of either
+        /// outer layer is a blind or buried via.
+        layers: Option<(usize, usize)>,
     },
     Pad {
         layer: usize,

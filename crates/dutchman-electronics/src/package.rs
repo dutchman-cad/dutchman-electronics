@@ -2097,6 +2097,9 @@ mod tests {
             at: Point { x: 1.0, y: 1.0 },
             diameter: 1.0,
             drill,
+            tented: [None, None],
+            mask_expansion: None,
+            layers: None,
         };
         // A 0.05 mm drill has radius 0.025: nothing left inside the plating.
         let small = Board {
@@ -2124,6 +2127,9 @@ mod tests {
             at: Point { x, y },
             diameter: 1.0,
             drill: 0.5,
+            tented: [None, None],
+            mask_expansion: None,
+            layers: None,
         };
         // A 20 x 10 board with a 4 x 4 cutout from (8, 3). Via 1 is clear; via 2 touches the
         // board edge (its center is 0.1 from x = 0, less than its 0.25 radius); via 3 is inside
