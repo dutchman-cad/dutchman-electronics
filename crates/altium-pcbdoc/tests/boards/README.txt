@@ -1470,8 +1470,8 @@ pad-shapes-custom.PcbDoc  (from empty-outline)
     box), center offset 0. (Tools > Convert > Create Custom Pad from Selected Outline did nothing
     with the region selected.)
     What the file stores: pads 2 and 3 have a size of 0.025 x 0.025 (10000 units, 1 mil) in
-    their geometry block (block 4, bytes 21..29) and a 651- or 666-byte block 5; pad 1 keeps its
-    2.000 x 1.000. /Regions6/Data holds two regions on Top Layer, KIND 0, whose text part ends in
+    their geometry block (block 4, bytes 21..29); pad 1 keeps its 2.000 x 1.000. Block 5 is 651
+    bytes on pad 1, 666 bytes on pad 2 and empty (length 0) on pad 3. /Regions6/Data holds two regions on Top Layer, KIND 0, whose text part ends in
     PADINDEX=1 and PADINDEX=2: the copper of pads 2 and 3 (pad 2 cut at its upper corners, pad 3
     the L); their copies are in /ShapeBasedRegions6/Data, and a new stream, /CustomShapes/Data
     (186 bytes), appears. Our reader at origin/main c825c14 draws all three on the top copper
