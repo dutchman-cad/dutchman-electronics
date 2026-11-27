@@ -1372,6 +1372,59 @@ mech-layer-kinds.PcbDoc  (from one-resistor)
 Saving embedded Arial in keepouts (no text uses it); it was removed as before (see "Paths inside
 the files").
 
+Feature gaps, second batch (teardrops, plane-polygon-connect)
+-------------------------------------------------------------
+Made on 2026-11-27, one feature per board, by my own scripts and by hand where noted; every
+object was read back and logged, and each board was saved and closed. Saving embedded Arial in
+each (no text uses it); it was removed as before (see "Paths inside the files").
+
+teardrops.PcbDoc  (from empty-outline)
+    By my own script, net SIG and on it, all on Top Layer unless noted:
+        pad "1"   (10, 15), Multi-Layer, round 1.600, plated hole 0.800
+        via       (20, 15), diameter 0.600, hole 0.300, Top Layer to Bottom Layer
+        pad "2"   (30, 15), SMD, rectangle 1.500 x 1.000
+        via       (40, 15), diameter 0.600, hole 0.300
+        tracks    (10, 15) to (20, 15), (20, 15) to (30, 15), (30, 15) to (40, 15) and
+                  (40, 15) to (40, 22), width 0.254
+    Then by hand Tools > Teardrops with Altium's settings (Add, All, style Curved, Via/TH pad
+    30 % long and 70 % wide, SMD pad 100 % and 200 %, tracks and T-junctions on, Adjust
+    teardrop size on) and Force teardrops ticked: without it Altium made none here, though its
+    report said none failed. (A first try with tracks 0.250 wide, under the board's 0.254 width
+    rule, got none either and was thrown away.) Altium made seven teardrops, each a region on
+    Top Layer, KIND 0, net SIG, no polygon, with its teardrop flag set; their boxes:
+        via (20, 15)   x 19.548 to 19.786, y 14.790 to 15.210 (left)
+                       x 20.214 to 20.452, y 14.790 to 15.210 (right)
+        via (40, 15)   x 39.548 to 39.786, y 14.790 to 15.210 (left)
+                       x 39.790 to 40.210, y 15.214 to 15.452 (up)
+        pad "2"        x 28.999 to 29.253, y 14.746 to 15.254 (left)
+                       x 30.747 to 31.001, y 14.746 to 15.254 (right)
+        pad "1"        x 10.571 to 11.270, y 14.440 to 15.560
+    What the file stores: seven ordinary records in /Regions6/Data (and their copies in
+    /ShapeBasedRegions6/Data), text part KIND=0, SUBPOLYINDEX=-1, ISSHAPEBASED=FALSE; byte 1 of
+    each record is 28 (0x1C), where the other regions we looked at (keepouts, arc-region) have 12
+    (0x0C), so 0x10 marks a teardrop. Altium also saves the tool's settings in /Board6/Data:
+    TEARDROPPARAM_PERCENTFORVIAS_LENGTH=30, ..._WIDTH=70, ...PADS 100 / 200, ...TRACKS 100 / -1,
+    ...TJUNCTIONS 100 / 300 and TEARDROPPARAM_FLAGSEX=1004.
+
+plane-polygon-connect.PcbDoc  (from four-layer-planes)
+    Everything of four-layer-planes stays. By my own script: three free pads on net GND,
+    Multi-Layer, round 1.600, plated hole 0.800, named R, D and N, at (6, 25), (12, 25) and
+    (18, 25); a solid polygon pour on Top Layer, net GND, "remove dead copper" off, outline
+    (2, 22), (24, 22), (24, 28), (2, 28); and four rules:
+        name              kind             scope                            style      priority
+        PlaneConnect_N    PlaneConnect     IsPad And (Name = 'Free-N')      NoConnect  1
+        PlaneConnect_D    PlaneConnect     IsPad And (Name = 'Free-D')      Direct     2
+        PolygonConnect_N  PolygonConnect   IsPad And (Name = 'Free-N')      NoConnect  1
+        PolygonConnect_D  PolygonConnect   IsPad And (Name = 'Free-D')      Direct     2
+    The board's own rules stay last (priority 3): PlaneConnect, All, Relief (expansion 20mil,
+    conductor 10mil, 4 entries) and PolygonConnect, All, Relief (air gap 10mil, conductor 10mil,
+    4 entries, 90 Angle). Altium calls a free pad "Free-" and its name in a query (its teardrop
+    report says "Pad Free-1" too); Test Queries matched one pad each. Then by hand Repour All and
+    Rebuild Split Planes on All Layers in 2D. What Altium made on Top Layer: around R the relief
+    of the board rule (four air gaps), around D only the drill (the pour runs into the pad), and
+    around N a round clearance 2.120 across with no spoke; on Layer 1 (GND plane) the same three
+    kinds as Altium draws them (relief, direct, isolated).
+
 Paths inside the files
 ----------------------
 Altium writes a few paths from the PC that saved a board into the file. After the last save, I
