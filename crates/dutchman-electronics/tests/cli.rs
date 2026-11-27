@@ -950,6 +950,10 @@ fn read_files(
     let mut files = Vec::new();
     for entry in std::fs::read_dir(&out)? {
         let entry = entry?;
+        // The manifest differs by the note on where the parameters came from.
+        if entry.file_name() == "manifest.json" {
+            continue;
+        }
         files.push((
             entry.file_name().to_string_lossy().into_owned(),
             std::fs::read(entry.path())?,
@@ -978,7 +982,7 @@ fn a_board_alone_takes_the_parameters_of_the_project_beside_it(
         ],
     );
     std::fs::remove_dir_all(&dir).ok();
-    let ((alone_v, alone_files), (_, with_files)) = (alone?, with?);
+    let ((alone_v, alone_files), (with_v, with_files)) = (alone?, with?);
     let notes = messages(&alone_v);
     assert!(
         notes.contains(&"parameters taken from all-features.PrjPcb next to the board".to_string()),
@@ -990,7 +994,12 @@ fn a_board_alone_takes_the_parameters_of_the_project_beside_it(
             .any(|m| m.starts_with("3 text(s) refer to a project parameter")),
         "{notes:?}"
     );
+    assert!(!alone_files.is_empty());
     assert_eq!(alone_files, with_files);
+    // The manifests differ only by the note naming the project.
+    let mut alone_notes = notes;
+    alone_notes.retain(|m| !m.starts_with("parameters taken from"));
+    assert_eq!(alone_notes, messages(&with_v));
     Ok(())
 }
 
