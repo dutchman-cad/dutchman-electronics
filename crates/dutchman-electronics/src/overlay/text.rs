@@ -945,7 +945,11 @@ mod tests {
         (StrokeFont::Default, "0123456789 .,:;-+=/()[]#%&*?!", 34.340),
         (StrokeFont::SansSerif, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", 29.218),
         (StrokeFont::SansSerif, "abcdefghijklmnopqrstuvwxyz", 24.711),
-        (StrokeFont::SansSerif, "0123456789 .,:;-+=/()[]#%&*?!", 28.030),
+        (
+            StrokeFont::SansSerif,
+            "0123456789 .,:;-+=/()[]#%&*?!",
+            28.030,
+        ),
         (StrokeFont::Serif, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", 31.075),
         (StrokeFont::Serif, "abcdefghijklmnopqrstuvwxyz", 28.133),
         (StrokeFont::Serif, "0123456789 .,:;-+=/()[]#%&*?!", 26.790),
