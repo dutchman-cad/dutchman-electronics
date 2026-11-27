@@ -1,0 +1,11 @@
+{
+  "meta": {
+    "filename": "k10-text-vars.kicad_pro",
+    "version": 3
+  },
+  "text_variables": {
+    "PCB_NUMBER": "DN-0042",
+    "BOARD_ID": "${PCB_NUMBER}-${REVISION}",
+    "FINISH": "ENIG"
+  }
+}

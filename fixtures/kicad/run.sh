@@ -19,8 +19,10 @@ done
 podman run --rm --userns=keep-id -v "$PWD:/work:Z" docker.io/kicad/kicad:10.0 sh -c "
   python3 /work/fixtures/kicad/build_k10_boards.py /work/$out &&
   python3 /work/fixtures/kicad/fill_zones.py /work/$out/k10-zone-cutout.kicad_pcb"
-# The project files KiCad writes beside each board are not needed.
+# The project files KiCad writes beside each board are not needed, except k10-text-vars's, which
+# holds the project's text variables (written afterwards by add_text_vars.py).
 rm -f "$out"/*.kicad_pro "$out"/*.kicad_prl "$out"/k10-work/*.kicad_pro "$out"/k10-work/*.kicad_prl
+python3 fixtures/kicad/add_text_vars.py "$out"/k10-text-vars.kicad_pro
 for f in "$out"/k10-work/*.kicad_pcb; do
   mv "$f" "$out/k10-$(basename "$f")"
 done
