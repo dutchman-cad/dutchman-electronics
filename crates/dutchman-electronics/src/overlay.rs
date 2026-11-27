@@ -868,7 +868,13 @@ fn overlays_within(
     // Whether a via with this span has copper on an inner layer: the layer lies between its ends
     // (every layer when the span is unknown or its ends cannot be placed).
     let in_span = |span: Option<(usize, usize)>, inner_layer: usize| {
-        let depth = |i: usize| board.layers.get(i).and_then(|l| l.position).map(|p| p.depth);
+        let depth = |i: usize| {
+            board
+                .layers
+                .get(i)
+                .and_then(|l| l.position)
+                .map(|p| p.depth)
+        };
         match span.map(|(a, b)| (depth(a), depth(b), depth(inner_layer))) {
             Some((Some(a), Some(b), Some(d))) => {
                 d >= a.min(b) - SPAN_TOLERANCE && d <= a.max(b) + SPAN_TOLERANCE

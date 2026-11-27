@@ -1991,7 +1991,11 @@ fn an_open_via_side_has_a_mask_opening_a_ring_of_finish_and_an_open_drill() {
     let laminate = named(&list, "Laminate top");
     assert!(!covers(laminate, 5.0, 5.0), "the drill cuts the laminate");
     let bottom_mask = named(&list, "Solder mask bottom");
-    assert!((area(bottom_mask) - 200.0).abs() < 1e-5, "{}", area(bottom_mask));
+    assert!(
+        (area(bottom_mask) - 200.0).abs() < 1e-5,
+        "{}",
+        area(bottom_mask)
+    );
     let bottom = named(&list, "Copper bottom");
     assert!((area(bottom) - PI * 0.25).abs() < 0.01, "{}", area(bottom));
     assert!(covers(bottom, 5.0, 5.0), "the tented side keeps its disc");
