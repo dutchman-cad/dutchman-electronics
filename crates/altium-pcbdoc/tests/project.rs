@@ -178,3 +178,55 @@ fn special_strings_show_what_altium_shows() -> Result<(), Box<dyn std::error::Er
     );
     Ok(())
 }
+
+/// The test board `quoted-strings` (issue 146), read with the parameters of param-project as
+/// its README.txt section "Quoted special strings" says: each text, by its y, shows what Altium
+/// showed.
+#[test]
+fn quoted_references_show_what_altium_shows() -> Result<(), Box<dyn std::error::Error>> {
+    let parameters = the_project()?.parameters;
+    let (out, notes) = read("quoted-strings.PcbDoc", &parameters)?;
+    let want = [
+        (27.5, "Top Overlay", "Rev. B"),
+        (25.3, "Top Overlay", "B end"),
+        (23.1, "Top Overlay", "DN-0042 Rev B"),
+        (20.9, "Top Overlay", "DN-0042B"),
+        (18.7, "Top Overlay", "DN-0042"),
+        (16.5, "Top Overlay", "Top Overlay"),
+        (14.3, "Top Overlay", "L: Top Overlay x"),
+        (12.1, "Top Overlay", "'.NoSuchParameter'"),
+        (9.9, "Top Overlay", "Rev 'B"),
+        (7.7, "Top Overlay", "Rev ''"),
+        (5.5, "Top Overlay", "'word' Rev"),
+        (3.3, "Top Overlay", "Rev B end"),
+        (1.1, "Bottom Overlay", "B"),
+    ];
+    let mut got: Vec<(f64, String, String)> = out
+        .board
+        .texts
+        .iter()
+        .map(|t| {
+            let layer = out.board.layers.get(t.layer).map(|l| l.name.clone());
+            (t.at.y, layer.unwrap_or_default(), t.content.clone())
+        })
+        .collect();
+    got.sort_by(|a, b| b.0.total_cmp(&a.0));
+    assert_eq!(got.len(), want.len(), "{got:?}");
+    for ((y, layer, content), (wy, wl, wc)) in got.iter().zip(want) {
+        assert!((y - wy).abs() <= 0.001, "{got:?}");
+        assert!(out
+            .board
+            .texts
+            .iter()
+            .all(|t| (t.at.x - 2.0).abs() <= 0.001));
+        assert_eq!((layer.as_str(), content.as_str()), (wl, wc), "at y {y}");
+    }
+    assert_eq!(
+        warnings(&notes),
+        [
+            "1 text(s) read \".NoSuchParameter\", which names no parameter given and no special \
+          string read here; drawn as written"
+        ]
+    );
+    Ok(())
+}
