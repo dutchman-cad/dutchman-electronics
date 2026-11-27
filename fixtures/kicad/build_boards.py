@@ -565,3 +565,105 @@ b.GetDesignSettings().m_TentViasBack = True
 via(10, R, R)
 via(20, T, T)
 save(b, "via-default-open")
+
+# 15. pad-arcs (then `add_pad_arcs.py`): custom pads whose primitives hold arcs, on a footprint that is not turned, one that
+#     is turned 30 degrees, and two on the bottom (one turned 90). The primitives, in the pad's
+#     own frame (KiCad's Y down, millimeters):
+#     kind "d": a 1.0 circle anchor and a filled D: from (0, -1.5) an arc through (1.5, 0) to
+#       (0, 1.5), then the straight edge back;
+#     kind "arc": a 0.6 square anchor and a stroke arc of width 0.4 from (1.2, 0) through
+#       (0, -1.2) to (0, 1.2): 270 degrees counter-clockwise on the screen about the pad's center,
+#       radius 1.2;
+#     kind "ring": a 0.5 circle anchor and an unfilled circle of radius 1.2 and width 0.3;
+#     kind "dot": a 1.0 square anchor and a filled circle of radius 0.9 centered at (0.8, 0).
+#     U1 (top, at (6, 8), not turned): d at (0, 0), arc at (6, 0), ring at (12, 0), dot at (18, 0).
+#     U2 (top, at (6, 22), turned 30): the same four pads. U3 (bottom, at (44, 8), not turned):
+#     d at (-6, 0), arc at (0, 0), ring at (6, 0). U4 (bottom, at (44, 22), turned 90): d at
+#     (-6, 0), arc at (0, 0).
+b = new_board()
+outline_rect(b)
+
+
+def mm(x, y):
+    return VECTOR2I(FromMM(x), FromMM(y))
+
+
+def arc_pad(fp, number, at, kind):
+    anchor_circle = kind in ("d", "ring")
+    size = {"d": 1.0, "arc": 0.6, "ring": 0.5, "dot": 1.0}[kind]
+    pad = sized_pad(fp, number, at, (size, size), pcbnew.PAD_SHAPE_CUSTOM)
+    pad.SetAnchorPadShape(
+        pcbnew.F_Cu, pcbnew.PAD_SHAPE_CIRCLE if anchor_circle else pcbnew.PAD_SHAPE_RECT
+    )
+    if kind == "d":
+        # The scripting cannot make an arc inside a polygon: the three points are on the circle
+        # of the D, and `add_pad_arcs.py` turns them into one arc afterwards.
+        pad.AddPrimitivePoly(
+            pcbnew.F_Cu, [mm(0, -1.5), mm(1.5, 0), mm(0, 1.5)], 0, True
+        )
+    elif kind == "arc":
+        s = pcbnew.PCB_SHAPE(b)
+        s.SetShape(pcbnew.SHAPE_T_ARC)
+        s.SetArcGeometry(mm(1.2, 0), mm(0, -1.2), mm(0, 1.2))
+        s.SetWidth(FromMM(0.4))
+        pad.AddPrimitiveShape(pcbnew.F_Cu, s)
+        s.thisown = 0  # the pad owns it now
+    elif kind == "ring":
+        s = pcbnew.PCB_SHAPE(b)
+        s.SetShape(pcbnew.SHAPE_T_CIRCLE)
+        s.SetCenter(mm(0, 0))
+        s.SetEnd(mm(1.2, 0))
+        s.SetWidth(FromMM(0.3))
+        s.SetFilled(False)
+        pad.AddPrimitiveShape(pcbnew.F_Cu, s)
+        s.thisown = 0  # the pad owns it now
+    else:
+        s = pcbnew.PCB_SHAPE(b)
+        s.SetShape(pcbnew.SHAPE_T_CIRCLE)
+        s.SetCenter(mm(0.8, 0))
+        s.SetEnd(mm(1.7, 0))
+        s.SetWidth(0)
+        s.SetFilled(True)
+        pad.AddPrimitiveShape(pcbnew.F_Cu, s)
+        s.thisown = 0  # the pad owns it now
+    return pad
+
+
+def arcs_u1(fp):
+    for n, x, k in (("1", 0, "d"), ("2", 6, "arc"), ("3", 12, "ring"), ("4", 18, "dot")):
+        arc_pad(fp, n, (x, 0), k)
+
+
+def arcs_u3(fp):
+    for n, x, k in (("1", -6, "d"), ("2", 0, "arc"), ("3", 6, "ring")):
+        arc_pad(fp, n, (x, 0), k)
+
+
+def arcs_u4(fp):
+    arc_pad(fp, "1", (-6, 0), "d")
+    arc_pad(fp, "2", (0, 0), "arc")
+
+
+footprint("U1", (6, 8), 0.0, False, arcs_u1)
+footprint("U2", (6, 22), 30.0, False, arcs_u1)
+footprint("U3", (44, 8), 0.0, True, arcs_u3)
+footprint("U4", (44, 22), 90.0, True, arcs_u4)
+save(b, "pad-arcs")
+
+# 16. embedded-font: two texts in DejaVu Sans Mono on the top silkscreen, "Regular 123" at
+#     (10, 10) and "Bold 456" (bold) at (10, 20), each 2 mm high, anchored at their left ends.
+#     `embed_fonts.py` sets the face of each text and has KiCad embed the fonts (the scripting
+#     cannot name a font).
+b = new_board()
+outline_rect(b)
+for content, y, bold in (("Regular 123", 10, False), ("Bold 456", 20, True)):
+    tx = pcbnew.PCB_TEXT(b)
+    tx.SetText(content)
+    tx.SetLayer(pcbnew.F_SilkS)
+    tx.SetPosition(p(10, y))
+    tx.SetHorizJustify(pcbnew.GR_TEXT_H_ALIGN_LEFT)
+    tx.SetTextSize(VECTOR2I(FromMM(2), FromMM(2)))
+    tx.SetTextThickness(FromMM(0.25))
+    tx.SetBold(bold)
+    b.Add(tx)
+save(b, "embedded-font")
