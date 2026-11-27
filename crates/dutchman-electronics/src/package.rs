@@ -647,6 +647,8 @@ fn components_with(
     let mut standard_models: std::collections::BTreeMap<String, String> = Default::default();
     // Each package, with the parts that got it.
     let mut recognized: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+    // The same, for parts whose plain extruded body the standard one replaced.
+    let mut replaced: std::collections::BTreeMap<String, Vec<String>> = Default::default();
     let mut used =
         std::collections::BTreeSet::from([BOARD_PART.to_string(), PLATING_PART.to_string()]);
     // Equal extruded bodies share one model file; so do parts naming the same embedded model.
@@ -675,27 +677,48 @@ fn components_with(
                 ModelSource::Embedded { .. } => false,
             },
         };
+        let extruded_body = matches!(
+            &p.model,
+            Some(ModelRef {
+                source: ModelSource::Extruded { .. },
+                ..
+            })
+        );
         if let (true, Some((recognizer, _))) = (wants_standard, standard) {
             if let Some(found) = recognizer.recognize(p) {
                 match standard_parts(
                     &name,
                     p,
                     &found,
+                    extruded_body,
                     thickness,
                     &mut standard_models,
                     &mut placed,
                     &mut used,
                 ) {
                     Ok(()) => {
-                        recognized
-                            .entry(found.package.clone())
-                            .or_default()
-                            .push(name);
+                        let list = if extruded_body {
+                            &mut replaced
+                        } else {
+                            &mut recognized
+                        };
+                        list.entry(found.package.clone()).or_default().push(name);
                         continue;
                     }
-                    Err(why) => failed.push(format!("{name}: {why}")),
+                    // The file's own extruded body is better than none.
+                    Err(why) if extruded_body => placed.notes.push(json!({
+                        "severity": "Degraded",
+                        "message": format!(
+                            "{name}: the standard {} body could not be written ({why}); the \
+                             board's extruded body is used",
+                            found.package
+                        ),
+                    })),
+                    Err(why) => {
+                        failed.push(format!("{name}: {why}"));
+                        continue;
+                    }
                 }
-                continue;
             }
         }
         let Some(model) = &p.model else {
@@ -811,6 +834,17 @@ fn components_with(
             ),
         }));
     }
+    for (package, parts) in &replaced {
+        placed.notes.push(json!({
+            "severity": "Info",
+            "message": format!(
+                "{} component(s) had a plain extruded body, replaced by a standard {package} \
+                 body (--bodies standard): {}",
+                parts.len(),
+                named(parts)
+            ),
+        }));
+    }
     for (list, what) in [
         (
             no_model,
@@ -846,28 +880,47 @@ fn standard_parts(
     name: &str,
     p: &Placement,
     found: &Standard,
+    replaces_extruded: bool,
     thickness: f64,
     models: &mut std::collections::BTreeMap<String, String>,
     placed: &mut Placed,
     used: &mut std::collections::BTreeSet<String>,
 ) -> Result<(), String> {
-    let mut ids = Vec::new();
+    // Write both models before adding either, so a failure leaves nothing behind.
+    let mut ids: Vec<String> = Vec::new();
+    let mut fresh: Vec<(String, String, Vec<u8>)> = Vec::new();
     for (solids, what) in [(&found.body, "body"), (&found.leads, "leads")] {
         let key = format!("{solids:?}");
-        let id = match models.get(&key) {
-            Some(id) => id.clone(),
+        let cached = models.get(&key).cloned().or_else(|| {
+            fresh
+                .iter()
+                .find(|(k, ..)| *k == key)
+                .map(|(_, id, _)| id.clone())
+        });
+        let id = match cached {
+            Some(id) => id,
             None => {
-                let id = format!("model-{}", placed.models.len().saturating_add(1));
+                let id = format!(
+                    "model-{}",
+                    placed
+                        .models
+                        .len()
+                        .saturating_add(fresh.len())
+                        .saturating_add(1)
+                );
                 let step = board_step::solids(solids, &id, &format!("Standard {what}"))
                     .map_err(|e| e.to_string())?;
-                placed
-                    .models
-                    .push((id.clone(), format!("{id}.step"), step.text.into_bytes()));
-                models.insert(key, id.clone());
+                fresh.push((key, id.clone(), step.text.into_bytes()));
                 id
             }
         };
         ids.push(id);
+    }
+    for (key, id, bytes) in fresh {
+        placed
+            .models
+            .push((id.clone(), format!("{id}.step"), bytes));
+        models.insert(key, id);
     }
     let (Some(body_id), Some(leads_id)) = (ids.first(), ids.get(1)) else {
         return Err("no model ids".into());
@@ -884,10 +937,28 @@ fn standard_parts(
         Side::Bottom => GROUP_BOTTOM,
     };
     let transform = part_frame(p, thickness);
+    let origin = if replaces_extruded {
+        "replacing the board's plain extruded body (--bodies standard)"
+    } else {
+        "no usable 3D model in the file"
+    };
     for (part, model, look, what) in [
         (name, body_id, found.body_look, "body"),
         (leads_name.as_str(), leads_id, found.leads_look, "leads"),
     ] {
+        let mut notes = vec![json!({
+            "severity": "Info",
+            "message": format!(
+                "standard {what} of a {}, recognized from the pads ({origin})",
+                found.package
+            ),
+        })];
+        for extra in &found.notes {
+            notes.push(json!({
+                "severity": "Info",
+                "message": format!("{}: {extra}", found.package),
+            }));
+        }
         placed.parts.push(json!({
             "name": part,
             "model": model,
@@ -897,13 +968,7 @@ fn standard_parts(
             "opacity": 1.0,
             "metallic": BODY_FINISH.metallic,
             "roughness": look.roughness,
-            "notes": [{
-                "severity": "Info",
-                "message": format!(
-                    "standard {what} of a {}, recognized from the pads (no 3D model in the file)",
-                    found.package
-                ),
-            }],
+            "notes": notes,
         }));
     }
     Ok(())
@@ -2692,6 +2757,33 @@ mod tests {
             |n: &str| placed.parts.iter().find(|p| p["name"] == n).unwrap()["model"].clone();
         assert_eq!(model("R1"), model("R2"));
         assert_eq!(model("R1 leads"), model("R2 leads"));
+        // R2's plain extruded body was replaced: said apart from the parts with no model.
+        let said: Vec<&str> = placed
+            .notes
+            .iter()
+            .filter(|n| n["severity"] == "Info")
+            .map(|n| n["message"].as_str().unwrap())
+            .collect();
+        assert!(
+            said.iter().any(|m| m.contains(
+                "1 component(s) had a plain extruded body, replaced by a standard 0603 chip \
+                 resistor body (--bodies standard): R2"
+            )),
+            "{said:?}"
+        );
+        let r2_note = placed.parts.iter().find(|p| p["name"] == "R2").unwrap()["notes"][0]
+            ["message"]
+            .as_str()
+            .unwrap();
+        assert!(
+            r2_note.contains("replacing the board's plain extruded body"),
+            "{r2_note}"
+        );
+        let r1_note = placed.parts.iter().find(|p| p["name"] == "R1").unwrap()["notes"][0]
+            ["message"]
+            .as_str()
+            .unwrap();
+        assert!(r1_note.contains("no usable 3D model"), "{r1_note}");
         assert_ne!(model("R1"), model("C1"), "a capacitor is thicker");
         assert_ne!(model("R1 leads"), model("C1 leads"));
         assert_eq!(

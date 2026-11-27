@@ -9,6 +9,10 @@
 //! numbers its solid is drawn from. A body is written as exact solids (`board_step::solids`):
 //! boxes, and one prism for each gull-wing lead, so nothing is a mesh.
 //!
+//! Feet and terminations stand on z = 0, the board face, so they overlap the copper (0.035 mm)
+//! and the mask (0.020 mm) overlays by their thickness: the standard outlines give no
+//! standoff for them, and that overlap is a nominal.
+//!
 //! A part in the manifest has one color, so a package gives two models: the body, and the
 //! leads or terminations (tin gray; gold for pins), which `package` writes as a second part
 //! named "<designator> leads" beside the first.
@@ -47,6 +51,8 @@ pub struct Standard {
     /// Leads, terminations or pins: a second model, since a part has one color.
     pub leads: Vec<Solid>,
     pub leads_look: Look,
+    /// Things left out or assumed, for an Info note on the parts.
+    pub notes: Vec<String>,
 }
 
 /// A pad in the part's own frame, as the recognizers see it.
@@ -59,6 +65,8 @@ pub struct StdPad {
     pub h: f64,
     /// Has a drill.
     pub through: bool,
+    /// The drill's diameter, 0 for a pad with none.
+    pub drill: f64,
 }
 
 const TIN: Look = Look {
@@ -77,6 +85,10 @@ const MOLD: Look = Look {
 // ---------------------------------------------------------------------------------------------
 // Pads of a part
 // ---------------------------------------------------------------------------------------------
+
+/// The most pads a part may have to be looked at: more than any package here (the biggest, a
+/// 100-pin QFP, has 100; a QFN with its ground pad a few more).
+const MAX_PADS: usize = 512;
 
 /// Finds each part's pads on the board, by the designator they are owned by.
 pub struct Recognizer<'a> {
@@ -115,14 +127,20 @@ impl<'a> Recognizer<'a> {
             return None;
         }
         let items = self.pads.get(designator)?;
+        // No package here has this many pads; a part with more is not one.
+        if items.len() > MAX_PADS {
+            return None;
+        }
         let mut pads: Vec<StdPad> = Vec::new();
+        let mut seen: BTreeSet<(i64, i64)> = BTreeSet::new();
         for item in items {
             let pad = in_part_frame(item, part);
-            // Copper of one pad on several layers is one pad.
-            if !pads
-                .iter()
-                .any(|q| (q.x - pad.x).abs() < 0.01 && (q.y - pad.y).abs() < 0.01)
-            {
+            // Copper of one pad on several layers is one pad (the same place to 0.01 mm).
+            let key = (
+                (pad.x * 100.0).round() as i64,
+                (pad.y * 100.0).round() as i64,
+            );
+            if seen.insert(key) {
                 pads.push(pad);
             }
         }
@@ -133,6 +151,19 @@ impl<'a> Recognizer<'a> {
 /// A pad's center and extents in the part's frame: the board point less the part's place, turned
 /// back by its rotation, and for a bottom-side part (flipped about its X axis) with y negated.
 fn in_part_frame(item: &CopperItem, part: &Placement) -> StdPad {
+    let pad = in_part_frame_exact(item, part);
+    // Pads read as 1e-6 mm numbers, so equal packages give equal solids and share a model.
+    let round = |v: f64| (v * 1e6).round() / 1e6;
+    StdPad {
+        x: round(pad.x),
+        y: round(pad.y),
+        w: round(pad.w),
+        h: round(pad.h),
+        ..pad
+    }
+}
+
+fn in_part_frame_exact(item: &CopperItem, part: &Placement) -> StdPad {
     let (sin, cos) = part.rotation_deg.to_radians().sin_cos();
     let flip = if part.side == Side::Bottom { -1.0 } else { 1.0 };
     let frame = |p: Point| {
@@ -156,6 +187,7 @@ fn in_part_frame(item: &CopperItem, part: &Placement) -> StdPad {
                 w: (size_x * c).abs() + (size_y * s).abs(),
                 h: (size_x * s).abs() + (size_y * c).abs(),
                 through: drill.is_some(),
+                drill: drill.unwrap_or(0.0),
             }
         }
         CopperItem::PolygonPad {
@@ -199,6 +231,7 @@ fn in_part_frame(item: &CopperItem, part: &Placement) -> StdPad {
                 w,
                 h,
                 through: drill.is_some(),
+                drill: drill.unwrap_or(0.0),
             }
         }
         _ => StdPad {
@@ -207,6 +240,7 @@ fn in_part_frame(item: &CopperItem, part: &Placement) -> StdPad {
             w: 0.0,
             h: 0.0,
             through: false,
+            drill: 0.0,
         },
     }
 }
@@ -356,7 +390,7 @@ fn rows(pads: &[StdPad], horizontal: bool) -> Vec<Row> {
     let mut groups: Vec<Vec<(f64, f64, f64, f64)>> = Vec::new();
     for item in v {
         match groups.last_mut() {
-            Some(g) if g.last().is_some_and(|l| (item.0 - l.0).abs() <= 0.3) => g.push(item),
+            Some(g) if g.first().is_some_and(|f| (item.0 - f.0).abs() <= 0.3) => g.push(item),
             _ => groups.push(vec![item]),
         }
     }
@@ -477,27 +511,46 @@ enum Kind {
     Capacitor,
     Inductor,
     Led,
-    Other,
 }
 
-fn kind_of(designator: &str, name: &str) -> Kind {
+fn kind_of(designator: &str, name: &str) -> Option<Kind> {
     let d = designator.trim().to_ascii_uppercase();
-    if has(name, &["led"]) || d.starts_with("LED") {
-        Kind::Led
-    } else if d.starts_with("FB") || d.starts_with('L') {
-        Kind::Inductor
-    } else if d.starts_with('C') {
-        Kind::Capacitor
-    } else if d.starts_with('R') {
-        Kind::Resistor
-    } else if has(name, &["cap"]) {
-        Kind::Capacitor
-    } else if has(name, &["res"]) {
-        Kind::Resistor
-    } else if has(name, &["ind"]) {
-        Kind::Inductor
+    // The letters of the designator, when a digit follows them: "R12" has "R", "RN" does not
+    // count as a chip resistor's "R", and "REF" has no digit after its letters.
+    let letters: String = d.chars().take_while(char::is_ascii_alphabetic).collect();
+    let numbered = d
+        .chars()
+        .nth(letters.chars().count())
+        .is_some_and(|c| c.is_ascii_digit());
+    // Words of the name: "LED_0603", "CAPC1608X90" and "R0603" start with a kind's word.
+    let lower = name.to_ascii_lowercase();
+    let words: Vec<&str> = lower
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .collect();
+    let word = |prefix: &str| words.iter().any(|w| w.starts_with(prefix));
+    let led = word("led") || letters == "LED";
+    if numbered {
+        match letters.as_str() {
+            "CN" | "CON" | "J" | "P" | "SW" | "TP" | "Y" | "X" | "U" | "Q" | "T" => return None,
+            "D" => return led.then_some(Kind::Led),
+            "LED" => return Some(Kind::Led),
+            "R" => return Some(Kind::Resistor),
+            "C" => return Some(Kind::Capacitor),
+            "L" | "FB" => return Some(Kind::Inductor),
+            _ => {}
+        }
+    }
+    if led {
+        Some(Kind::Led)
+    } else if word("cap") {
+        Some(Kind::Capacitor)
+    } else if word("res") {
+        Some(Kind::Resistor)
+    } else if word("ind") {
+        Some(Kind::Inductor)
     } else {
-        Kind::Other
+        None
     }
 }
 
@@ -585,6 +638,7 @@ fn chip(designator: &str, name: &str, pads: &[StdPad]) -> Option<Standard> {
         name,
         &[
             "sod", "sma", "smb", "smc", "do-", "do2", "tant", "case", "elec", "melf", "sot", "usb",
+            "cappm", "capp", "pol", "diom",
         ],
     ) {
         return None;
@@ -617,7 +671,7 @@ fn chip(designator: &str, name: &str, pads: &[StdPad]) -> Option<Standard> {
                 && d < c.pitch.1 * 1.25
         })
         .unwrap_or(by_pads);
-    let kind = kind_of(designator, name);
+    let kind = kind_of(designator, name)?;
     let h = match kind {
         Kind::Capacitor => size.h_capacitor,
         _ => size.h_resistor,
@@ -660,12 +714,8 @@ fn chip(designator: &str, name: &str, pads: &[StdPad]) -> Option<Standard> {
         Kind::Capacitor => ("capacitor", "#b08850"),
         Kind::Inductor => ("inductor", "#3e3e42"),
         Kind::Led => ("LED", "#efe8b8"),
-        Kind::Other => ("chip", "#2e2e2e"),
     };
-    let package = match kind {
-        Kind::Other => format!("{} chip", size.imperial),
-        _ => format!("{} chip {what}", size.imperial),
-    };
+    let package = format!("{} chip {what}", size.imperial);
     Some(Standard {
         package,
         body: vec![body],
@@ -675,6 +725,7 @@ fn chip(designator: &str, name: &str, pads: &[StdPad]) -> Option<Standard> {
         },
         leads: vec![end_a, end_b],
         leads_look: TIN,
+        notes: Vec::new(),
     })
 }
 
@@ -761,6 +812,7 @@ fn sot23(pads: &[StdPad]) -> Option<Standard> {
             body_look: MOLD,
             leads,
             leads_look: TIN,
+            notes: Vec::new(),
         });
     }
     None
@@ -880,15 +932,28 @@ fn dual(name: &str, pads: &[StdPad], exposed: Option<&StdPad>) -> Option<Standar
                 body_look: MOLD,
                 leads,
                 leads_look: TIN,
+                notes: if exposed.is_some() {
+                    vec!["its exposed pad is not drawn".to_string()]
+                } else {
+                    Vec::new()
+                },
             });
         }
         // A DFN: short pads, fine pitch, rows close together; or a name that says so.
         let named = has(name, &["dfn", "son", "mlf"]);
         let flat = a.cross_size < 1.2 && b.cross_size < 1.2;
-        if !((0.35..=0.85).contains(&p) && sep <= 4.6 && (flat || named)) {
+        // Fine-pitch gull-wing packages (SC-70, SOT-363, MSOP, SSOP, TSOT...) have pads like a
+        // DFN's; one is a DFN only with an exposed pad or the name that says so.
+        if !((0.35..=0.85).contains(&p) && sep <= 4.6 && flat && (named || exposed.is_some())) {
             continue;
         }
-        if has(name, &["qfp", "sop", "sot"]) {
+        if has(
+            name,
+            &[
+                "qfp", "sop", "sot", "sc70", "sc-70", "sc88", "msop", "ssop", "tsot", "vssop",
+                "tssop", "soic",
+            ],
+        ) {
             continue;
         }
         let across = round_half(sep).max(1.0);
@@ -928,6 +993,7 @@ fn dual(name: &str, pads: &[StdPad], exposed: Option<&StdPad>) -> Option<Standar
             body_look: MOLD,
             leads,
             leads_look: TIN,
+            notes: Vec::new(),
         });
     }
     None
@@ -1047,6 +1113,10 @@ fn quad(name: &str, pads: &[StdPad], exposed: Option<&StdPad>) -> Option<Standar
     }
     let rx = mean(left.iter().chain(&right).map(|q| (q.x - cx).abs()));
     let ry = mean(bottom.iter().chain(&top).map(|q| (q.y - cy).abs()));
+    // No package here has a ring of pads this wide, whatever the name says.
+    if rx > 8.0 || ry > 8.0 {
+        return None;
+    }
     // How far the pads reach out from their rows: a QFP's land is long, a QFN's short.
     let length = mean(
         left.iter()
@@ -1065,7 +1135,9 @@ fn quad(name: &str, pads: &[StdPad], exposed: Option<&StdPad>) -> Option<Standar
                 && rx >= q.span / 2.0 - 1.0
                 && ry >= q.span / 2.0 - 1.0
         })?;
-        let thick = if has(name, &["lqfp"]) || q.body >= 14.0 {
+        let thick = if has(name, &["tqfp"]) {
+            1.0
+        } else if has(name, &["lqfp"]) || q.body >= 14.0 {
             1.4
         } else {
             1.0
@@ -1097,9 +1169,10 @@ fn quad(name: &str, pads: &[StdPad], exposed: Option<&StdPad>) -> Option<Standar
             body_look: MOLD,
             leads,
             leads_look: TIN,
+            notes: Vec::new(),
         });
     }
-    if !(0.3..=1.0).contains(&p) || n < 8 {
+    if !(0.3..=1.0).contains(&p) || n < 8 || length > 1.2 {
         return None;
     }
     let (bx, by) = (round_half(2.0 * rx).max(1.0), round_half(2.0 * ry).max(1.0));
@@ -1140,6 +1213,7 @@ fn quad(name: &str, pads: &[StdPad], exposed: Option<&StdPad>) -> Option<Standar
         body_look: MOLD,
         leads,
         leads_look: TIN,
+        notes: Vec::new(),
     })
 }
 
@@ -1164,6 +1238,21 @@ fn header(designator: &str, name: &str, pads: &[StdPad]) -> Option<Standard> {
         return None;
     }
     const PITCH: f64 = 2.54;
+    // The pin stays inside the plated hole: the plating's bore is the drill less 0.025 mm of
+    // copper all round, and a square pin's corner reaches its side times the square root of 2
+    // over 2 from the center. Leave 0.01 mm.
+    let drill = pads.iter().map(|p| p.drill).fold(f64::MAX, f64::min);
+    let room = (drill / 2.0 - 0.025 - 0.01) * 2.0 / std::f64::consts::SQRT_2;
+    let side = if drill > 0.0 { room.min(0.64) } else { 0.64 };
+    if side < 0.3 {
+        return None;
+    }
+    let mut notes = Vec::new();
+    if side < 0.64 {
+        notes.push(format!(
+            "the pins are {side:.2} mm square, not 0.64, to stay inside the plated holes"
+        ));
+    }
     for horizontal in [true, false] {
         let r = rows(pads, horizontal);
         let ok = match r.as_slice() {
@@ -1200,7 +1289,12 @@ fn header(designator: &str, name: &str, pads: &[StdPad]) -> Option<Standard> {
         let cross_hi = cross_values.iter().copied().fold(f64::MIN, f64::max) + PITCH / 2.0;
         let square = |c: (f64, f64)| -> Contour {
             let (x, y) = if horizontal { (c.0, c.1) } else { (c.1, c.0) };
-            rect(x - 0.32, y - 0.32, x + 0.32, y + 0.32)
+            rect(
+                x - side / 2.0,
+                y - side / 2.0,
+                x + side / 2.0,
+                y + side / 2.0,
+            )
         };
         let mut openings = Vec::new();
         let mut pins = Vec::new();
@@ -1212,7 +1306,7 @@ fn header(designator: &str, name: &str, pads: &[StdPad]) -> Option<Standard> {
                 } else {
                     (row.cross, along)
                 };
-                pins.push(centered(x, y, 0.64, 0.64, (-3.0, 8.5)));
+                pins.push(centered(x, y, side, side, (-3.0, 8.5)));
             }
         }
         let outline = if horizontal {
@@ -1236,6 +1330,7 @@ fn header(designator: &str, name: &str, pads: &[StdPad]) -> Option<Standard> {
             },
             leads: pins,
             leads_look: GOLD,
+            notes,
         });
     }
     None
@@ -1253,6 +1348,7 @@ mod tests {
             w,
             h,
             through: false,
+            drill: 0.0,
         }
     }
 
@@ -1263,6 +1359,7 @@ mod tests {
             w: 1.7,
             h: 1.7,
             through: true,
+            drill: 1.0,
         }
     }
 
@@ -1457,7 +1554,12 @@ mod tests {
         );
         // 3.3 mm apart is 1206, but a SOD-123 diode has pads there too.
         let diode = [smd(-1.65, 0.0, 1.0, 1.2), smd(1.65, 0.0, 1.0, 1.2)];
-        assert_eq!(recognize("D1", "", &diode).unwrap().package, "1206 chip");
+        // An unnamed D1 is not taken for a chip: nothing says it is an LED.
+        assert!(recognize("D1", "", &diode).is_none());
+        assert_eq!(
+            recognize("R1", "", &diode).unwrap().package,
+            "1206 chip resistor"
+        );
         assert!(recognize("D1", "SOD-123", &diode).is_none());
         // Two pads that are not a chip: too far apart, or not in line, or not alike.
         assert!(recognize(
@@ -1698,5 +1800,132 @@ mod tests {
             smd(5.0, -3.0, 1.0, 1.0),
         ];
         assert!(recognize("U1", "", &scatter).is_none());
+    }
+
+    #[test]
+    fn chip_lookalikes_are_refused_by_designator_and_name() {
+        let pads = [smd(-0.8, 0.0, 0.9, 1.0), smd(0.8, 0.0, 0.9, 1.0)];
+        for d in [
+            "CN1", "CON1", "J1", "P1", "SW1", "TP1", "Y1", "U1", "D1", "F1", "REF",
+        ] {
+            assert!(recognize(d, "", &pads).is_none(), "{d}");
+        }
+        for name in ["CAPPM3216", "CAPP_5x5", "C_POL_0603", "DIOM5226"] {
+            assert!(recognize("C1", name, &pads).is_none(), "{name}");
+        }
+        // A letter prefix needs its digit: "RN" and "CAL" are not R and C.
+        assert!(recognize("RN", "", &pads).is_none());
+        // "led" counts as a word's start, not inside a word.
+        assert_eq!(
+            recognize("D1", "LED_0603", &pads).unwrap().package,
+            "0603 chip LED"
+        );
+        assert!(recognize("D1", "SOLEDAD", &pads).is_none());
+        // The name stands in for a designator that says nothing.
+        assert_eq!(
+            recognize("Z1", "CAPC1608X90", &pads).unwrap().package,
+            "0603 chip capacitor"
+        );
+    }
+
+    #[test]
+    fn parts_with_too_many_pads_or_too_wide_a_ring_are_not_looked_at() {
+        // A 200 mm ring of QFN-like pads is no package, even named one.
+        let ring = quad_pads(4, 0.5, 100.0, 0.8, 0.25);
+        assert!(recognize("U1", "QFN-16", &ring).is_none());
+        // Long pads are no QFN either.
+        assert!(recognize("U1", "QFN-16", &quad_pads(4, 0.5, 1.5, 2.0, 0.25)).is_none());
+        // A part with 20000 pads is refused before anything is compared.
+        let board = Board {
+            components: vec![Placement {
+                designator: "U1".into(),
+                footprint: String::new(),
+                at: Point { x: 0.0, y: 0.0 },
+                rotation_deg: 0.0,
+                side: Side::Top,
+                model: None,
+                comment: String::new(),
+            }],
+            copper: (0..20_000)
+                .map(|i| CopperItem::Pad {
+                    layer: 0,
+                    at: Point {
+                        x: f64::from(i) * 0.5,
+                        y: 0.0,
+                    },
+                    shape: board_model::PadShape::Rectangle,
+                    size_x: 0.3,
+                    size_y: 0.3,
+                    rotation_deg: 0.0,
+                    drill: None,
+                    plated: false,
+                    owner: Some("U1".into()),
+                })
+                .collect(),
+            ..Board::default()
+        };
+        let recognizer = Recognizer::new(&board);
+        assert!(recognizer.recognize(&board.components[0]).is_none());
+    }
+
+    #[test]
+    fn fine_pitch_gull_wing_packages_are_not_dfns() {
+        // An 8-pad, 0.65 mm pitch, 4 mm row distance part (MSOP-like): no exposed pad, no DFN
+        // name, so no body; with the name that says so, a DFN.
+        let pads = dual_pads(8, 0.65, 2.9, 0.8, 0.3);
+        assert!(recognize("U1", "", &pads).is_none());
+        assert!(recognize("U1", "MSOP-8", &pads).is_none());
+        assert_eq!(
+            recognize("U1", "DFN-8", &pads).unwrap().package,
+            "DFN-8 (3.0 x 3.0 mm)"
+        );
+        // SC-70 style: three pads at 0.65 mm are not a SOT-23 and not a DFN.
+        let sc70 = [
+            smd(-0.65, 1.0, 0.4, 0.6),
+            smd(0.65, 1.0, 0.4, 0.6),
+            smd(0.0, -1.0, 0.4, 0.6),
+        ];
+        assert!(recognize("Q1", "SC-70", &sc70).is_none());
+    }
+
+    #[test]
+    fn a_soic_with_an_exposed_pad_says_it_is_not_drawn_and_tqfp_keeps_its_height() {
+        let mut pads = dual_pads(8, 1.27, 5.3, 1.5, 0.6);
+        pads.push(smd(0.0, 0.0, 2.4, 3.0));
+        let s = recognize("U1", "", &pads).unwrap();
+        assert_eq!(s.package, "SOIC-8");
+        assert_eq!(s.notes, ["its exposed pad is not drawn"]);
+        assert!(recognize("U1", "", &dual_pads(8, 1.27, 5.3, 1.5, 0.6))
+            .unwrap()
+            .notes
+            .is_empty());
+        // A 14 mm body named TQFP stays 1.0 mm thick; named nothing it is 1.4; LQFP 1.4.
+        for (name, thick) in [("TQFP-64", 1.0), ("", 1.4), ("LQFP-64", 1.4)] {
+            let s = recognize("U1", name, &quad_pads(16, 0.8, 7.2, 1.5, 0.4)).unwrap();
+            let (lo, hi) = extent(&written(&s.body));
+            assert!(near(hi[2] - lo[2], thick), "{name}");
+        }
+    }
+
+    #[test]
+    fn header_pins_stay_inside_small_plated_holes_and_pads_are_rounded() {
+        let mut small: Vec<StdPad> = (0..2).map(|i| thru(f64::from(i) * 2.54, 0.0)).collect();
+        for p in &mut small {
+            p.drill = 0.8;
+        }
+        let s = recognize("J1", "", &small).unwrap();
+        assert_eq!(s.notes.len(), 1, "{:?}", s.notes);
+        let (lo, hi) = extent(&written(&s.leads));
+        // Half the diagonal of the pin: no more than the bore (0.4 - 0.025) less 0.01.
+        let side = (hi[0] - lo[0]).min(hi[1] - lo[1]);
+        assert!(
+            side * std::f64::consts::SQRT_2 / 2.0 <= 0.365 + 1e-9,
+            "{side}"
+        );
+        // A drill with no room for a pin is no header.
+        for p in &mut small {
+            p.drill = 0.3;
+        }
+        assert!(recognize("J1", "", &small).is_none());
     }
 }
