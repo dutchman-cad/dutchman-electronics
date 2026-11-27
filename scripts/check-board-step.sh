@@ -207,10 +207,11 @@ for report in "$work/generated-sphere.model-sphere.solidcraft.json" "$work/gener
 import json, math, sys
 report = json.load(open(sys.argv[1]))
 problems = []
-(body,) = report.get("bodies", [None])
-if body is None:
-    problems.append("no body")
+bodies = report.get("bodies", [])
+if len(bodies) != 1:
+    problems.append(f"{len(bodies)} bodies, expected 1")
 else:
+    body = bodies[0]
     want = 4 / 3 * math.pi * 1.25 ** 3
     if abs(body.get("volume_mm3", 0) - want) > want * 0.005:
         problems.append(f"volume {body.get('volume_mm3')} mm3, expected {want:.5f}")
