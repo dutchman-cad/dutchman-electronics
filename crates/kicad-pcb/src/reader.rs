@@ -124,6 +124,21 @@ struct Reader {
     edge_open: Vec<Segment>,
     edge_closed: Vec<Contour>,
     inexact_text: bool,
+    /// Which sides' vias the board covers with solder mask unless a via says otherwise
+    /// (`(setup (tenting ...))`): top, bottom. `None` when the setup does not say.
+    default_tenting: Option<[bool; 2]>,
+}
+
+/// The sides a `(tenting ...)` list covers: top, bottom. KiCad 9 writes the sides it covers as
+/// bare words (`(tenting front back)`, or `(tenting none)`); KiCad 10 writes
+/// `(tenting (front yes) (back no))`.
+fn tenting_sides(n: &Node) -> [bool; 2] {
+    let side = |name: &str| {
+        n.has_flag(name)
+            || n.child(name)
+                .is_some_and(|c| matches!(c.str_at(0), Some("yes" | "true")))
+    };
+    [side("front"), side("back")]
 }
 
 /// What a drawn shape is, in Y-up board coordinates.
@@ -626,19 +641,37 @@ impl Reader {
                 .add(Severity::Dropped, "via(s) with unreadable numbers");
             return;
         };
+        // A blind, buried or micro via joins only the layers it names; any other via runs
+        // through the whole board whatever it lists.
+        let mut layers = None;
         if n.has_flag("blind") || n.has_flag("micro") {
-            self.tally.add(
-                Severity::Warning,
-                "blind or micro via(s) were read as through vias (the model has no via layers)",
-            );
+            let ends = n.child("layers").map(Node::args).unwrap_or(&[]);
+            let found: Vec<usize> = ends
+                .iter()
+                .filter_map(|e| e.text().and_then(|name| self.layer_index(name)))
+                .collect();
+            match (ends.len(), found.as_slice()) {
+                (2, [a, b]) => layers = Some(((*a).min(*b), (*a).max(*b))),
+                _ => self.tally.add(
+                    Severity::Warning,
+                    "blind or micro via(s) with layers the board does not list were read as \
+                     through vias",
+                ),
+            }
         }
+        // The via's own `(tenting ...)`, else the board's default; `None` when neither says.
+        let tented = n
+            .child("tenting")
+            .map(tenting_sides)
+            .or(self.default_tenting)
+            .map_or([None, None], |[front, back]| [Some(front), Some(back)]);
         self.copper.push(CopperItem::Via {
             at: Frame::IDENTITY.point(at.0, at.1),
             diameter: size,
             drill,
-            tented: [None, None],
+            tented,
             mask_expansion: None,
-            layers: None,
+            layers,
         });
     }
 
@@ -1371,6 +1404,10 @@ pub fn read(mut root: Node) -> ReadOutcome {
         components: Vec::new(),
         edge_open: Vec::new(),
         edge_closed: Vec::new(),
+        default_tenting: root
+            .child("setup")
+            .and_then(|s| s.child("tenting"))
+            .map(tenting_sides),
         inexact_text: false,
     };
 
