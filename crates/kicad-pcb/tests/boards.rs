@@ -1026,8 +1026,11 @@ fn copper_layers_get_their_place_in_the_stack() {
     assert!(notes_contain(&o, "placed evenly through the thickness"));
 }
 
-/// The vias of a board in the order of their x position: (x, tented, span as layer names).
-fn vias(o: &ReadOutcome) -> Vec<(f64, [Option<bool>; 2], Option<(String, String)>)> {
+/// A via as the tests see it: x, tented sides, and the span as layer names.
+type ViaView = (f64, [Option<bool>; 2], Option<(String, String)>);
+
+/// The vias of a board in the order of their x position.
+fn vias(o: &ReadOutcome) -> Vec<ViaView> {
     let mut out: Vec<_> = o
         .board
         .copper
