@@ -162,10 +162,8 @@ fn detect(path: &str, json: bool) -> ExitCode {
         }
         return ExitCode::FAILURE;
     }
-    let extension = std::path::Path::new(path)
-        .extension()
-        .and_then(|e| e.to_str());
-    let reply = module::detect(&head, extension);
+    let extension = dutchman_electronics::extension_of(std::path::Path::new(path));
+    let reply = module::detect(&head, extension.as_deref());
     if json {
         print_json(&reply);
     } else {

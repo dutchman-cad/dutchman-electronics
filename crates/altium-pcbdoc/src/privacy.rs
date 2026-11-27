@@ -124,7 +124,8 @@ pub fn check(bytes: &[u8], options: &Options) -> Result<Report, ReadError> {
             )));
         }
     }
-    let mut container = cfb::CompoundFile::open(Cursor::new(bytes))
+    let (bytes, _) = crate::container::normalized(bytes);
+    let mut container = cfb::CompoundFile::open(Cursor::new(bytes.as_ref()))
         .map_err(|e| ReadError::Invalid(e.to_string()))?;
     let mut paths = Vec::new();
     for (seen, entry) in container.walk().enumerate() {

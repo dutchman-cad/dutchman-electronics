@@ -11,12 +11,16 @@ pub mod linked;
 pub mod module;
 pub mod overlay;
 pub mod package;
+#[cfg(feature = "tscircuit")]
+mod tsx;
 use board_model::{Detection, InputFormat};
 
 #[cfg(feature = "altium")]
 pub use altium_pcbdoc;
 #[cfg(feature = "kicad")]
 pub use kicad_pcb;
+#[cfg(feature = "tscircuit")]
+pub use tscircuit_json;
 
 /// The Altium format, when this build includes it.
 fn altium() -> Option<Box<dyn InputFormat>> {
@@ -34,9 +38,32 @@ fn kicad() -> Option<Box<dyn InputFormat>> {
     return None;
 }
 
+/// The tscircuit Circuit JSON format, when this build includes it.
+fn tscircuit() -> Option<Box<dyn InputFormat>> {
+    #[cfg(feature = "tscircuit")]
+    return Some(Box::new(tscircuit_json::CircuitJson));
+    #[cfg(not(feature = "tscircuit"))]
+    return None;
+}
+
 /// Every input format compiled into this build.
 pub fn formats() -> Vec<Box<dyn InputFormat>> {
-    [altium(), kicad()].into_iter().flatten().collect()
+    [altium(), kicad(), tscircuit()]
+        .into_iter()
+        .flatten()
+        .collect()
+}
+
+/// A file's extension as the formats see it, lower case: the last suffix, except for the
+/// two-part suffixes some formats use (`board.circuit.json` gives `circuit.json`).
+pub fn extension_of(path: &std::path::Path) -> Option<String> {
+    let name = path.file_name()?.to_str()?.to_ascii_lowercase();
+    if name.ends_with(".circuit.json") {
+        return Some("circuit.json".into());
+    }
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
 }
 
 /// Picks the format for a file: the first that says [`Detection::Yes`], else the first that
@@ -58,15 +85,33 @@ mod tests {
     use super::*;
 
     #[test]
+    fn two_part_extensions() {
+        use std::path::Path;
+        assert_eq!(
+            extension_of(Path::new("a/b.circuit.json")).as_deref(),
+            Some("circuit.json")
+        );
+        assert_eq!(
+            extension_of(Path::new("b.PcbDoc")).as_deref(),
+            Some("pcbdoc")
+        );
+        assert_eq!(extension_of(Path::new("b.json")).as_deref(), Some("json"));
+        assert_eq!(extension_of(Path::new("noext")), None);
+    }
+
+    #[test]
     fn plain_text_is_not_a_board() {
         assert!(detect(b"hello", Some("txt")).is_none());
     }
 
-    #[cfg(all(feature = "altium", feature = "kicad"))]
+    #[cfg(all(feature = "altium", feature = "kicad", feature = "tscircuit"))]
     #[test]
     fn both_formats_are_listed_and_picked_by_name() {
         let ids: Vec<&str> = formats().iter().map(|f| f.id()).collect();
-        assert_eq!(ids, vec!["altium_pcbdoc", "kicad_pcb"]);
+        assert_eq!(
+            ids,
+            vec!["altium_pcbdoc", "kicad_pcb", "tscircuit_circuit_json"]
+        );
         let picked = detect(b"not ole", Some("PcbDoc")).map(|f| f.id());
         assert_eq!(picked, Some("altium_pcbdoc"));
         let picked = detect(b"anything", Some("kicad_pcb")).map(|f| f.id());

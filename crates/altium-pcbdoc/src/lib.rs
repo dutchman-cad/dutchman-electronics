@@ -15,6 +15,7 @@ use std::io::{Cursor, Read};
 mod appearance;
 mod board;
 mod components;
+mod container;
 mod copper;
 mod fonts;
 mod mask;
@@ -57,7 +58,8 @@ pub fn list_streams(bytes: &[u8]) -> Result<Vec<StreamInfo>, ReadError> {
     if bytes.len() > MAX_INPUT_BYTES {
         return Err(ReadError::TooLarge { bytes: bytes.len() });
     }
-    let container = cfb::CompoundFile::open(Cursor::new(bytes))
+    let (bytes, _) = container::normalized(bytes);
+    let container = cfb::CompoundFile::open(Cursor::new(bytes.as_ref()))
         .map_err(|e| ReadError::Invalid(e.to_string()))?;
     let mut streams = Vec::new();
     for (seen, entry) in container.walk().enumerate() {
@@ -126,7 +128,8 @@ impl InputFormat for Altium {
 
     fn read(&self, bytes: &[u8]) -> Result<ReadOutcome, ReadError> {
         let streams = list_streams(bytes)?;
-        let mut container = cfb::CompoundFile::open(Cursor::new(bytes))
+        let (bytes, repaired) = container::normalized(bytes);
+        let mut container = cfb::CompoundFile::open(Cursor::new(bytes.as_ref()))
             .map_err(|e| ReadError::Invalid(e.to_string()))?;
         let board6 = read_stream(&mut container, "/Board6/Data")?
             .ok_or_else(|| ReadError::Invalid("no /Board6/Data stream".into()))?;
@@ -144,6 +147,16 @@ impl InputFormat for Altium {
         let linked6 = read_stream(&mut container, "/ModelsNoEmbed/Data")?;
 
         let mut notes = Vec::new();
+        if repaired > 0 {
+            notes.push(Note {
+                severity: Severity::Info,
+                message: format!(
+                    "the file's allocation table marked {repaired} sector(s) past its end as in \
+                     use; they were treated as free (the file was written by a program other \
+                     than Altium?)"
+                ),
+            });
+        }
         // The shape-based streams repeat these two, with arcs where an outline has them (see
         // `shape_based.rs`). Only a region's arcs are read (a board cutout's); a body's are not.
         let mut region_arcs = Vec::new();

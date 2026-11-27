@@ -1,0 +1,17 @@
+[package]
+name = "tscircuit-json"
+description = "Reads tscircuit Circuit JSON into the neutral board model"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+board-model = { path = "../board-model" }
+# Parses the Circuit JSON text. MIT or Apache-2.0.
+serde_json = "1"
+
+[lints]
+workspace = true

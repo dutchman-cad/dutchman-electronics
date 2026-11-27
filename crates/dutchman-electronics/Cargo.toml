@@ -13,6 +13,7 @@ board-model = { path = "../board-model" }
 board-step = { path = "../board-step" }
 altium-pcbdoc = { path = "../altium-pcbdoc", optional = true }
 kicad-pcb = { path = "../kicad-pcb", optional = true }
+tscircuit-json = { path = "../tscircuit-json", optional = true }
 # Writes the JSON replies Dutchman reads (info, detect, and later the parts manifest).
 # MIT or Apache-2.0.
 serde_json = "1"
@@ -24,10 +25,11 @@ geo = { version = "0.33", default-features = false }
 ttf-parser = { version = "0.25", default-features = false, features = ["std"] }
 
 [features]
-default = ["altium", "kicad"]
+default = ["altium", "kicad", "tscircuit"]
 # One feature per input format, so a build can leave a format out.
 altium = ["dep:altium-pcbdoc"]
 kicad = ["dep:kicad-pcb"]
+tscircuit = ["dep:tscircuit-json"]
 
 [lints]
 workspace = true
