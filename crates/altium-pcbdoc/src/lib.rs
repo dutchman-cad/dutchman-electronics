@@ -262,8 +262,15 @@ impl InputFormat for Altium {
             let mut rule_notes = Vec::new();
             let rules =
                 planes::rules(rules6.as_deref(), &mut rule_notes).map_err(ReadError::Invalid)?;
-            let planes = planes::read(data, &layers, &drills, &rules, &mut notes)
-                .map_err(ReadError::Invalid)?;
+            let planes = planes::read(
+                data,
+                &layers,
+                &drills,
+                &shape.outline.cutouts,
+                &rules,
+                &mut notes,
+            )
+            .map_err(ReadError::Invalid)?;
             if !planes.copper.is_empty() {
                 notes.extend(rule_notes);
             }

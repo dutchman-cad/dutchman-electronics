@@ -147,6 +147,9 @@ pub(crate) struct CopperLayers {
     names: Vec<Option<String>>,
     /// The net names of `/Nets6/Data`, by net index.
     pub nets: Vec<String>,
+    /// Each plane layer's pull-back from the board edge (`PULLBACKDISTANCE` in the V9 stack), by
+    /// the layer's name, in mm.
+    pull_backs: std::collections::BTreeMap<String, f64>,
 }
 
 impl CopperLayers {
@@ -156,6 +159,7 @@ impl CopperLayers {
         let mut copper_names = Vec::new();
         let mut positions: Vec<Option<StackPosition>> = Vec::new();
         let mut depth = Some(0.0);
+        let mut pull_backs = std::collections::BTreeMap::new();
         for n in 0..10_000usize {
             let Some(name) = board.get(&format!("V9_STACK_LAYER{n}_NAME")) else {
                 break;
@@ -167,6 +171,9 @@ impl CopperLayers {
                     .flatten()
             };
             let dielectric = length("DIELHEIGHT").unwrap_or(0.0);
+            if let Some(pull_back) = length("PULLBACKDISTANCE") {
+                pull_backs.insert(name.to_string(), pull_back);
+            }
             if board.get(&format!("V9_STACK_LAYER{n}_COPTHICK")).is_some() {
                 let thickness = length("COPTHICK");
                 copper_names.push(name.to_string());
@@ -230,7 +237,16 @@ impl CopperLayers {
             by_number,
             names,
             nets: Vec::new(),
+            pull_backs,
         }
+    }
+
+    /// The pull-back from the board edge of the plane layer at `index` in `layers`, in mm, when
+    /// the stack gives one.
+    pub(crate) fn pull_back(&self, index: usize) -> Option<f64> {
+        self.layers
+            .get(index)
+            .and_then(|l| self.pull_backs.get(&l.name).copied())
     }
 
     /// Whether two layer bytes are the top and the bottom copper layer, in either order.
