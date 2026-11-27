@@ -924,13 +924,17 @@ fn project_text(link: &str, value: &str) -> String {
     )
 }
 
+/// The files of a package: (name, contents), sorted.
+#[cfg(feature = "altium")]
+type Files = Vec<(String, Vec<u8>)>;
+
 /// Reads `board` into a new folder under `dir`; the manifest and every file written.
 #[cfg(feature = "altium")]
 fn read_files(
     board: &std::path::Path,
     dir: &std::path::Path,
     extra: &[&str],
-) -> Result<(serde_json::Value, Vec<(String, Vec<u8>)>), Box<dyn std::error::Error>> {
+) -> Result<(serde_json::Value, Files), Box<dyn std::error::Error>> {
     let out = dir.join(format!("out{}", extra.len()));
     let mut args = vec![
         "read".to_string(),
