@@ -85,6 +85,13 @@
 //!   shape (byte 640: 9, rounded rectangle), x size, y size (bytes 641..649) and corner percentage
 //!   (byte 649: 50, 25 or 30 as set). The corner radius is that percentage of half the shorter
 //!   side: 0.25 for 50% of a 2.000 x 1.000 pad, 0.125 for 25%, 0.24 for 30% of 1.600 x 1.600.
+//! - Keepouts (`keepouts`): a track, arc, fill and region on the Keep-Out layer (layer byte 56,
+//!   `Keep-Out Layer`), and a track, fill and region on Top Layer with Altium's Keepout box
+//!   ticked. Byte 2 of the record body is 2 on the three ticked ones and 0 on every other track,
+//!   arc, fill, region and via of every test board; the ticked track also has 31 at byte 45, the
+//!   fill 31 at byte 46 and the region `KEEPOUTRESTRICTIONS=31` (Altium's default restrictions).
+//!   A keepout is a rule for placing and routing, not something that is made, so both kinds are
+//!   left out, each kind with an Info note.
 //! - Nets (`one-net`): `/Nets6/Data` is a run of records, each a `u32` length and text with
 //!   `NAME=GND`; the n-th record (from 0) is net n. Bytes 3..5 of a track's body are its net
 //!   index: 0 on `one-net`'s track, `ff ff` for no net.
@@ -155,6 +162,11 @@ const MAX_RECORDS: usize = 10_000_000;
 /// The most layers named in `/Board6/Data` that are looked at.
 const MAX_LAYER_NUMBER: u8 = u8::MAX;
 const NO_NET: u16 = 0xffff;
+/// Byte 2 of a track, arc, fill or region body is [`KEEPOUT`] when Altium's Keepout box is ticked.
+pub(crate) const KEEPOUT_AT: usize = 2;
+pub(crate) const KEEPOUT: u8 = 2;
+/// The name of Altium's Keep-Out layer (layer byte 56 on `keepouts`).
+const KEEPOUT_LAYER: &str = "Keep-Out Layer";
 /// The layer bytes of Altium's internal planes (Internal Plane 1 to 16).
 const INTERNAL_PLANES: std::ops::RangeInclusive<u8> = 39..=54;
 
@@ -385,6 +397,10 @@ struct Skipped {
     /// Whether the items on a plane are lines, which there mark where copper is left out and are
     /// already in the plane's split-plane regions; anything else on a plane is not read yet.
     plane_lines: bool,
+    /// Items on the Keep-Out layer.
+    keepout_layer: usize,
+    /// Items on a copper layer with the Keepout box ticked, by layer name.
+    keepouts: std::collections::BTreeMap<String, usize>,
 }
 
 impl Skipped {
@@ -397,7 +413,23 @@ impl Skipped {
         true
     }
 
+    /// Counts and skips a keepout: an item on the Keep-Out layer, or one on a copper layer with
+    /// the Keepout box ticked (byte [`KEEPOUT_AT`] of `body`).
+    fn keepout(&mut self, layers: &CopperLayers, number: u8, body: &[u8]) -> bool {
+        let name = layers.name(number);
+        if name == KEEPOUT_LAYER {
+            self.keepout_layer += 1;
+            return true;
+        }
+        if body.get(KEEPOUT_AT) == Some(&KEEPOUT) && layers.copper_index(number).is_some() {
+            *self.keepouts.entry(name).or_default() += 1;
+            return true;
+        }
+        false
+    }
+
     fn into_notes(self, what: &str, notes: &mut Vec<Note>) {
+        keepout_notes(what, self.keepout_layer, self.keepouts, notes);
         for (layer, count) in self.on_plane {
             notes.push(if self.plane_lines {
                 Note {
@@ -453,6 +485,34 @@ impl Skipped {
     }
 }
 
+/// The notes for keepouts left out: those on the Keep-Out layer, and those on copper layers by
+/// layer name.
+fn keepout_notes(
+    what: &str,
+    on_layer: usize,
+    flagged: std::collections::BTreeMap<String, usize>,
+    notes: &mut Vec<Note>,
+) {
+    if on_layer > 0 {
+        notes.push(Note {
+            severity: Severity::Info,
+            message: format!(
+                "{on_layer} {what} on {KEEPOUT_LAYER} left out: a keepout is a rule for placing \
+                 and routing, not part of the board"
+            ),
+        });
+    }
+    for (layer, count) in flagged {
+        notes.push(Note {
+            severity: Severity::Info,
+            message: format!(
+                "{count} {what} on {layer} are keepouts (Altium's Keepout box), not copper; left \
+                 out"
+            ),
+        });
+    }
+}
+
 /// Reads the tracks from `/Tracks6/Data`: those on copper layers as copper, those on the overlay
 /// layers into `graphics`.
 pub(crate) fn tracks(
@@ -476,7 +536,7 @@ pub(crate) fn tracks(
             skipped.unnamed_net += 1;
             None
         });
-        if skipped.on_plane(layers, layer_number) {
+        if skipped.keepout(layers, layer_number, body) || skipped.on_plane(layers, layer_number) {
             continue;
         }
         if let Some(layer) = layers.copper_index(layer_number) {
@@ -777,7 +837,7 @@ pub(crate) fn arcs(
             skipped.unnamed_net += 1;
             None
         });
-        if skipped.on_plane(layers, layer_number) {
+        if skipped.keepout(layers, layer_number, body) || skipped.on_plane(layers, layer_number) {
             continue;
         }
         let Some(layer) = layers.copper_index(layer_number) else {
@@ -919,7 +979,7 @@ pub(crate) fn fills(
         if read_u16(body, 3) != Some(NO_NET) {
             skipped.with_net += 1;
         }
-        if skipped.on_plane(layers, layer_number) {
+        if skipped.keepout(layers, layer_number, body) || skipped.on_plane(layers, layer_number) {
             continue;
         }
         let Some(layer) = layers.copper_index(layer_number) else {
@@ -966,8 +1026,18 @@ pub(crate) fn regions(
     let mut not_copper: std::collections::BTreeMap<String, usize> = Default::default();
     let mut on_overlay = std::collections::BTreeMap::<String, usize>::new();
     let mut on_mask = std::collections::BTreeMap::<String, usize>::new();
+    let (mut keepout_layer, mut keepouts) = (0usize, std::collections::BTreeMap::new());
     for region in others {
         let layer = layers.copper_index(region.layer);
+        let name = layers.name(region.layer);
+        if name == KEEPOUT_LAYER {
+            keepout_layer += 1;
+            continue;
+        }
+        if region.keepout && layer.is_some() {
+            *keepouts.entry(name).or_default() += 1;
+            continue;
+        }
         match (layer, region.kind.as_deref().map(str::trim)) {
             (Some(layer), Some("0")) => {
                 if region.poured {
@@ -1008,6 +1078,7 @@ pub(crate) fn regions(
         });
     }
     filled_on_overlay("region(s)", on_overlay, notes);
+    keepout_notes("region(s)", keepout_layer, keepouts, notes);
     // `solder-mask-region`: a solid region on Top Solder is an opening in the mask drawn by hand.
     for (layer, count) in on_mask {
         notes.push(Note {
