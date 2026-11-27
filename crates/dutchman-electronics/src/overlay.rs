@@ -1210,7 +1210,7 @@ fn overlays_within(
                 .as_ref()
                 .map(|c| c.opacity)
                 .filter(|o| o.is_finite() && *o > 0.0 && *o <= 1.0)
-                .unwrap_or(MASK_OPACITY);
+                .map_or(MASK_OPACITY, |o| o.max(MASK_OPACITY));
             let silk_color = silk_file.as_ref().map_or(SILKSCREEN_COLOR.to_string(), hex);
             let (pads, _) = pad_look(finish_file.as_ref());
             // All copper of the face is one unit; the finish is the part of it the mask opens

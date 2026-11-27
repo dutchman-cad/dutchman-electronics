@@ -11,12 +11,16 @@ use board_model::{Color, SurfaceFinish};
 
 /// Solder mask: a dark green.
 pub const MASK_COLOR: &str = "#1f5f3a";
-/// How opaque the solder mask overlay is (0 clear, 1 solid) when the board file gives no
-/// opacity of its own: 0.75.
+/// The least opaque the solder mask overlay is (0 clear, 1 solid), and its opacity when the
+/// board file gives none: 0.75.
 ///
 /// The mask lies over all copper and the laminate sheet and is see-through, so copper shows
-/// through it and laminate shows darker (a real mask over laminate is the darkest). Where the
-/// file gives a mask color it gives its opacity too (0.6 for Altium's 3D view), and that is used.
+/// through it and laminate shows darker (a real mask over laminate is the darkest). A board file
+/// may give its own opacity (0.6 for Altium's 3D view); the mask is drawn with the larger of that
+/// and this. SolidCraft blends a see-through solid with what lies behind it linearly, so at 0.6
+/// a pour shows 40 percent of its orange: a blue mask over copper comes out lilac-gray, and
+/// bare laminate beside it reads dark. Altium's 3D view does not wash out that way, and at 0.75
+/// the copper still shows as lines and pours while the mask color stays the mask color.
 pub const MASK_OPACITY: f64 = 0.75;
 /// The laminate sheet under the mask on each face: a dark FR4 olive, opaque. The mask over it
 /// reads as the dark mask color; the board edge keeps [`BOARD_COLOR`].

@@ -1608,7 +1608,7 @@ mod tests {
                     path.display()
                 );
                 if o["kind"] == "mask" {
-                    // The file's own opacity, or 0.75 where it gives none.
+                    // The file's own opacity, at least 0.75, or 0.75 where it gives none.
                     let opacity = o["opacity"].as_f64().unwrap();
                     assert!(opacity > 0.0 && opacity <= 1.0, "{}: {o}", path.display());
                 } else {
@@ -1790,8 +1790,8 @@ mod tests {
         for side in ["top", "bottom"] {
             let mask = overlay_named(&blue.manifest, "blue", &format!("Solder mask {side}"));
             assert_eq!(mask["color"], "#1155cc");
-            // Altium's mask opacity for this board (README.txt): 0.6.
-            assert_eq!(mask["opacity"], 0.6);
+            // Altium's mask opacity for this board (README.txt) is 0.6, raised to the 0.75 floor.
+            assert_eq!(mask["opacity"], 0.75);
         }
         // Those two boards have no track and no silkscreen line, so the copper under the mask
         // and the silkscreen are drawn from the same boards with one-track's copper and

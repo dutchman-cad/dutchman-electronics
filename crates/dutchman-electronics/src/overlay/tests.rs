@@ -1214,7 +1214,7 @@ fn each_overlay_has_its_z_thickness_and_color() {
 }
 
 #[test]
-fn the_mask_opacity_is_the_files_where_it_gives_one() {
+fn the_mask_opacity_is_the_files_but_at_least_the_floor() {
     let mut b = stacked_board(0, 3);
     b.appearance.top_solder_mask = Some(board_model::Color {
         r: 17,
@@ -1223,8 +1223,18 @@ fn the_mask_opacity_is_the_files_where_it_gives_one() {
         opacity: 0.6,
     });
     let (list, _) = overlays(&b, 1.6, "Board");
-    assert_eq!(named(&list, "Solder mask top")["opacity"], 0.6);
+    // 0.6 is under the 0.75 floor, so the floor is used.
+    assert_eq!(named(&list, "Solder mask top")["opacity"], 0.75);
     assert_eq!(named(&list, "Solder mask top")["color"], "#1155cc");
+    // A file value above the floor is kept.
+    b.appearance.top_solder_mask = Some(board_model::Color {
+        r: 17,
+        g: 85,
+        b: 204,
+        opacity: 0.9,
+    });
+    let (list, _) = overlays(&b, 1.6, "Board");
+    assert_eq!(named(&list, "Solder mask top")["opacity"], 0.9);
     // The other side has none, so the default.
     assert_eq!(named(&list, "Solder mask bottom")["opacity"], 0.75);
     // A copper stays copper-colored whatever the mask.
