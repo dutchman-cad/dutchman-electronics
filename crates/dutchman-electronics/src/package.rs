@@ -1113,9 +1113,10 @@ fn components_with(
             };
             let outcome = body_model(&mut ctx, model, embedded, &mut placed);
             match outcome {
-                Ok(id) => placed.parts.push(body_part(
-                    model, &body_name, &id, &frame, group, &mut placed.notes,
-                )),
+                Ok(id) => {
+                    let part = body_part(model, &body_name, &id, &frame, group, &mut placed.notes);
+                    placed.parts.push(part);
+                }
                 Err(Lost::Missing) => missing.push(body_name),
                 Err(Lost::External(file)) => external.push(format!("{body_name} ({file})")),
                 Err(Lost::Failed(why)) => failed.push(format!("{body_name}: {why}")),
@@ -1144,14 +1145,17 @@ fn components_with(
         bodies_placed = bodies_placed.saturating_add(1);
         let body_name = unique_name(&mut used, &format!("Free body {}", k.saturating_add(1)));
         match body_model(&mut ctx, model, embedded, &mut placed) {
-            Ok(id) => placed.parts.push(body_part(
-                model,
-                &body_name,
-                &id,
-                &free_frame,
-                GROUP_FREE,
-                &mut placed.notes,
-            )),
+            Ok(id) => {
+                let part = body_part(
+                    model,
+                    &body_name,
+                    &id,
+                    &free_frame,
+                    GROUP_FREE,
+                    &mut placed.notes,
+                );
+                placed.parts.push(part);
+            }
             Err(Lost::Missing) => missing.push(body_name),
             Err(Lost::External(file)) => external.push(format!("{body_name} ({file})")),
             Err(Lost::Failed(why)) => failed.push(format!("{body_name}: {why}")),
@@ -3345,7 +3349,11 @@ mod tests {
     #[test]
     fn a_spheres_file_holds_a_ball_of_its_radius_and_equal_ones_share_it() {
         let mut r1 = part("R1", 0.0, 0.0, 0.0, Side::Top);
-        r1.models = vec![ball(0.0, 0.0, 0.3, 0.3), ball(1.0, 0.0, 0.3, 0.3), ball(2.0, 0.0, 0.3, 0.5)];
+        r1.models = vec![
+            ball(0.0, 0.0, 0.3, 0.3),
+            ball(1.0, 0.0, 0.3, 0.3),
+            ball(2.0, 0.0, 0.3, 0.5),
+        ];
         let placed = components(&[r1], &[], 1.6);
         assert_eq!(placed.parts.len(), 3);
         assert_eq!(placed.models.len(), 2, "radius 0.3 once, radius 0.5 once");
@@ -3444,7 +3452,11 @@ mod tests {
         r1.models = vec![ball(0.0, 0.0, 0.0, 1.0); MAX_BODIES_PER_PART + 44];
         let free = vec![ball(0.0, 0.0, 0.0, 1.0); MAX_FREE_BODIES + 3];
         let placed = components_with(&[r1], &[], 1.6, &free, None);
-        let free_parts = placed.parts.iter().filter(|p| p["group"] == GROUP_FREE).count();
+        let free_parts = placed
+            .parts
+            .iter()
+            .filter(|p| p["group"] == GROUP_FREE)
+            .count();
         assert_eq!(free_parts, MAX_FREE_BODIES);
         assert_eq!(placed.parts.len(), MAX_BODIES_PER_PART + MAX_FREE_BODIES);
         // One shared file for all of them.
