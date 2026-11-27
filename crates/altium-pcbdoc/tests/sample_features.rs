@@ -113,3 +113,17 @@ fn a_moved_origin_moves_nothing() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(moved.notes.len(), plain.notes.len() + 1);
     Ok(())
 }
+
+/// mask-opacity-100: the 3D view's mask transparency at 0 stores an opacity of 1.000000 on both
+/// sides; the mask color stays (36, 120, 50).
+#[test]
+fn a_solid_3d_mask_reads_opacity_one() -> Result<(), Box<dyn std::error::Error>> {
+    let out = read("mask-opacity-100.PcbDoc")?;
+    let a = &out.board.appearance;
+    for mask in [a.top_solder_mask, a.bottom_solder_mask] {
+        let m = mask.ok_or("no mask color")?;
+        assert_eq!((m.r, m.g, m.b), (36, 120, 50));
+        assert!((m.opacity - 1.0).abs() < 1e-9, "{m:?}");
+    }
+    Ok(())
+}
