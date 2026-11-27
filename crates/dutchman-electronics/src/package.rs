@@ -2022,7 +2022,16 @@ mod tests {
             ("mask-expansion-0-2", 0.2),
         ] {
             let package = package_of(board);
-            let top = overlay_area(overlay_named(&package.manifest, board, "Solder mask top"));
+            // The mask is the part over bare laminate and the part over copper, which never
+            // overlap.
+            let top = overlay_area(overlay_named(&package.manifest, board, "Solder mask top"))
+                + package.manifest["overlays"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter(|o| o["name"] == "Solder mask top over copper")
+                    .map(overlay_area)
+                    .sum::<f64>();
             let want = 1500.0 - 2.0 * (0.8 + 2.0 * e) * (1.0 + 2.0 * e);
             assert!((top - want).abs() < 1e-3, "{board}: {top}, expected {want}");
         }
