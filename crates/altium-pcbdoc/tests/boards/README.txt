@@ -1152,6 +1152,48 @@ an entry of its index and a byte length of 2 but no bytes after it: the stream r
 closing 0 in its length.
 
 
+Features seen on other people's boards (mask-opacity-100, origin-moved, overlay-region-fill)
+---------------------------------------------------------------------------------------------
+Made on 2026-11-27, each from a file copy of one of our own boards, one feature per board, so the
+reader can learn features that public sample boards use (only our converter's notes on those
+boards were looked at, never their bytes). Every object was read back and logged; each board was
+saved once and closed.
+
+mask-opacity-100.PcbDoc  (from one-resistor)
+    By hand, in the 3D view's View Configuration panel (View Options, 3D Settings), the
+    Transparency sliders of Top Solder Mask and Bottom Solder Mask dragged to 0. Nothing else
+    changed on purpose. /Board6/Data then reads CFG3D.TOPSOLDERMASKCOLOROPACITY=1.000000 and
+    CFG3D.BOTSOLDERMASKCOLOROPACITY=1.000000 (0.600000 on one-resistor); the colors stay
+    CFG3D.TOPSOLDERMASKCOLOR=3307556 and CFG3D.BOTSOLDERMASKCOLOR=3307556 (36, 120, 50). Altium
+    26.12.2 writes both opacity keys on every save, so a board with a mask color and no opacity
+    key cannot be made by saving here. The board was saved from the 3D view
+    (CURRENT2D3DVIEWSTATE=3D).
+
+origin-moved.PcbDoc  (from one-resistor)
+    By my own script, the board origin (what Edit > Origin > Set changes) moved from the
+    outline's lower-left corner to the point 10.000 right and 5.000 up from it. Nothing moved on
+    the board: /Board6/Data reads ORIGINX=393.7008mil, ORIGINY=196.8504mil (0mil before) and the
+    grid origin GR0_OX and GR0_OY the same, while the outline (VX0 to VY4) and every object keep
+    their stored coordinates. Read back from the new origin:
+        outline     (-10, -5) to (40, 25)
+        R1          center (15, 10); pads at (14.2, 10) and (15.8, 10)
+    So stored coordinates still have the outline's corner at (0, 0); only the origin Altium
+    shows them from moved.
+
+overlay-region-fill.PcbDoc  (from empty-outline)
+    By my own script, solid shapes on both silkscreen layers, no net, no component:
+        Top Overlay      region  (5, 18), (15, 18), (13, 25), (7, 25), KIND 0, no holes
+                         fill    (20, 19) to (26, 23), rotation 0
+                         fill    (32, 19) to (38, 23), rotation 30 (about its center (35, 21));
+                                 Altium's box x 31.402 to 38.598, y 17.768 to 24.232
+        Bottom Overlay   region  (5, 5), (15, 5), (13, 12), (7, 12), KIND 0, no holes
+                         fill    (20, 6) to (26, 10), rotation 0
+                         fill    (32, 6) to (38, 10), rotation 30 (about its center (35, 8));
+                                 Altium's box x 31.402 to 38.598, y 4.768 to 11.232
+
+Saving embedded Arial in each of them (none of their texts uses it); it was removed as before
+(see "Paths inside the files").
+
 Paths inside the files
 ----------------------
 Altium writes a few paths from the PC that saved a board into the file. After the last save, I

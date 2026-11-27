@@ -907,6 +907,7 @@ pub(crate) fn fills(
 ) -> Result<Vec<CopperItem>, String> {
     let mut items = Vec::new();
     let mut skipped = Skipped::default();
+    let mut on_overlay = std::collections::BTreeMap::<String, usize>::new();
     for body in records(data, FILL_RECORD, "/Fills6/Data", notes)? {
         let layer_number = *body.first().ok_or("fill record is empty")?;
         let a = point(body, 13)?;
@@ -922,10 +923,13 @@ pub(crate) fn fills(
             continue;
         }
         let Some(layer) = layers.copper_index(layer_number) else {
-            *skipped
-                .off_copper
-                .entry(layers.name(layer_number))
-                .or_default() += 1;
+            let name = layers.name(layer_number);
+            let counts = if is_overlay(&name) {
+                &mut on_overlay
+            } else {
+                &mut skipped.off_copper
+            };
+            *counts.entry(name).or_default() += 1;
             continue;
         };
         let center = Point {
@@ -944,6 +948,7 @@ pub(crate) fn fills(
             holes: Vec::new(),
         });
     }
+    filled_on_overlay("fill(s)", on_overlay, notes);
     skipped.into_notes("fill(s)", notes);
     Ok(items)
 }
@@ -959,6 +964,7 @@ pub(crate) fn regions(
     let mut items = Vec::new();
     let mut poured = 0usize;
     let mut not_copper: std::collections::BTreeMap<String, usize> = Default::default();
+    let mut on_overlay = std::collections::BTreeMap::<String, usize>::new();
     for region in others {
         let layer = layers.copper_index(region.layer);
         match (layer, region.kind.as_deref().map(str::trim)) {
@@ -971,6 +977,9 @@ pub(crate) fn regions(
                     contour: region.contour.clone(),
                     holes: region.holes.clone(),
                 });
+            }
+            (None, Some("0")) if is_overlay(&layers.name(region.layer)) => {
+                *on_overlay.entry(layers.name(region.layer)).or_default() += 1;
             }
             (_, kind) => {
                 let what = format!(
@@ -994,7 +1003,31 @@ pub(crate) fn regions(
             message: format!("{count} {what} not read yet"),
         });
     }
+    filled_on_overlay("region(s)", on_overlay, notes);
     items
+}
+
+/// Whether a layer is one of the silkscreen layers, by its name.
+fn is_overlay(name: &str) -> bool {
+    name.ends_with("Overlay")
+}
+
+/// A note for each overlay layer with filled shapes (`overlay-region-fill`): the board model
+/// holds silkscreen lines, arcs and texts only, so a filled area there has no place yet.
+fn filled_on_overlay(
+    what: &str,
+    counts: std::collections::BTreeMap<String, usize>,
+    notes: &mut Vec<Note>,
+) {
+    for (layer, count) in counts {
+        notes.push(Note {
+            severity: Severity::Dropped,
+            message: format!(
+                "{count} {what} on {layer} left out: a filled silkscreen shape has no place in \
+                 the board model yet"
+            ),
+        });
+    }
 }
 
 /// An octagonal pad: a `size_x` x `size_y` rectangle about `at` with each corner cut off at 45
