@@ -2127,6 +2127,7 @@ fn a_blind_via_drill_cuts_only_the_faces_and_inner_layers_its_span_reaches() {
         from: p(0.0, 5.0),
         to: p(10.0, 5.0),
         width: 0.2,
+        owner: None,
     };
     b.graphics = vec![line(4), line(5)];
     b.copper.push(CopperItem::Region {
