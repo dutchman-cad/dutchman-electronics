@@ -14,13 +14,19 @@
 //!
 //! A Hershey glyph is a list of pen strokes in font units, y down, with the baseline at 9 and
 //! the top of a capital at -12. The text's height is taken as the height of a capital, and its
-//! position as the left end of its baseline, before it is mirrored and turned.
+//! position as the point its [`board_model::TextAnchor`] names (by default the left end of its
+//! baseline), before it is mirrored and turned. The anchor is resolved from what is drawn: each
+//! line's advance width for the horizontal part, KiCad's text box (constants in `board_model`) for
+//! the vertical one.
 
 use std::collections::{HashMap, HashSet};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::OnceLock;
 
-use board_model::{Point, StrokeFont, Text, TextFont};
+use board_model::{
+    HorizontalAnchor, Point, StrokeFont, Text, TextFont, VerticalAnchor, TEXT_BASELINE_GAP,
+    TEXT_BOX_HEIGHT, TEXT_CAP_GAP, TEXT_SIDE_GAP_PER_HEIGHT, TEXT_SIDE_GAP_PER_PEN,
+};
 use geo::algorithm::bool_ops::FillRule;
 use geo::orient::{Direction, Orient};
 use geo::{BooleanOps, Coord, LineString, MultiPolygon, Polygon};
@@ -60,7 +66,7 @@ fn font(which: StrokeFont) -> &'static [Glyph] {
         StrokeFont::Serif => {
             TIMES.get_or_init(|| parse(include_str!("../../fonts/hershey/timesr.jhf")))
         }
-        StrokeFont::SansSerif | StrokeFont::Default => {
+        StrokeFont::SansSerif | StrokeFont::Default | StrokeFont::KiCad => {
             SIMPLEX.get_or_init(|| parse(include_str!("../../fonts/hershey/rowmans.jhf")))
         }
     }
@@ -233,7 +239,7 @@ pub(super) fn draw(text: &Text) -> Option<Drawn> {
     let cell = (which == StrokeFont::Default).then(|| default_advance(text.height) / scale);
     // (A TrueType text drawn in strokes keeps the glyphs' own widths: nothing was measured for it.)
     let tightness = match (&text.font, which) {
-        (TextFont::TrueType { .. }, _) | (_, StrokeFont::Default) => None,
+        (TextFont::TrueType { .. }, _) | (_, StrokeFont::Default | StrokeFont::KiCad) => None,
         (_, StrokeFont::SansSerif) => Some(SANS_SERIF_TIGHTNESS),
         (_, StrokeFont::Serif) => Some(SERIF_TIGHTNESS),
     };
@@ -252,12 +258,18 @@ pub(super) fn draw(text: &Text) -> Option<Drawn> {
         missing: 0,
         cut: text.content.chars().count().saturating_sub(MAX_CHARS),
     };
-    let (mut pen_x, mut line) = (0.0f64, 0.0f64);
+    // First lay the glyphs out from the left end of each line's baseline, noting each line's
+    // advance width; then shift every line by its anchor.
+    let line_units = text.line_pitch.map_or(LINE_UNITS, |p| p * CAP_UNITS);
+    let mut placed: Vec<(&Glyph, f64, f64, usize)> = Vec::new();
+    let mut widths: Vec<f64> = Vec::new();
+    let (mut pen_x, mut line) = (0.0f64, 0usize);
     for c in text.content.chars().take(MAX_CHARS) {
         match c {
             '\n' => {
+                widths.push(pen_x);
                 pen_x = 0.0;
-                line += 1.0;
+                line += 1;
                 continue;
             }
             '\r' => continue,
@@ -277,21 +289,56 @@ pub(super) fn draw(text: &Text) -> Option<Drawn> {
             Some(cell) => (1.0, (cell - width) / 2.0),
             None => (1.0, 0.0),
         };
+        placed.push((glyph, pen_x + inset, squeeze, line));
+        pen_x += cell.unwrap_or_else(|| width * tightness.map_or(1.0, |t| t.of(c)));
+    }
+    widths.push(pen_x);
+    let rise = baseline_rise(text, widths.len(), line_units * scale);
+    for (glyph, x0, squeeze, line) in placed {
+        // The line's box reaches the side gap past its advance width on each side.
+        let gap = (TEXT_SIDE_GAP_PER_HEIGHT * text.height + TEXT_SIDE_GAP_PER_PEN * pen) / scale;
+        let shift = widths.get(line).map_or(0.0, |w| {
+            horizontal_share(text.anchor.horizontal) * (w + 2.0 * gap) - gap
+        });
         for s in &glyph.strokes {
             drawn.strokes.push(
                 s.iter()
                     .map(|&(x, y)| {
                         place(
-                            (pen_x + inset + (x - glyph.left) * squeeze) * scale,
-                            (BASELINE - y - line * LINE_UNITS) * scale,
+                            (x0 - shift + (x - glyph.left) * squeeze) * scale,
+                            rise + (BASELINE - y - line as f64 * line_units) * scale,
                         )
                     })
                     .collect(),
             );
         }
-        pen_x += cell.unwrap_or_else(|| width * tightness.map_or(1.0, |t| t.of(c)));
     }
     Some(drawn)
+}
+
+/// How much of a line's advance width the anchor puts to its left.
+fn horizontal_share(h: HorizontalAnchor) -> f64 {
+    match h {
+        HorizontalAnchor::Left => 0.0,
+        HorizontalAnchor::Center => 0.5,
+        HorizontalAnchor::Right => 1.0,
+    }
+}
+
+/// How far above the anchor the first line's baseline lies, in the text's own frame (y up), for
+/// a text of `lines` lines `pitch` mm apart: the baseline itself, or the text box of
+/// [`board_model::TextAnchor`] hung from, centered on or standing on the anchor.
+fn baseline_rise(text: &Text, lines: usize, pitch: f64) -> f64 {
+    let h = text.height;
+    let below_first = lines.saturating_sub(1) as f64 * pitch;
+    let box_height = TEXT_BOX_HEIGHT * h + below_first;
+    let first_baseline_below_top = (TEXT_CAP_GAP + 1.0) * h;
+    match text.anchor.vertical {
+        VerticalAnchor::Baseline => 0.0,
+        VerticalAnchor::Top => -first_baseline_below_top,
+        VerticalAnchor::Center => box_height / 2.0 - first_baseline_below_top,
+        VerticalAnchor::Bottom => TEXT_BASELINE_GAP * h + below_first,
+    }
 }
 
 /// The most points one glyph may flatten to; a glyph with more is not drawn.
@@ -679,10 +726,12 @@ pub(super) fn outline(
     };
     // Where each glyph goes: its pen position in font units and its line.
     let mut placed: Vec<(GlyphId, f64, f64)> = Vec::new();
+    let mut widths: Vec<f64> = Vec::new();
     let (mut pen_x, mut line) = (0.0f64, 0.0f64);
     for c in text.content.chars().take(MAX_CHARS) {
         match c {
             '\n' => {
+                widths.push(pen_x);
                 pen_x = 0.0;
                 line += 1.0;
                 continue;
@@ -697,6 +746,21 @@ pub(super) fn outline(
         placed.push((gid, pen_x, line));
         pen_x += face.glyph_hor_advance(gid).map_or(0.0, f64::from);
     }
+    widths.push(pen_x);
+    // A text anchored by its left end keeps the ink's left edge at x (above); one anchored by its
+    // middle or right end is placed by the advance width of each line, from the first glyph's
+    // pen position. The vertical anchors use the font's own box: the ascender line is its top and
+    // the descender line its bottom (a measurement of KiCad's own placement of outline fonts is
+    // not made).
+    let ascent = f64::from(face.ascender()) * scale;
+    let descent = f64::from(face.descender()) * scale;
+    let below_first = widths.len().saturating_sub(1) as f64 * line_step;
+    let rise = match text.anchor.vertical {
+        VerticalAnchor::Baseline => 0.0,
+        VerticalAnchor::Top => -ascent,
+        VerticalAnchor::Center => (text.height + below_first) / 2.0 - ascent,
+        VerticalAnchor::Bottom => -descent + below_first,
+    };
     // The composites are measured before the library outlines anything: its bounding box of a
     // glyph is made by outlining it.
     let needed: Vec<GlyphId> = placed.iter().map(|p| p.0).collect();
@@ -743,8 +807,11 @@ pub(super) fn outline(
         let mut flat = Flatten {
             tolerance: curve_tolerance(text.height),
             scale,
-            shift_x: x - ink_left,
-            shift_y: -line * line_step,
+            shift_x: match text.anchor.horizontal {
+                HorizontalAnchor::Left => x - ink_left,
+                h => x - widths.get(line as usize).copied().unwrap_or(0.0) * horizontal_share(h),
+            },
+            shift_y: rise - line * line_step,
             rings: Vec::new(),
             ring: Vec::new(),
             last: Coord { x: 0.0, y: 0.0 },
@@ -795,6 +862,8 @@ mod tests {
             height: 2.1,
             rotation_deg,
             mirrored,
+            anchor: board_model::TextAnchor::default(),
+            line_pitch: None,
             font: TextFont::Stroke {
                 width: 0.2,
                 font: board_model::StrokeFont::Default,
@@ -1438,5 +1507,118 @@ mod tests {
         assert_eq!(measure(&chain(8), 0), Some((8, 1)));
         assert!(refuses(&chain(9)));
         assert_eq!(measure(&chain(9), 0), None);
+    }
+}
+
+/// Where KiCad's own Gerber export puts the ink of the texts on the `text-justify` board, against
+/// where we draw them: the justification (and its mirroring and turning) is resolved from our
+/// glyph advances, so the anchor-relevant edge of each text must land where KiCad's does.
+#[cfg(all(test, feature = "kicad"))]
+mod kicad_gerber {
+    use super::*;
+    use board_model::InputFormat;
+
+    /// A box of pen center lines `[min_x, min_y, max_x, max_y]` and the pen width.
+    type Ink = ([f64; 4], f64);
+
+    fn dir() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../kicad-pcb/tests")
+    }
+
+    /// The texts' boxes `gerber_text_extents.py` read from KiCad's export of one silkscreen.
+    fn gerber(side: &str) -> Vec<Ink> {
+        let path = dir().join(format!("gerber/text-justify-{side}_Silkscreen.extents.txt"));
+        std::fs::read_to_string(path)
+            .unwrap()
+            .lines()
+            .map(|l| {
+                let v: Vec<f64> = l.split_whitespace().map(|n| n.parse().unwrap()).collect();
+                ([v[0], v[1], v[2], v[3]], v[4])
+            })
+            .collect()
+    }
+
+    /// The box of the center lines of everything we draw of `t`.
+    fn ours(t: &Text) -> [f64; 4] {
+        let d = draw(t).unwrap();
+        let mut b = [f64::MAX, f64::MAX, f64::MIN, f64::MIN];
+        for p in d.strokes.iter().flatten() {
+            b = [b[0].min(p.x), b[1].min(p.y), b[2].max(p.x), b[3].max(p.y)];
+        }
+        b
+    }
+
+    /// The distance from `p` to the box `b`, zero inside it.
+    fn gap(p: Point, b: &[f64; 4]) -> f64 {
+        (b[0] - p.x).max(p.x - b[2]).max(0.0).hypot((b[1] - p.y).max(p.y - b[3]).max(0.0))
+    }
+
+    /// Ink edges are compared at the pen's center line (both sides draw the same pen). Where we
+    /// differ from KiCad: its letter shapes (we draw Roman Simplex; the other letters of a text
+    /// can be wider or narrower), so the test text is "HIH", whose outer edges are the Hs'
+    /// outer strokes, and only the edges the anchor decides are compared: the left or right
+    /// edge (the middle) of a text anchored by its left or right end (middle), and the top or
+    /// bottom edge (the middle) of one anchored at the top or bottom (middle). A turned text's
+    /// box edges all follow from the corners of its first and last H, so all four are compared.
+    ///
+    /// The tolerance, 0.02 mm, is the largest residual of the constants fitted to this board
+    /// (0.015 mm, vertically at 3 mm with a 0.15 mm pen, where the pen's small share in the
+    /// text box is not modelled), plus the Gerber's own rounding (1 nm). Every turned text lands
+    /// within 0.003 mm of KiCad's; every horizontal edge within 0.001 mm.
+    const TOLERANCE: f64 = 0.02;
+
+    #[test]
+    fn every_justification_lands_where_kicads_own_gerber_has_it() {
+        let bytes = std::fs::read(dir().join("boards/text-justify.kicad_pcb")).unwrap();
+        let o = kicad_pcb::KiCad.read(&bytes).unwrap();
+        let (top, bottom) = (gerber("F"), gerber("B"));
+        assert_eq!(o.board.texts.len(), top.len() + bottom.len());
+        let mut checked = 0;
+        for t in &o.board.texts {
+            let side = if o.board.layers[t.layer].name == "B.SilkS" {
+                &bottom
+            } else {
+                &top
+            };
+            let (theirs, _) = side
+                .iter()
+                .min_by(|a, b| gap(t.at, &a.0).total_cmp(&gap(t.at, &b.0)))
+                .unwrap();
+            let mine = ours(t);
+            // (our value, KiCad's) for each edge or middle compared.
+            let [l, b, r, tp] = [0, 1, 2, 3];
+            let mid = |v: &[f64; 4], i: usize, j: usize| (v[i] + v[j]) / 2.0;
+            let mut pairs: Vec<(&str, f64, f64)> = Vec::new();
+            if t.rotation_deg == 0.0 {
+                // A mirrored text's left end is on the board's right.
+                let (start, end) = if t.mirrored { (r, l) } else { (l, r) };
+                pairs.push(match t.anchor.horizontal {
+                    HorizontalAnchor::Left => ("start", mine[start], theirs[start]),
+                    HorizontalAnchor::Center => ("middle", mid(&mine, l, r), mid(theirs, l, r)),
+                    HorizontalAnchor::Right => ("end", mine[end], theirs[end]),
+                });
+                pairs.push(match t.anchor.vertical {
+                    VerticalAnchor::Top => ("top", mine[tp], theirs[tp]),
+                    VerticalAnchor::Bottom => ("bottom", mine[b], theirs[b]),
+                    _ => ("middle", mid(&mine, b, tp), mid(theirs, b, tp)),
+                });
+            } else {
+                for (name, i) in [("left", l), ("bottom", b), ("right", r), ("top", tp)] {
+                    pairs.push((name, mine[i], theirs[i]));
+                }
+            }
+            for (name, m, k) in pairs {
+                assert!(
+                    (m - k).abs() <= TOLERANCE,
+                    "{:?} turned {} mirrored {} height {}: {name} edge {m:.3} against KiCad's {k:.3}",
+                    t.anchor,
+                    t.rotation_deg,
+                    t.mirrored,
+                    t.height
+                );
+                checked += 1;
+            }
+        }
+        assert!(checked >= 2 * (top.len() + bottom.len()), "{checked}");
     }
 }

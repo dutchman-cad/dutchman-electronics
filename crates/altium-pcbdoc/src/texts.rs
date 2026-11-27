@@ -165,6 +165,8 @@ pub(crate) fn read(
                     height,
                     rotation_deg,
                     mirrored,
+                    anchor: board_model::TextAnchor::default(),
+                    line_pitch: None,
                     font,
                     component,
                 });

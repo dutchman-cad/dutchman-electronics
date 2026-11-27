@@ -23,9 +23,15 @@ drawings on layers other than silkscreen, copper and `Edge.Cuts`, extra model re
 scales other than 1, filled silkscreen shapes (drawn as outlines), and so on. External 3D model
 files are named in an `Info` note, like Altium's external models.
 
-Texts are anchored by their middle in KiCad and at the left end of their baseline in the model.
-Without glyph widths the reader estimates the shift (0.6 of the height per letter) and says so in
-a note.
+Texts: KiCad places a text by its justification (centered unless `left`/`right`, `top`/`bottom`
+say otherwise; each line is justified on its own). The reader does not move the text: it keeps the
+anchor point and carries the justification in `Text.anchor`, in the text's own frame (so on the
+bottom side, `left` is the end the mirrored letters start from). The overlay resolves it from the
+glyphs it draws: horizontally by each line's advance width, vertically by KiCad's text box (see
+`board_model::TextAnchor`; the box, the line pitch of 1.61 heights and the side gap were measured
+on KiCad's own Gerber export of the `text-justify` board, `tests/gerber/text-justify-*`). KiCad's
+stroke font is drawn in the Roman Simplex shapes at their own advances (`StrokeFont::KiCad`), and a
+pen wider than a quarter of the text's height is cut to that, as the export shows.
 
 ## What is not exact
 
@@ -39,9 +45,14 @@ a note.
 - Numbers beyond 100 m for a position or 10 m for a size make the item holding them unreadable
   (dropped with a note). A file may hold at most 4 million nodes (about 100 bytes each once
   read).
-- Text widths (0.6 of the height per letter, used to place centered and right-aligned text) and
-  the pen width of a text that sets none (0.12 of its height, from KiCad's 0.15 mm pen on a
-  1.27 mm text) are our own estimates, not KiCad's metrics.
+- Text placement (the box constants above) is fitted to KiCad's export of "HIH" in sizes 1 to 3 mm
+  and pens 0.15 to 0.5 mm: the justified edges agree within 0.02 mm (largest 0.015 mm), turned and
+  mirrored texts included. Other letters differ in shape and width (we draw Roman Simplex, KiCad
+  its own font), so a text of other letters is only as close as those widths are. A text in an
+  embedded TrueType font is anchored by the font's own box (ascender line to descender line, the
+  advance widths of its letters; a left anchor puts the ink's left edge at the point): KiCad's
+  placement of those was not measured. The pen width of a text that sets none (0.12 of its height,
+  from KiCad's 0.15 mm pen on a 1.27 mm text) is our own estimate.
 - A slotted hole is read as a round hole as wide as the slot's narrow side; a hole set off-center
   in its pad is drawn centered (a warning).
 - A zone's fill is one ring in the file, with a zero-width bridge out to each hole. The reader cuts
@@ -66,7 +77,7 @@ a note.
   file, unpacked within a size cap and handed over as `ReadOutcome::fonts`. The font's family, style
   and bold and italic marks come from the font file's own tables. A text whose font the board does
   not embed keeps the stroke font, with a warning naming the font. The checksum KiCad writes beside
-  the data is not checked. Where a text sits still uses our width estimate.
+  the data is not checked.
 
 ## Frames
 
