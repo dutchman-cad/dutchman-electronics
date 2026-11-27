@@ -937,7 +937,7 @@ fn body_part(
     frame: &Transform,
     group: &str,
     notes: &mut Vec<Value>,
-) -> Value {
+) -> Result<Value, Lost> {
     let [rx, ry, rz] = model.rotation_deg;
     let [dx, dy, dz] = model.offset;
     let mut on_part = compose(
@@ -947,6 +947,10 @@ fn body_part(
     // A sphere's file is centered on the origin; its place is part of the body.
     if let ModelSource::Sphere { center, z, .. } = &model.source {
         on_part = compose(&on_part, &translation(center.x, center.y, *z));
+    }
+    let transform = compose(frame, &on_part);
+    if !transform.iter().flatten().all(|number| number.is_finite()) {
+        return Err(Lost::Failed("the body's placement is not finite".into()));
     }
     let mut part_notes = Vec::new();
     // A tilt about X is confirmed on top- and bottom-side parts by the tenth batch of test
@@ -961,7 +965,7 @@ fn body_part(
     let mut part = json!({
         "name": name,
         "model": id,
-        "transform": compose(frame, &on_part),
+        "transform": transform,
         "group": group,
         "notes": part_notes,
     });
@@ -980,7 +984,7 @@ fn body_part(
         map.insert("metallic".into(), json!(BODY_FINISH.metallic));
         map.insert("roughness".into(), json!(BODY_FINISH.roughness));
     }
-    part
+    Ok(part)
 }
 
 /// The placed components: model files `(id, file, STEP file)`, parts, and package notes.
@@ -1131,12 +1135,10 @@ fn components_with_limit(
             } else {
                 unique_name(&mut used, &format!("{name} body {}", k.saturating_add(1)))
             };
-            let outcome = body_model(&mut ctx, model, embedded, &mut placed);
+            let outcome = body_model(&mut ctx, model, embedded, &mut placed)
+                .and_then(|id| body_part(model, &body_name, &id, &frame, group, &mut placed.notes));
             match outcome {
-                Ok(id) => {
-                    let part = body_part(model, &body_name, &id, &frame, group, &mut placed.notes);
-                    placed.parts.push(part);
-                }
+                Ok(part) => placed.parts.push(part),
                 Err(Lost::Missing) => missing.push(body_name),
                 Err(Lost::External(file)) => external.push(format!("{body_name} ({file})")),
                 Err(Lost::Failed(why)) => failed.push(format!("{body_name}: {why}")),
@@ -1166,18 +1168,18 @@ fn components_with_limit(
         }
         bodies_placed = bodies_placed.saturating_add(1);
         let body_name = unique_name(&mut used, &format!("Free body {}", k.saturating_add(1)));
-        match body_model(&mut ctx, model, embedded, &mut placed) {
-            Ok(id) => {
-                let part = body_part(
-                    model,
-                    &body_name,
-                    &id,
-                    &free_frame,
-                    GROUP_FREE,
-                    &mut placed.notes,
-                );
-                placed.parts.push(part);
-            }
+        let outcome = body_model(&mut ctx, model, embedded, &mut placed).and_then(|id| {
+            body_part(
+                model,
+                &body_name,
+                &id,
+                &free_frame,
+                GROUP_FREE,
+                &mut placed.notes,
+            )
+        });
+        match outcome {
+            Ok(part) => placed.parts.push(part),
             Err(Lost::Missing) => missing.push(body_name),
             Err(Lost::External(file)) => external.push(format!("{body_name} ({file})")),
             Err(Lost::Failed(why)) => failed.push(format!("{body_name}: {why}")),
@@ -3398,6 +3400,27 @@ mod tests {
             [4.0, 27.0, 9.6]
         ));
         assert!(placed.notes.is_empty());
+    }
+
+    #[test]
+    fn an_overflowing_body_placement_is_failed_without_a_null_transform() {
+        let mut r1 = part("R1", f64::MAX, 0.0, 0.0, Side::Top);
+        let mut huge = ball(0.0, 0.0, 0.0, 1.0);
+        huge.offset = [f64::MAX, 0.0, 0.0];
+        r1.models = vec![huge, ball(0.0, 0.0, 0.0, 1.0)];
+        let placed = components(&[r1], &[], 1.6);
+        // We add two finite MAX offsets for the main body, which overflows.
+        // Its sibling still has a finite placement and remains in the package.
+        assert_eq!(names(&placed), ["R1 body 2"]);
+        assert!(placed.parts[0]["transform"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|row| row.as_array().unwrap())
+            .all(|number| number.as_f64().is_some_and(f64::is_finite)));
+        let notes = dropped(&placed);
+        assert_eq!(notes.len(), 1);
+        assert!(notes[0].contains("R1: the body's placement is not finite"));
     }
 
     #[test]
