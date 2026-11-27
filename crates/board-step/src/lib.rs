@@ -1452,6 +1452,7 @@ pub fn solids(list: &[Solid], name: &str, description: &str) -> Result<BoardStep
             &mut w,
             outer,
             openings,
+            Vec::new(),
             (s.from, s.to),
             name,
             &mut stats,
