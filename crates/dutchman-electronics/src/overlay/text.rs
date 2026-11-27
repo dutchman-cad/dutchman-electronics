@@ -66,24 +66,78 @@ fn font(which: StrokeFont) -> &'static [Glyph] {
     }
 }
 
-/// The mm Altium's Default stroke font advances per character at text height `h`: the same for
-/// every character (the font is monospaced), a straight line through the two heights we have
-/// measured, from our own test boards' bounding rectangles (`crates/altium-pcbdoc/tests/boards/
-/// README.txt`):
+/// The advance, in mm, Altium's Default stroke font puts between two characters at text height
+/// `h`: the same for every character (the font is monospaced). Fitted to the right ends of our
+/// own test boards' text rectangles (`crates/altium-pcbdoc/tests/boards/README.txt`), a
+/// rectangle reaching one stroke width past the ink on each side, with the first character at
+/// the reference point; each sample is the advance at which our centered Roman Simplex glyphs
+/// end where Altium's ink does:
 /// - height 2.0, stroke 0.2 (one-text "TEST" against one-rotated-text "ROT", which end in the
 ///   same letter): (17.53097 - 10) - (20.53162 - 15) = 1.99935 mm;
 /// - height 1.5, stroke 0.15 (special-strings "L: Top Overlay" against "Top Overlay", three
-///   characters more): (22.144 - 17.895) / 3 = 1.41633 mm.
+///   characters more): (22.144 - 17.895) / 3 = 1.41633 mm;
+/// - height 1.2, stroke 0.15 (stroke-fonts, Default's three lines, right ends 32.740, 32.140 and
+///   34.340 for 26, 26 and 29 characters): 1.18392, 1.16375 and 1.12747 mm. The lines differ
+///   because our glyph shapes end differently from Altium's (and the digit line holds "[]",
+///   which Altium draws as one box); the sample is their mean, 1.15838 mm.
 ///
-/// TODO: refit with the stroke-fonts board's text extents (more heights) once it is in the
-/// repository; the line is exact at these two heights only.
-const ADVANCE_PER_HEIGHT: f64 = (1.99935 - 1.41633) / (2.0 - 1.5);
-const ADVANCE_OFFSET: f64 = 1.99935 - 2.0 * ADVANCE_PER_HEIGHT;
+/// The three points are not on one line (the advance is 0.965, 0.944 and 1.000 of the height),
+/// so the advance is the straight pieces through them, and beyond the ends the nearest piece
+/// continued. It is exact at 1.5 and 2.0, and within 0.03 mm per character at 1.2.
+const DEFAULT_ADVANCES: [(f64, f64); 3] = [(1.2, 1.15838), (1.5, 1.41633), (2.0, 1.99935)];
 /// The narrowest advance, as a share of the height, so a very small text keeps its letters apart.
 const MIN_ADVANCE: f64 = 0.5;
 
 fn default_advance(height: f64) -> f64 {
-    (ADVANCE_PER_HEIGHT * height + ADVANCE_OFFSET).max(MIN_ADVANCE * height)
+    let [(h0, a0), (h1, a1), (h2, a2)] = DEFAULT_ADVANCES;
+    let (ha, aa, hb, ab) = if height <= h1 {
+        (h0, a0, h1, a1)
+    } else {
+        (h1, a1, h2, a2)
+    };
+    (aa + (height - ha) * (ab - aa) / (hb - ha)).max(MIN_ADVANCE * height)
+}
+
+/// How far Altium's proportional stroke fonts (Sans Serif and Serif) advance, as a share of the
+/// Hershey glyph's own width, for the three kinds of character we measured: capitals, lower
+/// case, and the rest (digits, space and punctuation, which the board holds in one line, so
+/// they share one factor). The Hershey shapes are not scaled, only the spacing is tightened.
+/// Fitted at height 1.2 to the right ends of the stroke-fonts text rectangles (see
+/// [`DEFAULT_ADVANCES`] for how the rectangle relates to the ink): per line, the factor `k` for
+/// which our ink ends at the rectangle's right end less one stroke width, i.e.
+/// `k = (target - last glyph's ink width) / (sum of the other glyphs' widths)`:
+/// - Sans Serif: A-Z 29.218, a-z 24.711, digits and punctuation 28.03: 0.9263, 0.8982, 0.8644;
+/// - Serif: A-Z 31.075, a-z 28.133, digits and punctuation 26.79: 0.9353, 0.9237, 0.8370.
+///
+/// The punctuation set is a single measurement, so the factor is a mean over those characters
+/// (Altium sets punctuation much tighter than Hershey does); a line with other mixes is only
+/// as close as its mix is to these.
+#[derive(Clone, Copy)]
+struct Tightness {
+    upper: f64,
+    lower: f64,
+    other: f64,
+}
+
+const SANS_SERIF_TIGHTNESS: Tightness = Tightness {
+    upper: 0.9263,
+    lower: 0.8982,
+    other: 0.8644,
+};
+const SERIF_TIGHTNESS: Tightness = Tightness {
+    upper: 0.9353,
+    lower: 0.9237,
+    other: 0.8370,
+};
+
+impl Tightness {
+    fn of(self, c: char) -> f64 {
+        match c {
+            'A'..='Z' => self.upper,
+            'a'..='z' => self.lower,
+            _ => self.other,
+        }
+    }
 }
 
 /// Parses the "James Hurt" format: per glyph a 5-character number, a 3-character count of
@@ -174,8 +228,15 @@ pub(super) fn draw(text: &Text) -> Option<Drawn> {
     let question = glyphs.get(QUESTION)?;
     let scale = text.height / CAP_UNITS;
     // Default: every character takes a cell of one advance; its glyph is centered in it, and
-    // squeezed sideways when wider than the cell. The other fonts run on the glyphs' own widths.
+    // squeezed sideways when wider than the cell. The others run on the glyphs' widths times a fitted
+    // factor per kind of character ([`Tightness`]), each glyph starting at its own pen position.
     let cell = (which == StrokeFont::Default).then(|| default_advance(text.height) / scale);
+    // (A TrueType text drawn in strokes keeps the glyphs' own widths: nothing was measured for it.)
+    let tightness = match (&text.font, which) {
+        (TextFont::TrueType { .. }, _) | (_, StrokeFont::Default) => None,
+        (_, StrokeFont::SansSerif) => Some(SANS_SERIF_TIGHTNESS),
+        (_, StrokeFont::Serif) => Some(SERIF_TIGHTNESS),
+    };
     let (sin, cos) = text.rotation_deg.to_radians().sin_cos();
     let mirror = if text.mirrored { -1.0 } else { 1.0 };
     let place = |x: f64, y: f64| {
@@ -228,7 +289,7 @@ pub(super) fn draw(text: &Text) -> Option<Drawn> {
                     .collect(),
             );
         }
-        pen_x += cell.unwrap_or(width);
+        pen_x += cell.unwrap_or_else(|| width * tightness.map_or(1.0, |t| t.of(c)));
     }
     Some(drawn)
 }
@@ -848,16 +909,19 @@ mod tests {
     }
 
     #[test]
-    fn sans_serif_keeps_the_glyphs_own_widths() {
+    fn sans_serif_advances_by_the_glyphs_width_times_its_fitted_factor() {
         // 'H' is 22 units wide in Roman Simplex (-11 to 11); at 0.1 mm per unit "HH" starts its
-        // second H 2.2 mm after the first.
+        // second H 2.2 mm times the capitals' factor after the first.
         let one = bounds(&draw(&text_in("H", StrokeFont::SansSerif, 2.1)).unwrap());
         let two = bounds(&draw(&text_in("HH", StrokeFont::SansSerif, 2.1)).unwrap());
-        assert!(close(two.2 - one.2, 2.2), "{one:?} {two:?}");
+        assert!(
+            near(two.2 - one.2, 2.2 * SANS_SERIF_TIGHTNESS.upper, 1e-9),
+            "{one:?} {two:?}"
+        );
     }
 
     #[test]
-    fn default_advance_matches_the_two_measured_heights() {
+    fn default_advance_matches_the_measured_heights() {
         // README.txt of the Altium test boards: "TEST" (one-text) ends at x 17.53097 from a
         // position of 10, "ROT" (one-rotated-text, turned up) at y 20.53162 from 15; both end in
         // the same letter, so the extra character is one advance: 1.99935 at height 2.0.
@@ -866,6 +930,61 @@ mod tests {
         // special-strings: "L: Top Overlay" ends at 22.144, "Top Overlay" at 17.895, both from
         // x = 2: three more characters, at height 1.5.
         assert!(near(default_advance(1.5), (22.144 - 17.895) / 3.0, 1e-5));
+        // Between and beyond the measured heights it keeps rising.
+        assert!(default_advance(1.8) > default_advance(1.5));
+        assert!(default_advance(5.0) > default_advance(2.0));
+        assert!(default_advance(0.8) < default_advance(1.2));
+    }
+
+    /// The text of the stroke-fonts board's nine lines (README.txt) at height 1.2, stroke 0.15,
+    /// from x 2.0, with the right end of each line's rectangle: Altium's rectangle reaches one
+    /// stroke width past the ink (the pen's centerline, which is what we draw) on each side.
+    const STROKE_FONT_LINES: [(StrokeFont, &str, f64); 9] = [
+        (StrokeFont::Default, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", 32.740),
+        (StrokeFont::Default, "abcdefghijklmnopqrstuvwxyz", 32.140),
+        (StrokeFont::Default, "0123456789 .,:;-+=/()[]#%&*?!", 34.340),
+        (StrokeFont::SansSerif, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", 29.218),
+        (StrokeFont::SansSerif, "abcdefghijklmnopqrstuvwxyz", 24.711),
+        (
+            StrokeFont::SansSerif,
+            "0123456789 .,:;-+=/()[]#%&*?!",
+            28.030,
+        ),
+        (StrokeFont::Serif, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", 31.075),
+        (StrokeFont::Serif, "abcdefghijklmnopqrstuvwxyz", 28.133),
+        (StrokeFont::Serif, "0123456789 .,:;-+=/()[]#%&*?!", 26.790),
+    ];
+
+    fn stroke_fonts_line(font: StrokeFont, content: &str) -> Drawn {
+        let mut t = text_in(content, font, 1.2);
+        t.at = Point { x: 2.0, y: 10.0 };
+        t.font = TextFont::Stroke { width: 0.15, font };
+        draw(&t).unwrap()
+    }
+
+    #[test]
+    fn sans_serif_and_serif_lines_end_where_the_stroke_fonts_board_says() {
+        // The factors are fitted to these very lines, so only the rounding of the factors (four
+        // digits) and of the README's numbers (0.001) is left: 0.01 mm.
+        for (font, content, right) in &STROKE_FONT_LINES[3..] {
+            let ink = bounds(&stroke_fonts_line(*font, content)).2;
+            assert!(near(ink + 0.15, *right, 0.01), "{content} {ink} {right}");
+        }
+    }
+
+    #[test]
+    fn default_lines_end_within_three_percent_of_the_stroke_fonts_board() {
+        // One advance fits all three lines, and our letter shapes end differently from
+        // Altium's (the digit line also holds "[]", one box in Altium), so the three lines come
+        // out up to 2.3 % apart in width, 0.7 mm of 30.
+        for (font, content, right) in &STROKE_FONT_LINES[..3] {
+            let ink = bounds(&stroke_fonts_line(*font, content)).2;
+            let (ours, theirs) = (ink + 0.15 - 1.85, right - 1.85);
+            assert!(
+                (ours / theirs - 1.0).abs() < 0.03,
+                "{content} {ours} {theirs}"
+            );
+        }
     }
 
     #[test]
