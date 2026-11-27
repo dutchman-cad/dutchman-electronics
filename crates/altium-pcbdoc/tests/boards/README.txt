@@ -1372,7 +1372,8 @@ mech-layer-kinds.PcbDoc  (from one-resistor)
 Saving embedded Arial in keepouts (no text uses it); it was removed as before (see "Paths inside
 the files").
 
-Feature gaps, second batch (teardrops, plane-polygon-connect, text-kinds, pad-shapes-custom)
+Feature gaps, second batch (teardrops, plane-polygon-connect, text-kinds, pad-shapes-custom,
+paste)
 ---------------------------------------------------------------------------------------------
 Made on 2026-11-27, one feature per board, by my own scripts and by hand where noted; every
 object was read back and logged, and each board was saved and closed. Saving embedded Arial in
@@ -1477,6 +1478,27 @@ pad-shapes-custom.PcbDoc  (from empty-outline)
     (186 bytes), appears. Our reader at origin/main c825c14 draws all three on the top copper
     without a note: pad 1 rounded, pad 2 a six-cornered outline from (19, 14.5) to (21, 15.5),
     pad 3 the L from (30, 14) to (33, 17).
+
+paste.PcbDoc  (from one-resistor)
+    By my own script, the board's paste mask expansion rule (Altium's PasteMaskExpansion, scope
+    All, 0 before) set to -0.050; /Rules6/Data then reads EXPANSION=-1.9685mil. Three free SMD pads
+    on Top Layer, rectangle 2.000 x 1.000, no net, at y 22 and x 15 (A), 25 (B) and 35 (C), and a
+    region on Top Paste, KIND 0: (20, 5), (30, 5), (30, 9), (20, 9). Then by hand, in the pad's
+    Properties panel (Pad Stack > Paste):
+        A   nothing: paste by the rule (-0.05mm, Altium shows -14.5%)
+        B   Manual Expansion, 0.1mm (Altium shows 32%)
+        C   Manual Expansion (-0.05mm kept), Enabled unticked: no paste. Altium greys out
+            Enabled while the paste follows the rule.
+    R1's two pads keep the rule (-0.05). What the file stores in each pad's geometry block
+    (block 4): bytes 86..90 the paste expansion (-0.050 on A and R1's pads, 0.100 on B, and
+    -999990000 units, -99999 mil, on C), byte 101 the paste mode (1 by the rule, 2 Manual: B
+    and C), byte 1 12 (0x0C) except 13 (0x0D) on C, and byte 185 3 except 1 on C. The region
+    is an ordinary record in /Regions6/Data on layer byte 35 (Top Paste).
+
+A variants project (one-resistor-based, with a part Not Fitted) was tried and not made: in a
+project with only a board and no schematic, Altium 26.12.2's Project > Variants answered "Project
+must be compiled first" even after Project > Validate PCB Project. The project was closed
+without saving.
 
 Paths inside the files
 ----------------------
