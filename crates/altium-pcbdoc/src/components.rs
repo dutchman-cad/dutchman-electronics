@@ -29,7 +29,7 @@
 
 use std::collections::BTreeMap;
 
-use board_model::{Note, Placement, Point, Severity, Side};
+use board_model::{ModelRef, Note, Placement, Point, Severity, Side};
 
 use crate::board::Properties;
 use crate::copper::{read_u16, read_u32};
@@ -62,6 +62,8 @@ pub(crate) struct Components {
     pub comment_on: Vec<bool>,
     /// For each component (same index), its place in `placements`, if it was placed.
     pub placement_of: Vec<Option<usize>>,
+    /// The 3D bodies that belong to no component, in board coordinates (see `models.rs`).
+    pub free_models: Vec<ModelRef>,
 }
 
 impl Components {
@@ -130,6 +132,7 @@ pub(crate) fn read(
         name_on: records.iter().map(|r| flag(r, "NAMEON")).collect(),
         comment_on: records.iter().map(|r| flag(r, "COMMENTON")).collect(),
         placement_of,
+        free_models: Vec::new(),
     })
 }
 
