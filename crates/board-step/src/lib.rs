@@ -828,6 +828,9 @@ fn text(s: &str) -> String {
 #[derive(Default)]
 struct Writer {
     lines: Vec<String>,
+    /// The sketch axes are turned into the model's by a cyclic permutation (a proper
+    /// rotation): 0 none, 1 gives (z, x, y) from (x, y, z), 2 gives (y, z, x).
+    turn: u8,
 }
 
 impl Writer {
@@ -836,7 +839,17 @@ impl Writer {
         self.lines.len()
     }
 
+    /// A vector of the sketch frame, in the model's.
+    fn turned(&self, [a, b, c]: [f64; 3]) -> [f64; 3] {
+        match self.turn {
+            0 => [a, b, c],
+            1 => [c, a, b],
+            _ => [b, c, a],
+        }
+    }
+
     fn point(&mut self, x: f64, y: f64, z: f64) -> usize {
+        let [x, y, z] = self.turned([x, y, z]);
         self.add(format!(
             "CARTESIAN_POINT('',({},{},{}))",
             real(x),
@@ -846,6 +859,7 @@ impl Writer {
     }
 
     fn direction(&mut self, x: f64, y: f64, z: f64) -> usize {
+        let [x, y, z] = self.turned([x, y, z]);
         self.add(format!(
             "DIRECTION('',({},{},{}))",
             real(x),
@@ -1340,6 +1354,117 @@ pub fn tubes(list: &[Tube], z0: f64, z1: f64, name: &str) -> Result<BoardStep, S
         notes: Vec::new(),
         stats,
         thickness: z1 - z0,
+        holes: Vec::new(),
+    })
+}
+
+/// The axis a [`Solid`] is extruded along. Its outline is sketched in the other two, in the
+/// order that keeps a right-handed frame: for `Z` (x, y), for `X` (y, z), for `Y` (z, x).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Axis {
+    X,
+    Y,
+    Z,
+}
+
+/// One closed solid of a [`solids`] file: `outline` with `openings` cut through it, extruded
+/// along `axis` from `from` to `to`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Solid {
+    pub outline: Contour,
+    /// Closed contours inside `outline`, cut through the whole solid (either winding).
+    pub openings: Vec<Contour>,
+    pub axis: Axis,
+    pub from: f64,
+    pub to: f64,
+}
+
+/// The most solids [`solids`] writes into one file.
+pub const MAX_SOLIDS: usize = 10_000;
+
+/// Checks one sketch contour and gives its edges, counter-clockwise when `ccw` and clockwise
+/// otherwise, and its points.
+fn sketch(contour: &Contour, ccw: bool, what: &str) -> Result<(Vec<Edge2>, Vec<Point>), StepError> {
+    if contour.segments.is_empty() {
+        return Err(StepError::Outline(format!("the {what} has no outline")));
+    }
+    let mut edges = contour_edges(contour).map_err(StepError::Outline)?;
+    let points = polygon(&edges);
+    if points.len() > MAX_PRISM_POINTS {
+        return Err(StepError::TooLarge(format!(
+            "an extruded outline of more than {MAX_PRISM_POINTS} points"
+        )));
+    }
+    if !simple(&points) {
+        return Err(StepError::Outline(format!("the {what} crosses itself")));
+    }
+    let area = signed_area2(&points);
+    if area.abs() < TOLERANCE {
+        return Err(StepError::Outline(format!("the {what} encloses no area")));
+    }
+    if (area > 0.0) != ccw {
+        reverse(&mut edges);
+    }
+    Ok((edges, points))
+}
+
+/// Writes several closed solids as one STEP file, each a `MANIFOLD_SOLID_BREP` named `name`:
+/// each a sketched outline (with openings, which must lie inside it) extruded along an axis,
+/// so a chip, a gull-wing lead or a pin header strip is exact. Used for the standard bodies of
+/// recognized packages. An error when none is given, more than [`MAX_SOLIDS`], or one cannot
+/// make a solid.
+pub fn solids(list: &[Solid], name: &str, description: &str) -> Result<BoardStep, StepError> {
+    if list.is_empty() {
+        return Err(StepError::Size("no solids were given".into()));
+    }
+    if list.len() > MAX_SOLIDS {
+        return Err(StepError::TooLarge(format!(
+            "more than {MAX_SOLIDS} solids"
+        )));
+    }
+    let mut stats = Stats::default();
+    let mut w = Writer::default();
+    let mut breps = Vec::new();
+    let mut thickness = 0.0f64;
+    for s in list {
+        if !(s.from.is_finite() && s.to.is_finite() && s.to - s.from > TOLERANCE) {
+            return Err(StepError::Outline(format!(
+                "a solid needs its end above its start (from {} to {})",
+                s.from, s.to
+            )));
+        }
+        let (outer, outer_points) = sketch(&s.outline, true, "solid")?;
+        let mut openings = Vec::new();
+        for o in &s.openings {
+            let (edges, points) = sketch(o, false, "opening")?;
+            if !points.iter().all(|p| inside(&outer_points, *p)) {
+                return Err(StepError::Outline("an opening leaves its solid".into()));
+            }
+            openings.push(edges);
+        }
+        stats.openings = stats.openings.saturating_add(openings.len());
+        w.turn = match s.axis {
+            Axis::Z => 0,
+            Axis::X => 1,
+            Axis::Y => 2,
+        };
+        breps.push(body(
+            &mut w,
+            outer,
+            openings,
+            Vec::new(),
+            (s.from, s.to),
+            name,
+            &mut stats,
+        ));
+        thickness = thickness.max(s.to - s.from);
+    }
+    w.turn = 0;
+    Ok(BoardStep {
+        text: finish(w, &breps, name, description),
+        notes: Vec::new(),
+        stats,
+        thickness,
         holes: Vec::new(),
     })
 }

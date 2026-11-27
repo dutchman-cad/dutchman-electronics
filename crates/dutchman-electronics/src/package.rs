@@ -20,11 +20,14 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use board_model::{
-    Board, CopperItem, EmbeddedModel, ModelSource, Note, Placement, Severity, Side, MAX_INPUT_BYTES,
+    Board, CopperItem, EmbeddedModel, ModelRef, ModelSource, Note, Placement, Severity, Side,
+    MAX_INPUT_BYTES,
 };
 use serde_json::{json, Value};
 
 use crate::colors::{hex, pad_look, BOARD_COLOR, BOARD_FINISH, BODY_FINISH};
+pub use crate::standard::Bodies;
+use crate::standard::{Recognizer, Standard};
 
 /// Schema of the package manifest.
 pub const PARTS_SCHEMA: &str = "dutchman.parts/1";
@@ -292,6 +295,25 @@ pub fn build(
     model_folders: &[PathBuf],
     copper: crate::overlay::Copper,
 ) -> Result<Package, String> {
+    build_with_bodies(
+        path,
+        bytes,
+        parameters,
+        model_folders,
+        copper,
+        Bodies::default(),
+    )
+}
+
+/// [`build`], with the choice of which bodies the parts get (`--bodies`, see [`Bodies`]).
+pub fn build_with_bodies(
+    path: &Path,
+    bytes: &[u8],
+    parameters: &[(String, String)],
+    model_folders: &[PathBuf],
+    copper: crate::overlay::Copper,
+    bodies: Bodies,
+) -> Result<Package, String> {
     let extension = path.extension().and_then(|e| e.to_str());
     let head = bytes.get(..bytes.len().min(4096)).unwrap_or_default();
     let format = crate::detect(head, extension)
@@ -350,7 +372,13 @@ pub fn build(
         "notes": board_notes,
     })];
     let mut files = vec![(BOARD_FILE.to_string(), step.text.into_bytes())];
-    let placed = components(&board.components, &outcome.models, step.thickness);
+    let recognizer = Recognizer::new(&board);
+    let placed = components_with(
+        &board.components,
+        &outcome.models,
+        step.thickness,
+        Some((&recognizer, bodies)),
+    );
     models.extend(
         placed
             .models
@@ -601,8 +629,27 @@ fn named(list: &[String]) -> String {
 }
 
 /// Each component with a model the package can build becomes a part named by its designator.
+#[cfg(test)]
 fn components(list: &[Placement], embedded: &[EmbeddedModel], thickness: f64) -> Placed {
+    components_with(list, embedded, thickness, None)
+}
+
+/// [`components`], and with `standard` (what recognizes a part's package, and which bodies are
+/// wanted) a part with no model at all gets the standard body of its package; with
+/// [`Bodies::Standard`] so does one whose model is a plain extruded body.
+fn components_with(
+    list: &[Placement],
+    embedded: &[EmbeddedModel],
+    thickness: f64,
+    standard: Option<(&Recognizer<'_>, Bodies)>,
+) -> Placed {
     let mut placed = Placed::default();
+    // Equal standard bodies share their two model files.
+    let mut standard_models: std::collections::BTreeMap<String, String> = Default::default();
+    // Each package, with the parts that got it.
+    let mut recognized: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+    // The same, for parts whose plain extruded body the standard one replaced.
+    let mut replaced: std::collections::BTreeMap<String, Vec<String>> = Default::default();
     let mut used =
         std::collections::BTreeSet::from([BOARD_PART.to_string(), PLATING_PART.to_string()]);
     // Equal extruded bodies share one model file; so do parts naming the same embedded model.
@@ -622,6 +669,57 @@ fn components(list: &[Placement], embedded: &[EmbeddedModel], thickness: f64) ->
             n = n.saturating_add(1);
         }
         used.insert(name.clone());
+        let wants_standard = match (&p.model, standard) {
+            (_, None) => false,
+            (None, _) => true,
+            (Some(m), Some((_, bodies))) => match m.source {
+                ModelSource::External { .. } => true,
+                ModelSource::Extruded { .. } => bodies == Bodies::Standard,
+                ModelSource::Embedded { .. } => false,
+            },
+        };
+        let extruded_body = matches!(
+            &p.model,
+            Some(ModelRef {
+                source: ModelSource::Extruded { .. },
+                ..
+            })
+        );
+        if let (true, Some((recognizer, _))) = (wants_standard, standard) {
+            if let Some(found) = recognizer.recognize(p) {
+                match standard_parts(
+                    &name,
+                    (p, thickness),
+                    (&found, extruded_body),
+                    &mut standard_models,
+                    &mut placed,
+                    &mut used,
+                ) {
+                    Ok(()) => {
+                        let list = if extruded_body {
+                            &mut replaced
+                        } else {
+                            &mut recognized
+                        };
+                        list.entry(found.package.clone()).or_default().push(name);
+                        continue;
+                    }
+                    // The file's own extruded body is better than none.
+                    Err(why) if extruded_body => placed.notes.push(json!({
+                        "severity": "Degraded",
+                        "message": format!(
+                            "{name}: the standard {} body could not be written ({why}); the \
+                             board's extruded body is used",
+                            found.package
+                        ),
+                    })),
+                    Err(why) => {
+                        failed.push(format!("{name}: {why}"));
+                        continue;
+                    }
+                }
+            }
+        }
         let Some(model) = &p.model else {
             no_model.push(name);
             continue;
@@ -724,6 +822,28 @@ fn components(list: &[Placement], embedded: &[EmbeddedModel], thickness: f64) ->
         }
         placed.parts.push(part);
     }
+    for (package, parts) in &recognized {
+        placed.notes.push(json!({
+            "severity": "Info",
+            "message": format!(
+                "{} component(s) have no usable 3D model; each got a standard {package} body \
+                 (recognized from its pads): {}",
+                parts.len(),
+                named(parts)
+            ),
+        }));
+    }
+    for (package, parts) in &replaced {
+        placed.notes.push(json!({
+            "severity": "Info",
+            "message": format!(
+                "{} component(s) had a plain extruded body, replaced by a standard {package} \
+                 body (--bodies standard): {}",
+                parts.len(),
+                named(parts)
+            ),
+        }));
+    }
     for (list, what) in [
         (
             no_model,
@@ -751,6 +871,104 @@ fn components(list: &[Placement], embedded: &[EmbeddedModel], thickness: f64) ->
         }
     }
     placed
+}
+
+/// Adds the two models of a standard body (once for equal ones) and its two parts, the body
+/// named `name` and the leads "<name> leads" (made unique), in the component's group.
+fn standard_parts(
+    name: &str,
+    (p, thickness): (&Placement, f64),
+    (found, replaces_extruded): (&Standard, bool),
+    models: &mut std::collections::BTreeMap<String, String>,
+    placed: &mut Placed,
+    used: &mut std::collections::BTreeSet<String>,
+) -> Result<(), String> {
+    // Write both models before adding either, so a failure leaves nothing behind.
+    let mut ids: Vec<String> = Vec::new();
+    let mut fresh: Vec<(String, String, Vec<u8>)> = Vec::new();
+    for (solids, what) in [(&found.body, "body"), (&found.leads, "leads")] {
+        let key = format!("{solids:?}");
+        let cached = models.get(&key).cloned().or_else(|| {
+            fresh
+                .iter()
+                .find(|(k, ..)| *k == key)
+                .map(|(_, id, _)| id.clone())
+        });
+        let id = match cached {
+            Some(id) => id,
+            None => {
+                let id = format!(
+                    "model-{}",
+                    placed
+                        .models
+                        .len()
+                        .saturating_add(fresh.len())
+                        .saturating_add(1)
+                );
+                let step = board_step::solids(solids, &id, &format!("Standard {what}"))
+                    .map_err(|e| e.to_string())?;
+                fresh.push((key, id.clone(), step.text.into_bytes()));
+                id
+            }
+        };
+        ids.push(id);
+    }
+    for (key, id, bytes) in fresh {
+        placed
+            .models
+            .push((id.clone(), format!("{id}.step"), bytes));
+        models.insert(key, id);
+    }
+    let (Some(body_id), Some(leads_id)) = (ids.first(), ids.get(1)) else {
+        return Err("no model ids".into());
+    };
+    let mut leads_name = format!("{name} leads");
+    let mut n = 2usize;
+    while used.contains(&leads_name) {
+        leads_name = format!("{name} leads ({n})");
+        n = n.saturating_add(1);
+    }
+    used.insert(leads_name.clone());
+    let group = match p.side {
+        Side::Top => GROUP_TOP,
+        Side::Bottom => GROUP_BOTTOM,
+    };
+    let transform = part_frame(p, thickness);
+    let origin = if replaces_extruded {
+        "replacing the board's plain extruded body (--bodies standard)"
+    } else {
+        "no usable 3D model in the file"
+    };
+    for (part, model, look, what) in [
+        (name, body_id, found.body_look, "body"),
+        (leads_name.as_str(), leads_id, found.leads_look, "leads"),
+    ] {
+        let mut notes = vec![json!({
+            "severity": "Info",
+            "message": format!(
+                "standard {what} of a {}, recognized from the pads ({origin})",
+                found.package
+            ),
+        })];
+        for extra in &found.notes {
+            notes.push(json!({
+                "severity": "Info",
+                "message": format!("{}: {extra}", found.package),
+            }));
+        }
+        placed.parts.push(json!({
+            "name": part,
+            "model": model,
+            "transform": transform,
+            "group": group,
+            "color": look.color,
+            "opacity": 1.0,
+            "metallic": BODY_FINISH.metallic,
+            "roughness": look.roughness,
+            "notes": notes,
+        }));
+    }
+    Ok(())
 }
 
 /// Writes the package's files into `dir` (made if missing). Each file is written beside its
@@ -2432,5 +2650,190 @@ mod tests {
             crate::overlay::Copper::Outer
         )
         .is_err());
+    }
+
+    /// A rectangular SMD pad owned by a part, at a board position.
+    fn smd_pad(owner: &str, x: f64, y: f64) -> CopperItem {
+        CopperItem::Pad {
+            layer: 0,
+            at: Point { x, y },
+            shape: board_model::PadShape::Rectangle,
+            size_x: 0.9,
+            size_y: 1.0,
+            rotation_deg: 0.0,
+            drill: None,
+            plated: false,
+            owner: Some(owner.into()),
+        }
+    }
+
+    fn without_model(mut p: Placement) -> Placement {
+        p.model = None;
+        p
+    }
+
+    fn names(placed: &Placed) -> Vec<&str> {
+        placed
+            .parts
+            .iter()
+            .map(|p| p["name"].as_str().unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn a_part_with_no_model_gets_the_standard_body_of_its_package() {
+        // R1: no model, 0603 pads. R2: a plain extruded body, also 0603 pads. C1: no model, on
+        // the bottom, turned 90 degrees (its pads at (10, 5 -/+ 0.8) seen from the top).
+        // U1: no model and pads that are no package.
+        let board = Board {
+            components: vec![
+                without_model(part("R1", 0.0, 0.0, 0.0, Side::Top)),
+                part("R2", 5.0, 0.0, 0.0, Side::Top),
+                without_model(part("C1", 10.0, 5.0, 90.0, Side::Bottom)),
+                without_model(part("U1", 20.0, 0.0, 0.0, Side::Top)),
+            ],
+            copper: vec![
+                smd_pad("R1", -0.8, 0.0),
+                smd_pad("R1", 0.8, 0.0),
+                smd_pad("R2", 4.2, 0.0),
+                smd_pad("R2", 5.8, 0.0),
+                smd_pad("C1", 10.0, 4.2),
+                smd_pad("C1", 10.0, 5.8),
+                smd_pad("U1", 20.0, 0.0),
+            ],
+            ..Board::default()
+        };
+        let recognizer = Recognizer::new(&board);
+        let all =
+            |bodies| components_with(&board.components, &[], 1.6, Some((&recognizer, bodies)));
+
+        // `file`: R1 and C1 get a body; R2 keeps its extruded one; U1 is dropped as before.
+        let placed = all(Bodies::File);
+        assert_eq!(names(&placed), ["R1", "R1 leads", "R2", "C1", "C1 leads"]);
+        let dropped: Vec<&Value> = placed
+            .notes
+            .iter()
+            .filter(|n| n["severity"] == "Dropped")
+            .collect();
+        assert_eq!(dropped.len(), 1);
+        assert!(dropped[0]["message"].as_str().unwrap().contains("U1"));
+        let info: Vec<&str> = placed
+            .notes
+            .iter()
+            .filter(|n| n["severity"] == "Info")
+            .map(|n| n["message"].as_str().unwrap())
+            .collect();
+        assert_eq!(info.len(), 2, "{info:?}");
+        assert!(info
+            .iter()
+            .any(|m| m.contains("0603 chip resistor") && m.contains("R1")));
+        assert!(info
+            .iter()
+            .any(|m| m.contains("0603 chip capacitor") && m.contains("C1")));
+
+        // The body is dark for R1 and tan for the capacitor; the leads are tin on both parts.
+        let by_name = |n: &str| placed.parts.iter().find(|p| p["name"] == n).unwrap();
+        assert_eq!(by_name("R1")["color"], "#1a1a1a");
+        assert_eq!(by_name("C1")["color"], "#b08850");
+        assert_eq!(by_name("R1 leads")["color"], "#c8c8cc");
+        assert_eq!(by_name("R1")["group"], GROUP_TOP);
+        assert_eq!(by_name("C1 leads")["group"], GROUP_BOTTOM);
+        assert_eq!(by_name("R1")["transform"], by_name("R1 leads")["transform"]);
+        assert_eq!(by_name("R1")["notes"][0]["severity"], "Info");
+        // The bottom part's body sits where its pads are, on the board's bottom face.
+        let spot = apply(&by_name("C1")["transform"], [0.0, 0.0, 0.0]);
+        assert!(close(spot, [10.0, 5.0, 0.0]), "{spot:?}");
+
+        // `standard` also replaces R2's extruded body, with the models R1's body uses.
+        let placed = all(Bodies::Standard);
+        assert_eq!(
+            names(&placed),
+            ["R1", "R1 leads", "R2", "R2 leads", "C1", "C1 leads"]
+        );
+        let model =
+            |n: &str| placed.parts.iter().find(|p| p["name"] == n).unwrap()["model"].clone();
+        assert_eq!(model("R1"), model("R2"));
+        assert_eq!(model("R1 leads"), model("R2 leads"));
+        // R2's plain extruded body was replaced: said apart from the parts with no model.
+        let said: Vec<&str> = placed
+            .notes
+            .iter()
+            .filter(|n| n["severity"] == "Info")
+            .map(|n| n["message"].as_str().unwrap())
+            .collect();
+        assert!(
+            said.iter().any(|m| m.contains(
+                "1 component(s) had a plain extruded body, replaced by a standard 0603 chip \
+                 resistor body (--bodies standard): R2"
+            )),
+            "{said:?}"
+        );
+        let r2_note = placed.parts.iter().find(|p| p["name"] == "R2").unwrap()["notes"][0]
+            ["message"]
+            .as_str()
+            .unwrap();
+        assert!(
+            r2_note.contains("replacing the board's plain extruded body"),
+            "{r2_note}"
+        );
+        let r1_note = placed.parts.iter().find(|p| p["name"] == "R1").unwrap()["notes"][0]
+            ["message"]
+            .as_str()
+            .unwrap();
+        assert!(r1_note.contains("no usable 3D model"), "{r1_note}");
+        assert_ne!(model("R1"), model("C1"), "a capacitor is thicker");
+        assert_ne!(model("R1 leads"), model("C1 leads"));
+        assert_eq!(
+            placed.models.len(),
+            4,
+            "a body and its leads for each of two heights"
+        );
+        for (_, file, bytes) in &placed.models {
+            assert!(file.ends_with(".step"));
+            assert!(bytes.starts_with(b"ISO-10303-21"));
+        }
+    }
+
+    #[test]
+    fn a_standard_body_never_replaces_a_step_model_or_takes_a_shared_designator() {
+        // A part with an embedded model keeps it in either mode; two parts named R1 cannot be
+        // told apart by their pads, so neither gets a body.
+        let mut embedded = part("R1", 0.0, 0.0, 0.0, Side::Top);
+        embedded.model = Some(ModelRef {
+            name: "m".into(),
+            source: ModelSource::Embedded { id: "m".into() },
+            offset: [0.0; 3],
+            rotation_deg: [0.0; 3],
+            color: None,
+        });
+        let board = Board {
+            components: vec![
+                embedded,
+                without_model(part("R3", 5.0, 0.0, 0.0, Side::Top)),
+                without_model(part("R3", 9.0, 0.0, 0.0, Side::Top)),
+            ],
+            copper: vec![
+                smd_pad("R1", -0.8, 0.0),
+                smd_pad("R1", 0.8, 0.0),
+                smd_pad("R3", 4.2, 0.0),
+                smd_pad("R3", 5.8, 0.0),
+            ],
+            ..Board::default()
+        };
+        let recognizer = Recognizer::new(&board);
+        let step = EmbeddedModel {
+            id: "m".into(),
+            name: "m.step".into(),
+            step: b"ISO-10303-21;\n".to_vec(),
+        };
+        let placed = components_with(
+            &board.components,
+            &[step],
+            1.6,
+            Some((&recognizer, Bodies::Standard)),
+        );
+        assert_eq!(names(&placed), ["R1"]);
+        assert_eq!(placed.models.len(), 1);
+        assert!(placed.notes.iter().any(|n| n["severity"] == "Dropped"));
     }
 }

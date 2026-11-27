@@ -11,6 +11,7 @@ pub mod linked;
 pub mod module;
 pub mod overlay;
 pub mod package;
+pub mod standard;
 use board_model::{Detection, InputFormat};
 
 #[cfg(feature = "altium")]

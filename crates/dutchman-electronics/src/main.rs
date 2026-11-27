@@ -5,7 +5,9 @@
 //! to choose the board of an Altium project (`.PrjPcb`) that holds several, and
 //! `--project FILE` to use a project's parameters for a board passed on its own, and
 //! `--models <dir>` (repeatable) for folders that hold linked model files, and `--copper all` to
-//! draw inner copper layers too (the default, `--copper outer`, draws the top and bottom only).
+//! draw inner copper layers too (the default, `--copper outer`, draws the top and bottom only),
+//! and `--bodies standard` to give recognized packages a standard body in place of a plain
+//! extruded one (the default, `--bodies file`, only gives one to a part with no model at all).
 //! For people: `formats`, `streams <file>` and
 //! `privacy-check <file> [--watch WORD]... [--all-text]`.
 
@@ -31,6 +33,7 @@ const USAGE: &str = "usage: dutchman-electronics info [--json]
        dutchman-electronics read <board.PcbDoc|project.PrjPcb> --out <dir> [--json]
                                 [--param NAME=VALUE]... [--board NAME] [--project FILE]
                                 [--models <dir>]... [--copper outer|all]
+                                [--bodies file|standard]
        dutchman-electronics formats
        dutchman-electronics streams <board.PcbDoc>
        dutchman-electronics privacy-check <board.PcbDoc|project.PrjPcb> [--watch WORD]... [--all-text]";
@@ -189,6 +192,8 @@ struct ReadArgs {
     models: Vec<std::path::PathBuf>,
     /// Which copper layers get overlays.
     copper: dutchman_electronics::overlay::Copper,
+    /// Which bodies parts get.
+    bodies: dutchman_electronics::package::Bodies,
 }
 
 /// Parses the words after `read`, or says what is wrong.
@@ -211,6 +216,13 @@ fn read_args(words: &[&str]) -> Result<ReadArgs, String> {
                     Some("outer") => dutchman_electronics::overlay::Copper::Outer,
                     Some("all") => dutchman_electronics::overlay::Copper::All,
                     _ => return Err("--copper needs outer or all".into()),
+                };
+            }
+            "--bodies" => {
+                args.bodies = match rest.next().copied() {
+                    Some("file") => dutchman_electronics::package::Bodies::File,
+                    Some("standard") => dutchman_electronics::package::Bodies::Standard,
+                    _ => return Err("--bodies needs file or standard".into()),
                 };
             }
             "--models" => {
@@ -256,12 +268,13 @@ fn read(args: &ReadArgs) -> ExitCode {
         parameters: &args.parameters,
     };
     let built = package::open(path, &with).and_then(|input| {
-        package::build(
+        package::build_with_bodies(
             &input.path,
             &input.bytes,
             &input.parameters,
             &args.models,
             args.copper,
+            args.bodies,
         )
     });
     let written = built.and_then(|p| package::write(std::path::Path::new(out), &p).map(|()| p));
@@ -362,6 +375,8 @@ mod tests {
             "more",
             "--copper",
             "all",
+            "--bodies",
+            "standard",
         ])?;
         assert_eq!(
             args,
@@ -377,6 +392,7 @@ mod tests {
                 project: Some("q.PrjPcb".into()),
                 models: vec!["lib".into(), "more".into()],
                 copper: dutchman_electronics::overlay::Copper::All,
+                bodies: dutchman_electronics::package::Bodies::Standard,
             }
         );
         Ok(())
@@ -401,6 +417,8 @@ mod tests {
             &["b.PcbDoc", "--out", "d", "--models"],
             &["b.PcbDoc", "--out", "d", "--copper"],
             &["b.PcbDoc", "--out", "d", "--copper", "inner"],
+            &["b.PcbDoc", "--out", "d", "--bodies"],
+            &["b.PcbDoc", "--out", "d", "--bodies", "all"],
         ] {
             assert!(read_args(words).is_err(), "{words:?}");
         }
