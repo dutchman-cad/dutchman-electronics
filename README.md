@@ -123,6 +123,15 @@ note names it), several give none (a warning names them and suggests `--project`
 parameter is not found stays as written, as Altium shows it. `--param NAME=VALUE` gives one by hand, winning over the project's. A
 parameter value may be up to 64 KiB long.
 
+A KiCad text such as `Rev ${REVISION}` uses a text variable and is shown with its value, as KiCad shows it: the title
+block (`${TITLE}`, `${REVISION}`, `${COMPANY}`, `${ISSUE_DATE}`, `${COMMENT1}`...), the board's own properties, the
+text's layer (`${LAYER}`), the footprint's fields in its own texts (`${REFERENCE}`, `${VALUE}`, `${MPN}`), another
+footprint's (`${J1:VALUE}`), `${FILENAME}` and `${PROJECTNAME}` (from the board's file name only), and the project's
+text variables. Those come from the `.kicad_pro` of the board's own name in its folder, or from `--project
+file.kicad_pro`; `--param NAME=VALUE` wins over both (KiCad's names are case-sensitive). Variables inside variables
+are filled in up to 8 deep; a name nothing defines stays as typed, with a warning (the table in
+`crates/kicad-pcb/tests/boards/k10-text-vars.README.txt` shows each case).
+
 New here? Read [CONTRIBUTING.md](CONTRIBUTING.md). Working with an AI? Point it at [AGENTS.md](AGENTS.md) first.
 
 ## License
