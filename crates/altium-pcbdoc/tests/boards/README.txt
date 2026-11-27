@@ -1152,7 +1152,9 @@ an entry of its index and a byte length of 2 but no bytes after it: the stream r
 closing 0 in its length.
 
 
-Features seen on other people's boards (mask-opacity-100, origin-moved, overlay-region-fill)
+Features seen on other people's boards (mask-opacity-100, origin-moved, overlay-region-fill,
+body-two-extruded, body-cylinder, body-sphere, arc-region, pad-stack-tmb, solder-mask-region,
+overlapping-holes, body-arc-outline)
 ---------------------------------------------------------------------------------------------
 Made on 2026-11-27, each from a file copy of one of our own boards, one feature per board, so the
 reader can learn features that public sample boards use (only our converter's notes on those
@@ -1190,6 +1192,80 @@ overlay-region-fill.PcbDoc  (from empty-outline)
                          fill    (20, 6) to (26, 10), rotation 0
                          fill    (32, 6) to (38, 10), rotation 30 (about its center (35, 8));
                                  Altium's box x 31.402 to 38.598, y 4.768 to 11.232
+
+body-two-extruded.PcbDoc  (from one-resistor)
+    By my own script, a second extruded body added to R1, on the same layer as its first
+    (Mechanical 2, Altium's Top 3D Body), outline (24.6, 14.8), (25.4, 14.8), (25.4, 15.2),
+    (24.6, 15.2), standoff 0.450, overall height 0.750 (so 0.300 tall, sitting on the first box),
+    color red 0, green 160, blue 224 (stored as 14721024), opacity 1. R1's own body stays: the
+    1.600 x 0.800 box of one-resistor, height 0.450, color 128, 128, 128. Both records read
+    MODEL.MODELTYPE=0; the new one MODEL.EXTRUDED.MINZ=17.7165mil and MAXZ=29.5276mil.
+
+body-cylinder.PcbDoc  (from one-resistor)
+    By hand: R1's body selected (by my own script), and in the Properties panel its 3D Model
+    Type changed from Extruded to Cylinder, Height 1mm, Radius 0.5mm; rotations X, Y and Z stay
+    0 (upright) and standoff 0. Location (25, 15), R1's center. Read back: box (24.5, 14.5) to
+    (25.5, 15.5), standoff 0, overall height 1.000, still owned by R1, model type 2. The record
+    reads MODEL.MODELTYPE=2, MODEL.CYLINDER.RADIUS=19.685mil, MODEL.CYLINDER.HEIGHT=39.3701mil,
+    STANDOFFHEIGHT=0mil, OVERALLHEIGHT=39.3701mil, MODEL.2D.X=984.252mil, MODEL.2D.Y=590.5512mil.
+
+body-sphere.PcbDoc  (from one-resistor)
+    The same, with 3D Model Type Sphere, Radius 0.5mm, standoff 0 in the panel. Read back: box
+    (24.5, 14.5) to (25.5, 15.5), model type 3, and standoff -0.500 with overall height 0.500:
+    the sphere's center lies on the board's top face, half of it below. The record reads
+    MODEL.MODELTYPE=3, MODEL.SPHERE.RADIUS=19.685mil, STANDOFFHEIGHT=-19.685mil,
+    OVERALLHEIGHT=19.685mil.
+
+arc-region.PcbDoc  (from empty-outline)
+    By my own script, two closed outlines of a rounded slot (two straight sides and two half
+    circles), each of two tracks and two arcs, width 0.100:
+        tracks (10, 13) to (16, 13) and (10, 17) to (16, 17); arcs center (16, 15) and
+        (10, 15), radius 2.000, 270 to 90 and 90 to 270 degrees
+        the same 20.000 to the right, on Mechanical 1: x 30 to 36, arcs centered (36, 15) and
+        (30, 15)
+    Then by hand: the first outline selected, Tools > Convert > Create Region from Selected
+    Primitives, and its four tracks and arcs deleted; the second selected (by script), Tools >
+    Convert > Create 3D Body From selected primitives. A script removed the second outline's
+    tracks and arcs. Altium made the region on the active layer (Mechanical 1); my script moved
+    it to Top Layer. Read back:
+        region   Top Layer, KIND 0, no net; Altium's script interface lists its outline as 38
+                 points (the half circles as straight pieces), from (8, 13) to (18, 17)
+        3D body  Mechanical 2 (Top 3D Body), no component, extruded, box (28, 13) to (38, 17),
+                 standoff 0, overall height 0.508 (Altium's default, OVERALLHEIGHT=20mil),
+                 MODEL.2D.X=1299.2125mil (33.000), MODEL.2D.Y=590.5512mil (15.000),
+                 ISSHAPEBASED=TRUE
+    Both are stored twice, as the other shapes are: /Regions6 and /ComponentBodies6, and the
+    shape-based copies /ShapeBasedRegions6 and /ShapeBasedComponentBodies6.
+
+pad-stack-tmb.PcbDoc  (from empty-outline)
+    By my own script, one free pad "1" (no component, no net) at (25, 15), Multi-Layer, plated
+    hole 0.800, pad stack mode Top-Middle-Bottom (Altium's mode 1; simple is 0):
+        top      round      2.000 x 2.000
+        middle   round      1.400 x 1.400
+        bottom   rectangle  2.400 x 1.600
+    The board has only Top Layer and Bottom Layer, so the middle size has no layer to show on.
+
+solder-mask-region.PcbDoc  (from one-fill)
+    By my own script, a solid region on Top Solder, KIND 0, no net, corners (22, 12), (28, 12),
+    (28, 18), (22, 18): a mask opening drawn by hand, over the middle of one-fill's copper fill
+    (20, 10) to (30, 20) on Top Layer. Nothing else on Top Solder.
+
+overlapping-holes.PcbDoc  (from empty-outline)
+    By my own script, two free pads (no component, no net), simple pad stack, Multi-Layer, round
+    1.600, plated hole 1.000: "1" at (24.6, 15) and "2" at (25.4, 15). Their centers are 0.800
+    apart, so the two holes overlap by 0.200 and the two pads by 0.800.
+
+body-arc-outline.PcbDoc  (from one-resistor)
+    R1's extruded body replaced by one whose outline has arcs, made as for arc-region's body. By
+    my own script: R1's body removed, and a rounded slot drawn on Mechanical 1 (width 0.100):
+    tracks (24.6, 14.6) to (25.4, 14.6) and (24.6, 15.4) to (25.4, 15.4), arcs center
+    (25.4, 15) and (24.6, 15), radius 0.400, 270 to 90 and 90 to 270 degrees. By hand: Tools >
+    Convert > Create 3D Body From selected primitives. By my own script: the four tracks and
+    arcs removed, and the new body given to R1 with standoff 0 and overall height 0.500. Read
+    back: Mechanical 2 (Top 3D Body), owned by R1, extruded, box (24.2, 14.6) to (25.8, 15.4),
+    color 128, 128, 128, opacity 1. The record reads ISSHAPEBASED=TRUE, MODEL.MODELTYPE=0,
+    STANDOFFHEIGHT=0mil, OVERALLHEIGHT=19.685mil, MODEL.EXTRUDED.MINZ=0mil and
+    MAXZ=19.685mil, MODEL.2D.X=984.2519mil, MODEL.2D.Y=590.5511mil (25.000, 15.000).
 
 Saving embedded Arial in each of them (none of their texts uses it); it was removed as before
 (see "Paths inside the files").

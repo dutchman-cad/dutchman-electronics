@@ -1194,3 +1194,39 @@ fn a_kicad_project_beside_the_board_that_is_not_json_gives_a_warning(
     );
     Ok(())
 }
+
+/// body-arc-outline: R1's extruded body is a rounded slot with ends of radius 0.4, so its STEP
+/// file has two exact half cylinders of that radius, not facets.
+#[cfg(feature = "altium")]
+#[test]
+fn read_writes_an_extruded_body_with_arcs_as_exact_cylinders(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let out = std::env::temp_dir().join(format!("de-arc-body-{}", std::process::id()));
+    let board = test_board("body-arc-outline.PcbDoc");
+    let result = run(&[
+        "read",
+        &board.to_string_lossy(),
+        "--out",
+        &out.to_string_lossy(),
+        "--json",
+    ]);
+    let step = std::fs::read_to_string(out.join("model-1.step"));
+    std::fs::remove_dir_all(&out).ok();
+    let (ok, v) = result?;
+    assert!(ok, "{v}");
+    let r1 = v["parts"]
+        .as_array()
+        .and_then(|p| p.iter().find(|p| p["name"] == "R1"))
+        .ok_or("no R1")?;
+    assert_eq!(r1["model"], "model-1");
+    let step = step?;
+    let radii: Vec<f64> = step
+        .lines()
+        .filter(|l| l.contains("CYLINDRICAL_SURFACE("))
+        .filter_map(|l| l.rsplit(',').next())
+        .filter_map(|r| r.trim_end_matches(");").parse().ok())
+        .collect();
+    assert_eq!(radii.len(), 2, "{radii:?}");
+    assert!(radii.iter().all(|r| (r - 0.4).abs() < 0.001), "{radii:?}");
+    Ok(())
+}
