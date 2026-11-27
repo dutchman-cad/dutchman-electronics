@@ -4,13 +4,14 @@
 //! Dutchman only draws polygons, so all the geometry happens here: every item becomes a polygon
 //! (a track a stroke with round ends, a pad its shape, a via its ring), the polygons of one
 //! overlay are united and every drill is cut out. Arcs are polylines within [`CHORD`] mm. Up to
-//! ten overlays come out, for each side, from the board face outward: an opaque `laminate` sheet
+//! fourteen overlays come out, for each side, from the board face outward: an opaque `laminate` sheet
 //! (the board face less its cutouts and drills, [`LAMINATE_THICKNESS`] thick), all copper as one
 //! overlay ([`COPPER_THICKNESS`] thick from the face), the surface finish (the copper inside the
 //! mask openings, [`FINISH_THICKNESS`] on top of the copper), the solder mask (the face less the
-//! mask openings and the drills, not less the copper, from the face to [`MASK_OVER_COPPER`]
-//! above the copper, see-through) and the silkscreen on top of the mask, [`SILK_THICKNESS`]
-//! thick (real ink). Each carries its color from [`crate::colors`] and a `thickness`: every area
+//! mask openings and the drills, a conformal coat [`MASK_COAT`] thick that lies on the laminate
+//! where there is no copper and on the copper where there is, as two overlays of one color and
+//! opacity, see-through) and the silkscreen on top of the mask, [`SILK_THICKNESS`] thick (real
+//! ink), in two overlays the same way. Each carries its color from [`crate::colors`] and a `thickness`: every area
 //! is extruded from its `z` away from the board. The bottom side mirrors the top. Past
 //! [`MAX_SOLID_FACES`] the largest overlays are drawn flat, with all others of their side, and a note says which.
 //!
@@ -58,16 +59,24 @@ pub const COPPER_THICKNESS: f64 = 0.035;
 pub const LAMINATE_THICKNESS: f64 = 0.005;
 /// How thick the surface finish (gold, tin) is on top of the copper, in mm (4 um).
 pub const FINISH_THICKNESS: f64 = 0.004;
-/// How far the mask's top is above the copper's top, in mm.
-pub const MASK_OVER_COPPER: f64 = 0.010;
-/// How thick the solder mask is, in mm: from the face to [`MASK_OVER_COPPER`] above the copper,
-/// so it covers all copper and, being see-through, shows it.
-pub const MASK_THICKNESS: f64 = COPPER_THICKNESS + MASK_OVER_COPPER;
+/// How thick the solder mask coat is, in mm (10 um). The mask is conformal, as on a real board:
+/// the coat lies on whatever is under it, so it is this thick everywhere and copper shows through
+/// it as relief even when it is opaque. Over bare laminate it rises from the laminate's top
+/// ([`LAMINATE_THICKNESS`]; the face without a laminate overlay), over copper from the copper's top
+/// ([`COPPER_THICKNESS`]). It leaves the 0.035 step at a copper edge open, so a see-through coat
+/// shows the copper's own side faces there.
+pub const MASK_COAT: f64 = 0.010;
 /// How thick silkscreen ink is, in mm (15 um).
 pub const SILK_THICKNESS: f64 = 0.015;
-/// How far silkscreen starts off the board face, in mm: at the top of the mask
-/// ([`MASK_THICKNESS`]), which is above the copper, so the ink lies on the mask.
-pub const SILK_LIFT: f64 = MASK_THICKNESS;
+/// How far the mask over bare laminate starts off the board face, in mm.
+pub const MASK_LIFT_LAMINATE: f64 = LAMINATE_THICKNESS;
+/// How far the mask over copper starts off the board face, in mm.
+pub const MASK_LIFT_COPPER: f64 = COPPER_THICKNESS;
+/// How far silkscreen over bare laminate starts off the board face, in mm: on top of the mask coat
+/// there.
+pub const SILK_LIFT_LAMINATE: f64 = MASK_LIFT_LAMINATE + MASK_COAT;
+/// How far silkscreen over copper starts off the board face, in mm: on top of the mask coat there.
+pub const SILK_LIFT_COPPER: f64 = MASK_LIFT_COPPER + MASK_COAT;
 /// How far a flat laminate sheet (no `thickness`, see [`MAX_SOLID_FACES`]) is drawn off the
 /// board face, in mm, away from the board, so it does not share the face's plane. The flat
 /// sheets stack in the order of the solids: laminate, copper, finish, mask, silkscreen.
@@ -1372,6 +1381,9 @@ fn overlays_within(
                 .difference(&drilled)
                 .difference(&f.via_drill.union())
                 .difference(&opening_all);
+            // It lies on the mask coat, so over copper it sits higher than over bare laminate.
+            let silk_over_copper = silk.intersection(&copper_all);
+            let silk_over_laminate = silk.difference(&copper_all);
             let plain = |name: String,
                          kind,
                          finish,
@@ -1393,12 +1405,15 @@ fn overlays_within(
                 finish_look,
                 opacity: None,
             };
-            // The mask lies over everything: the board face less its openings and the drills,
-            // not less the copper, which it covers (it is see-through). One cut from the united
-            // openings, so no sliver is left where edges meet.
+            // The mask is a coat on whatever is under it: the face less its openings and the
+            // drills, split into the part over copper and the rest over bare laminate. Both come
+            // from one cut of the united openings, so no sliver is left where edges meet, and
+            // together they are the whole mask, no area counted twice.
             let mask = face
                 .as_ref()
                 .map(|face| face.difference(&drilled.union(&opening_all)));
+            let mask_over_copper = mask.as_ref().map(|m| m.intersection(&copper_all));
+            let mask_over_laminate = mask.as_ref().map(|m| m.difference(&copper_all));
             if let Some(face) = &face {
                 built.push(plain(
                     format!("Laminate {side}"),
@@ -1434,33 +1449,61 @@ fn overlays_within(
                 finish,
                 (pads.color.to_string(), pads.finish),
             ));
-            built.push(Built {
-                text: f.silk.outlined_union(),
-                ..plain(
+            for (name, lift, flat_lift, shape) in [
+                (
                     format!("Silkscreen {side}"),
-                    "silkscreen",
-                    None,
-                    SILK_LIFT,
+                    SILK_LIFT_LAMINATE,
                     FLAT_SILK_LIFT,
-                    SILK_THICKNESS,
-                    silk,
-                    (silk_color, SILKSCREEN_FINISH),
-                )
-            });
-            if let Some(mask) = mask {
+                    silk_over_laminate,
+                ),
+                (
+                    format!("Silkscreen {side} over copper"),
+                    SILK_LIFT_COPPER,
+                    FLAT_SILK_LIFT,
+                    silk_over_copper,
+                ),
+            ] {
                 built.push(Built {
-                    opacity: Some(mask_opacity),
+                    text: f.silk.outlined_union(),
                     ..plain(
-                        format!("Solder mask {side}"),
-                        "mask",
+                        name,
+                        "silkscreen",
                         None,
-                        0.0,
-                        FLAT_MASK_LIFT,
-                        MASK_THICKNESS,
-                        mask,
-                        (mask_color, MASK_FINISH),
+                        lift,
+                        flat_lift,
+                        SILK_THICKNESS,
+                        shape,
+                        (silk_color.clone(), SILKSCREEN_FINISH),
                     )
                 });
+            }
+            for (name, lift, shape) in [
+                (
+                    format!("Solder mask {side}"),
+                    MASK_LIFT_LAMINATE,
+                    mask_over_laminate,
+                ),
+                (
+                    format!("Solder mask {side} over copper"),
+                    MASK_LIFT_COPPER,
+                    mask_over_copper,
+                ),
+            ] {
+                if let Some(shape) = shape {
+                    built.push(Built {
+                        opacity: Some(mask_opacity),
+                        ..plain(
+                            name,
+                            "mask",
+                            None,
+                            lift,
+                            FLAT_MASK_LIFT,
+                            MASK_COAT,
+                            shape,
+                            (mask_color.clone(), MASK_FINISH),
+                        )
+                    });
+                }
             }
         }
         // Each inner layer at its height in the stack, drills and via holes cut out.

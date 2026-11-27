@@ -631,11 +631,31 @@ pub fn build_accepting(
 }
 
 /// Makes the overlays what a loader that knows only `copper`, `silkscreen` and `mask` can draw:
-/// no `laminate` overlay, and an opaque mask.
+/// no `laminate` overlay, and an opaque mask. With no laminate sheet the mask and the silkscreen
+/// over bare laminate lie on the board face, so they drop by the sheet's thickness; those over
+/// copper stay on the copper. A flat overlay (no `thickness`) is left where it is.
 fn negotiate_down(list: &mut Vec<Value>) {
     list.retain(|o| o["kind"] != "laminate");
-    for o in list.iter_mut().filter(|o| o["kind"] == "mask") {
-        if let Some(map) = o.as_object_mut() {
+    for o in list.iter_mut() {
+        let over_laminate = matches!(o["kind"].as_str(), Some("mask" | "silkscreen"))
+            && !o["name"]
+                .as_str()
+                .is_some_and(|n| n.ends_with(" over copper"))
+            && o.get("thickness").is_some();
+        let sign = match o["side"].as_str() {
+            Some("top") => 1.0,
+            Some("bottom") => -1.0,
+            _ => continue,
+        };
+        let z = o["z"].as_f64();
+        let Some(map) = o.as_object_mut() else {
+            continue;
+        };
+        if let (true, Some(z)) = (over_laminate, z) {
+            let z = z - sign * crate::overlay::LAMINATE_THICKNESS;
+            map.insert("z".into(), json!((z * 1e6).round() / 1e6));
+        }
+        if map.get("kind").and_then(Value::as_str) == Some("mask") {
             map.insert("opacity".into(), json!(1.0));
         }
     }
@@ -1570,6 +1590,33 @@ mod tests {
                 assert!((0.75..1.0).contains(&opacity), "{o}");
             }
         }
+        // With no laminate sheet the coat and ink over bare laminate lie on the board face (5 um
+        // lower); those over copper stay on the copper. Same areas, same thickness.
+        for (o, n) in old.manifest["overlays"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|o| matches!(o["kind"].as_str(), Some("mask" | "silkscreen")))
+            .filter_map(|o| {
+                let n = new.manifest["overlays"]
+                    .as_array()?
+                    .iter()
+                    .find(|n| n["name"] == o["name"])?;
+                Some((o, n))
+            })
+        {
+            let drop = if o["name"].as_str().unwrap().ends_with(" over copper") {
+                0.0
+            } else if o["side"] == "top" {
+                0.005
+            } else {
+                -0.005
+            };
+            let (zo, zn) = (o["z"].as_f64().unwrap(), n["z"].as_f64().unwrap());
+            assert!((zn - zo - drop).abs() < 1e-9, "{o} {n}");
+            assert_eq!(o["areas"], n["areas"]);
+            assert_eq!(o["thickness"], n["thickness"]);
+        }
         // Everything else is the same.
         let others = |p: &Package| -> Vec<String> {
             kinds(p).into_iter().filter(|k| k != "laminate").collect()
@@ -1857,16 +1904,20 @@ mod tests {
                 assert_eq!(o["group"], GROUP_LAYERS);
                 assert!(overlay_area(o) > 0.0, "{}: {o}", path.display());
                 let z = o["z"].as_f64().unwrap();
-                // Laminate, copper and mask start at the face, the finish on top of the copper,
-                // silkscreen on top of the mask (0.035 of copper plus 0.010), and the bottom
+                // Laminate and copper start at the face, the finish on top of the copper, the mask
+                // and silkscreen as below, and the bottom
                 // side mirrors the top below z = 0.
                 let name = o["name"].as_str().unwrap();
                 let (offset, thickness) = match o["kind"].as_str().unwrap() {
                     "laminate" => (0.0, 0.005),
                     "copper" if name.starts_with("Finish") => (0.035, 0.004),
                     "copper" => (0.0, 0.035),
-                    "mask" => (0.0, 0.045),
-                    _ => (0.045, 0.015),
+                    // The mask coat lies on the laminate's top or the copper's top; the
+                    // silkscreen on top of the coat under it.
+                    "mask" if name.ends_with(" over copper") => (0.035, 0.010),
+                    "mask" => (0.005, 0.010),
+                    _ if name.ends_with(" over copper") => (0.045, 0.015),
+                    _ => (0.015, 0.015),
                 };
                 let want = if o["side"] == "top" {
                     t + offset
@@ -1893,12 +1944,13 @@ mod tests {
                     assert!(o.get("opacity").is_none(), "{}: {o}", path.display());
                 }
             }
-            // Every test board has a usable outline, so each has both masks.
+            // Every test board has a usable outline, so each side has a mask over laminate (a
+            // board with no bare laminate left at all could lack it, none of ours does).
             let masks = package.manifest["overlays"]
                 .as_array()
                 .unwrap()
                 .iter()
-                .filter(|o| o["kind"] == "mask")
+                .filter(|o| o["kind"] == "mask" && !o["name"].as_str().unwrap().ends_with("copper"))
                 .count();
             assert_eq!(masks, 2, "{}", path.display());
             let laminates = package.manifest["overlays"]
@@ -2036,9 +2088,10 @@ mod tests {
         );
         assert_eq!(mask["kind"], "mask");
         // The board is 1.6 mm thick (the file stores 1.600002 after its unit conversion).
-        assert!((mask["z"].as_f64().unwrap() - 1.6).abs() < 1e-4);
+        // A coat on the laminate's top: 1.6 + 0.005.
+        assert!((mask["z"].as_f64().unwrap() - 1.605).abs() < 1e-4);
         let bottom = overlay_named(m, "one-plated-pad", "Solder mask bottom");
-        assert_eq!(bottom["z"].as_f64().unwrap(), 0.0);
+        assert_eq!(bottom["z"].as_f64().unwrap(), -0.005);
         // Copper is copper-colored whatever the mask, over a dark laminate sheet.
         let track = package_of("one-track");
         assert_eq!(
