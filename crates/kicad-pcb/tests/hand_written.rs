@@ -292,7 +292,7 @@ fn hostile_pad_shapes_do_not_panic() {
 }
 
 #[test]
-fn an_arc_in_a_custom_pad_polygon_is_noted() {
+fn an_arc_in_a_custom_pad_polygon_stays_an_arc() {
     let text = format!(
         "{HEAD}(footprint \"t:x\" (layer \"F.Cu\") (at 5 5) (property \"Reference\" \"U1\")\n\
          (pad \"1\" smd custom (at 0 0) (size 1 1) (layers \"F.Cu\") (options (anchor rect)) \
@@ -300,9 +300,76 @@ fn an_arc_in_a_custom_pad_polygon_is_noted() {
          (width 0) (fill yes)))))\n)"
     );
     let o = read(&text).unwrap();
-    assert!(o.notes.iter().any(|n| n
-        .message
-        .contains("polygon arc(s) were drawn as straight edges")));
+    assert!(!o
+        .notes
+        .iter()
+        .any(|n| n.message.contains("straight edges")));
+    let shapes = o
+        .board
+        .copper
+        .iter()
+        .find_map(|c| match c {
+            board_model::CopperItem::PolygonPad { shapes, .. } => Some(shapes),
+            _ => None,
+        })
+        .unwrap();
+    // The anchor, and the polygon: three lines and one arc of radius 1 about (2, -1) from the pad, which sits at (5, -5) (Y is up).
+    let arcs: Vec<_> = shapes[1]
+        .segments
+        .iter()
+        .filter_map(|s| match s {
+            board_model::Segment::Arc { center, radius, .. } => Some((*center, *radius)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(arcs.len(), 1);
+    assert!((arcs[0].1 - 1.0).abs() < 1e-9);
+    assert!((arcs[0].0.x - 7.0).abs() < 1e-9 && (arcs[0].0.y + 6.0).abs() < 1e-9);
+}
+
+fn font_text(embedded: &str) -> String {
+    format!(
+        "{HEAD}(gr_text \"Hi\" (at 5 5 0) (layer \"F.SilkS\") \
+         (effects (font (face \"Test Sans\") (size 1 1))))\n{embedded})"
+    )
+}
+
+#[test]
+fn a_font_the_board_does_not_embed_keeps_the_stroke_font_with_a_note_naming_it() {
+    let o = read(&font_text("")).unwrap();
+    assert!(matches!(
+        o.board.texts[0].font,
+        board_model::TextFont::Stroke { .. }
+    ));
+    assert!(o.fonts.is_empty());
+    assert!(o.notes.iter().any(|n| n.severity == Severity::Warning
+        && n.message.contains("\"Test Sans\"")
+        && n.message.contains("stroke font")));
+}
+
+#[test]
+fn hostile_embedded_font_data_is_a_note_not_a_panic() {
+    for data in [
+        "",
+        "|not base64!|",
+        "|AAAA|",
+        // zstd magic and a frame header declaring 4 GB.
+        "|KLUv/aD/////|",
+        // a valid zstd frame (an empty file) that is not a font.
+        "|KLUv/QBYAAA=|",
+    ] {
+        let embedded = format!(
+            "(embedded_fonts yes) (embedded_files (file (name \"x.ttf\") (type font) (data {data}) \
+             (checksum \"00\")))"
+        );
+        let o = read(&font_text(&embedded)).unwrap();
+        assert!(matches!(
+            o.board.texts[0].font,
+            board_model::TextFont::Stroke { .. }
+        ));
+        assert!(o.fonts.is_empty());
+        assert!(o.notes.iter().any(|n| n.severity == Severity::Warning));
+    }
 }
 
 fn zone_text(pts: &str) -> String {
