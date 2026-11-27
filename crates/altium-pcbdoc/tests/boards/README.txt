@@ -1051,6 +1051,34 @@ Saved once and closed; Altium embedded Arial on saving and it was removed as bef
 this board uses it).
 
 
+Quoted special strings (quoted-strings, issue 146)
+--------------------------------------------------
+Made on 2026-11-27 in a copy of param-project (PCBNumber DN-0042, BoardRevision B; see
+param-project/README.txt), whose param-board-2 was replaced by a file copy of empty-outline. With
+the project open, my own script added these texts and read each back with the string Altium
+shows for it; the board was then saved and copied here alone (it is not part of any project
+here: a reader gives it the parameters of param-project). Every text is in the stroke font
+(Default), height 1.000, stroke 0.120, rotation 0, x 2.000, on Top Overlay unless noted:
+    y       Stored text                          Altium shows
+    27.500  Rev. '.BoardRevision'                Rev. B
+    25.300  '.BoardRevision' end                 B end
+    23.100  '.PCBNumber' Rev '.BoardRevision'    DN-0042 Rev B
+    20.900  '.PCBNumber''.BoardRevision'         DN-0042B
+    18.700  '.pcbnumber'                         DN-0042
+    16.500  '.Layer_Name'                        Top Overlay
+    14.300  L: '.Layer_Name' x                   L: Top Overlay x
+    12.100  '.NoSuchParameter'                   '.NoSuchParameter'
+    9.900   Rev '.BoardRevision                  Rev 'B
+    7.700   Rev ''                               Rev ''
+    5.500   'word' Rev                           'word' Rev
+    3.300   Rev .BoardRevision end               Rev B end
+    1.100   '.BoardRevision'  (Bottom Overlay)   B
+The file keeps each text as typed. A name in quotes is replaced wherever it stands, as often as
+it occurs, the quotes with it; an unknown name keeps its quotes; a quote with no name after it
+stays. With no closing quote ("Rev '.BoardRevision") Altium drops the reference and keeps the
+opening quote. Unquoted, a reference followed by more text ("Rev .BoardRevision end") is replaced
+too here, although ".PCBNumber rev" on param-board stays as typed.
+
 Paths inside the files
 ----------------------
 Altium writes a few paths from the PC that saved a board into the file. After the last save, I
