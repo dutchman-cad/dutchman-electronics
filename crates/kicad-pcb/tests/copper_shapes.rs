@@ -169,3 +169,85 @@ fn filled_copper_shapes_are_regions_and_their_strokes_tracks() {
         "the filled circles have no stroke"
     );
 }
+
+/// The area of a polygon (its corners only; fills are polygons).
+fn polygon_area(c: &Contour) -> f64 {
+    let pts: Vec<Point> = c
+        .segments
+        .iter()
+        .map(|s| match *s {
+            Segment::Line { from, .. } => from,
+            Segment::Arc { .. } => panic!("fills are polygons"),
+        })
+        .collect();
+    let n = pts.len();
+    ((0..n)
+        .map(|i| {
+            let (a, b) = (pts[i], pts[(i + 1) % n]);
+            a.x * b.y - b.x * a.y
+        })
+        .sum::<f64>()
+        / 2.0)
+        .abs()
+}
+
+#[test]
+fn a_footprints_zones_are_copper_in_board_coordinates() {
+    let o = board("k10-footprint-zone");
+    // U1's zone on F.Cu, U2's (flipped) on B.Cu, each with the gap round the footprint's hole:
+    // KiCad's fill covers 118.2093 mm2, and its corners nearest the hole lie 0.7509 to 0.7541
+    // from the hole's center (the 0.5 hole and KiCad's hole clearance of 0.25).
+    for (layer_name, cx, cy, ring) in [
+        (
+            "F.Cu",
+            13.0,
+            15.0,
+            [(7.0, 10.0), (19.0, 10.0), (19.0, 20.0), (7.0, 20.0)],
+        ),
+        (
+            "B.Cu",
+            36.0,
+            15.0,
+            [
+                (43.6962, 13.6699),
+                (33.3038, 7.6699),
+                (28.3038, 16.3301),
+                (38.6962, 22.3301),
+            ],
+        ),
+    ] {
+        let found = regions(&o, layer_name);
+        assert_eq!(found.len(), 1, "{layer_name}");
+        let (contour, holes) = found[0];
+        assert_eq!(holes.len(), 1, "{layer_name}");
+        let copper = polygon_area(contour) - polygon_area(&holes[0]);
+        assert!((copper - 118.2093).abs() < 0.001, "{layer_name}: {copper}");
+        for s in &holes[0].segments {
+            let Segment::Line { from, .. } = *s else {
+                panic!("fills are polygons")
+            };
+            let d = (from.x - 100.0 - cx).hypot(-from.y - 100.0 - cy);
+            assert!(
+                (0.7509 - 0.001..=0.7541 + 0.001).contains(&d),
+                "{layer_name}: {d}"
+            );
+        }
+        // The outer contour follows the zone's outline (its corners rounded off by the minimum
+        // width): every outline corner is within 0.13 of the fill's corners.
+        let pts = corners(contour);
+        for (x, y) in ring {
+            assert!(
+                pts.iter().any(|p| (p.0 - x).hypot(p.1 - y) < 0.13),
+                "{layer_name}: ({x}, {y})"
+            );
+        }
+    }
+    // U2's keep-out rule area holds no copper and is named in a note; nothing else is lost.
+    let other: Vec<&str> = o
+        .notes
+        .iter()
+        .filter(|n| n.severity != Severity::Info)
+        .map(|n| n.message.as_str())
+        .collect();
+    assert_eq!(other, ["1 keep-out zone(s) (they hold no copper)"]);
+}

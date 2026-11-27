@@ -23,7 +23,8 @@ podman run --rm --userns=keep-id -v "$PWD:/work:Z" docker.io/kicad/kicad:10.0 sh
   python3 /work/fixtures/kicad/add_stackup.py /work/$out/k10-all-features.kicad_pcb /work/fixtures/kicad/stackup-all-features.sexp &&
   python3 /work/fixtures/kicad/add_pad_arcs.py /work/$out/k10-all-features.kicad_pcb 1 &&
   python3 /work/fixtures/kicad/embed_fonts.py /work/$out/k10-all-features.kicad_pcb \"TrueType 789=DejaVu Sans Mono\" &&
-  python3 /work/fixtures/kicad/build_k10_copper_boards.py /work/$out"
+  python3 /work/fixtures/kicad/build_k10_copper_boards.py /work/$out &&
+  python3 /work/fixtures/kicad/fill_zones.py /work/$out/k10-footprint-zone.kicad_pcb"
 # The project files KiCad writes beside each board are not needed, except k10-text-vars's and
 # k10-all-features's, which hold the project's text variables (written afterwards by
 # add_text_vars.py).

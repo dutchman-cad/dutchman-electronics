@@ -646,3 +646,20 @@ fn a_copper_polygon_with_an_arc_keeps_it_filled_or_as_its_edge() {
         .iter()
         .any(|c| matches!(c, board_model::CopperItem::Region { .. })));
 }
+
+#[test]
+fn a_footprint_zone_fill_off_copper_is_named_and_not_copper() {
+    let text = format!(
+        "{HEAD}(footprint \"lib:Z\" (layer \"F.Cu\") (at 10 10)\n\
+           (zone (layer \"Dwgs.User\") (polygon (pts (xy 9 9) (xy 11 9) (xy 11 11)))\n\
+             (filled_polygon (layer \"Dwgs.User\") (pts (xy 9 9) (xy 11 9) (xy 11 11)))))\n)"
+    );
+    let o = read(&text).unwrap();
+    assert!(!o
+        .board
+        .copper
+        .iter()
+        .any(|c| matches!(c, board_model::CopperItem::Region { .. })));
+    assert!(o.notes.iter().any(|n| n.severity == Severity::Dropped
+        && n.message == "1 zone fill(s) on layer Dwgs.User (only copper zones are read)"));
+}

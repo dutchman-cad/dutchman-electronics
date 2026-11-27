@@ -809,6 +809,13 @@ impl Reader {
                 );
                 continue;
             };
+            if self.layers.get(layer).map(|l| l.kind) != Some(LayerKind::Copper) {
+                self.tally.add(
+                    Severity::Dropped,
+                    format!("zone fill(s) on layer {layer_name} (only copper zones are read)"),
+                );
+                continue;
+            }
             let Some(split) = fp
                 .child("pts")
                 .and_then(|p| split_fill(&Frame::IDENTITY, p))
@@ -936,9 +943,9 @@ impl Reader {
                         self.graphic_item(kind, item, &frame, owner);
                     }
                 }
-                "zone" => self
-                    .tally
-                    .add(Severity::Dropped, "zone(s) inside footprints (not read)"),
+                // KiCad writes a footprint's zones, outline and fill, in board coordinates, as it
+                // does the board's own (k10-footprint-zone).
+                "zone" => self.zone(item),
                 _ => {}
             }
         }

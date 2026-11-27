@@ -111,3 +111,51 @@ def u2(fp):
 footprint(b, "U1", (20, 22), 0.0, False, u1)
 footprint(b, "U2", (38, 22), 30.0, True, u2)
 save(b, "k10-copper-shapes")
+
+
+def fp_zone(fp, corners, layer=pcbnew.F_Cu, rule_area=False):
+    z = pcbnew.ZONE(fp)
+    z.SetLayer(layer)
+    if rule_area:
+        z.SetIsRuleArea(True)
+        z.SetDoNotAllowTracks(True)
+        z.SetDoNotAllowVias(True)
+    else:
+        z.SetMinThickness(FromMM(0.25))
+        z.SetLocalClearance(FromMM(0.5))
+    o = z.Outline()
+    o.NewOutline()
+    for x, y in corners:
+        o.Append(FromMM(x), FromMM(y))
+    fp.Add(z)
+    return z
+
+
+# k10-footprint-zone (then fill_zones.py, which fills the footprints' zones too): copper zones
+# inside footprints, on the 50 x 30 mm rectangle (two layers, 1.6 mm). Each of U1 and U2 holds a
+# zone on its copper layer, outline (-6,-5) (6,-5) (6,5) (-6,5) from its origin, no net, minimum
+# width 0.25, clearance 0.5, and a plain hole of 1.0 at its origin that the fill keeps clear of.
+# U2 also holds a keep-out rule area (no tracks, no vias) (-3,6) (3,6) (3,8) (-3,8). U1 is on the
+# top at (13,15), not turned; U2 is flipped to the bottom at (36,15), turned 30.
+b = new_board()
+outline(b)
+
+
+def zone_part(fp, keepout):
+    d = pcbnew.PAD(fp)
+    d.SetNumber("")
+    d.SetShape(pcbnew.PAD_SHAPE_CIRCLE)
+    d.SetAttribute(pcbnew.PAD_ATTRIB_NPTH)
+    d.SetSize(mm(1.0, 1.0))
+    d.SetDrillSize(mm(1.0, 1.0))
+    d.SetLayerSet(d.UnplatedHoleMask())
+    d.SetPosition(mm(0, 0))
+    fp.Add(d)
+    fp_zone(fp, [(-6, -5), (6, -5), (6, 5), (-6, 5)])
+    if keepout:
+        fp_zone(fp, [(-3, 6), (3, 6), (3, 8), (-3, 8)], rule_area=True)
+
+
+footprint(b, "U1", (13, 15), 0.0, False, lambda fp: zone_part(fp, False))
+footprint(b, "U2", (36, 15), 30.0, True, lambda fp: zone_part(fp, True))
+save(b, "k10-footprint-zone")
