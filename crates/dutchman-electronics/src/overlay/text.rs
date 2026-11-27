@@ -1519,6 +1519,12 @@ mod tests {
 /// where we draw them: the justification (and its mirroring and turning) is resolved from our
 /// glyph advances, so the anchor-relevant edge of each text must land where KiCad's does.
 #[cfg(all(test, feature = "kicad"))]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing
+)]
 mod kicad_gerber {
     use super::*;
     use board_model::InputFormat;
@@ -1555,7 +1561,10 @@ mod kicad_gerber {
 
     /// The distance from `p` to the box `b`, zero inside it.
     fn gap(p: Point, b: &[f64; 4]) -> f64 {
-        (b[0] - p.x).max(p.x - b[2]).max(0.0).hypot((b[1] - p.y).max(p.y - b[3]).max(0.0))
+        (b[0] - p.x)
+            .max(p.x - b[2])
+            .max(0.0)
+            .hypot((b[1] - p.y).max(p.y - b[3]).max(0.0))
     }
 
     /// Ink edges are compared at the pen's center line (both sides draw the same pen). Where we
