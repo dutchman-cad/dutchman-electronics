@@ -1345,23 +1345,45 @@ fn the_largest_overlays_are_drawn_flat_past_the_face_budget() {
         .collect();
     assert_eq!(largest.len(), 1, "{largest:?}");
     let largest = largest[0];
-    // A budget just under the total sends only the largest overlay flat.
+    // A budget just under the total sends the largest overlay flat, and with it every other
+    // overlay of its side, so that no flat sheet hides inside a solid one (a flat mask under
+    // solid copper). The other side keeps its solids.
     let (list, notes) = overlays_within(&b, 1.6, "Board", 20, MAX_HOLE_VERTICES, total - 1);
+    let side_of = |name: &str| {
+        if name.ends_with("top") {
+            "top"
+        } else {
+            "bottom"
+        }
+    };
+    let largest_side = side_of(largest);
     for o in &list {
+        let name = o["name"].as_str().unwrap();
         assert_eq!(
             o.get("thickness").is_none(),
-            o["name"] == largest,
+            side_of(name) == largest_side,
             "{largest}: {o}"
         );
     }
     assert_eq!(list.len(), full.len());
-    let degraded: Vec<&Value> = notes
+    let degraded: Vec<String> = notes
         .iter()
         .filter(|n| n["severity"] == "Degraded")
+        .map(|n| n["message"].as_str().unwrap().to_string())
         .collect();
-    assert_eq!(degraded.len(), 1, "{notes:?}");
-    let message = degraded[0]["message"].as_str().unwrap();
-    assert!(message.contains(largest), "{message}");
+    // One note for each overlay of that side, the largest first among them.
+    let flat_names: Vec<&str> = full
+        .iter()
+        .map(|o| o["name"].as_str().unwrap())
+        .filter(|n| side_of(n) == largest_side)
+        .collect();
+    assert_eq!(degraded.len(), flat_names.len(), "{notes:?}");
+    for name in flat_names {
+        assert!(
+            degraded.iter().any(|m| m.contains(name)),
+            "{name}: {degraded:?}"
+        );
+    }
     // No room at all: every overlay is flat and each is named.
     let (list, notes) = overlays_within(&b, 1.6, "Board", 20, MAX_HOLE_VERTICES, 0);
     assert!(list.iter().all(|o| o.get("thickness").is_none()));

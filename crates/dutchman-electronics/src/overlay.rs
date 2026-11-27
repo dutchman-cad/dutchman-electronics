@@ -12,7 +12,7 @@
 //! above the copper, see-through) and the silkscreen on top of the mask, [`SILK_THICKNESS`]
 //! thick (real ink). Each carries its color from [`crate::colors`] and a `thickness`: every area
 //! is extruded from its `z` away from the board. The bottom side mirrors the top. Past
-//! [`MAX_SOLID_FACES`] the largest overlays are drawn flat, and a note says which.
+//! [`MAX_SOLID_FACES`] the largest overlays are drawn flat, with all others of their side, and a note says which.
 //!
 //! Copper on inner layers lies inside the board and is left out by default. With [`Copper::All`]
 //! each inner copper layer whose place in the stack is known gets an overlay of its own (side
@@ -659,6 +659,25 @@ fn fit_faces(built: &mut [Built], budget: usize) -> Vec<String> {
             b.thickness = None;
             b.z = b.flat_z;
             total = total.saturating_sub(n);
+            flat.push(b.name.clone());
+        }
+    }
+    // The flat sheets sit a hair off the face, inside the solids' thickness, so a flat sheet
+    // beside a solid one would be hidden by it (a flat mask under solid copper). A side with
+    // any flat overlay is therefore flat throughout.
+    for side in ["top", "bottom"] {
+        if !built
+            .iter()
+            .any(|b| b.side == side && b.thickness.is_none())
+        {
+            continue;
+        }
+        for b in built
+            .iter_mut()
+            .filter(|b| b.side == side && b.thickness.is_some())
+        {
+            b.thickness = None;
+            b.z = b.flat_z;
             flat.push(b.name.clone());
         }
     }
@@ -1370,7 +1389,7 @@ fn overlays_within(
                     "severity": "Degraded",
                     "message": format!(
                         "{name} is drawn flat, without thickness: the solids of all overlays \
-                         would pass {face_budget} faces"
+                         would pass {face_budget} faces, or another overlay of its side is flat"
                     ),
                 }));
             }
@@ -1403,7 +1422,7 @@ fn overlays_within(
         }
         Err(_) => notes.push(json!({
             "severity": "Dropped",
-            "message": "the copper, silkscreen and solder mask overlays could not be drawn",
+            "message": "the laminate, copper, finish, silkscreen and solder mask overlays could not be drawn",
         })),
     }
     for (count, what) in [
