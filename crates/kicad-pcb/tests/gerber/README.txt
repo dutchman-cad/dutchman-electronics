@@ -1,0 +1,4 @@
+KiCad's own Gerber exports of our test boards (KiCad 9, `kicad-cli pcb export gerbers`).
+
+- The pad boards (pad-shapes, pad-shapes-turned, pad-arcs) keep their Gerber files, and the polygon pad outlines read from them (*.corners.txt, made by fixtures/kicad/gerber_corners.py).
+- The text boards (text-justify, text-strings) keep only the extents read from the export of their silkscreens (*.extents.txt, made by fixtures/kicad/gerber_text_extents.py): one line per text, the box of its pen strokes' center lines and the pen width, in board coordinates (Y up, mm). The Gerber files themselves, which hold KiCad's letter shapes, are not kept. Regenerate the extents by exporting F.SilkS and B.SilkS of the board with `kicad-cli pcb export gerbers --layers F.SilkS,B.SilkS --no-protel-ext` in KiCad 9 and running the script on each file.
