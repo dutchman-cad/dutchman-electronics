@@ -11,6 +11,8 @@
 //! - bytes 13..21 are the position (x, y), as `i32` in 1/10000 mil: the text's reference point
 //!   as Altium shows it in the text's properties, (10, 10) on `one-text`,
 //! - bytes 21..25 are the height (2.000 on all three boards),
+//! - byte 25 is the stroke font: 1 Default, 2 Sans Serif, 3 Serif (`stroke-fonts`, the same
+//!   texts in each, Altium's own names and numbers; 1 on every other board),
 //! - bytes 27..35 are the rotation as an `f64` in degrees (90.0 on `one-rotated-text`, 0.0 on the
 //!   others),
 //! - byte 35 is 1 when the text is mirrored (`one-bottom-text`) and 0 otherwise,
@@ -48,6 +50,8 @@ const MAX_RECORDS: usize = 1_000_000;
 const MIRROR_AT: usize = 35;
 const STROKE_WIDTH_AT: usize = 36;
 const FONT_TYPE_AT: usize = 43;
+/// The byte naming a stroke text's font (see [`stroke_font`]).
+const STROKE_FONT_AT: usize = 25;
 const TRUETYPE: u8 = 1;
 const BOLD_AT: usize = 44;
 const ITALIC_AT: usize = 45;
@@ -77,6 +81,7 @@ pub(crate) fn read(
     let mut comments = Vec::new();
     let mut other_layers: BTreeMap<String, usize> = BTreeMap::new();
     let mut unreadable = 0usize;
+    let mut unknown_fonts = 0usize;
     let mut at = 0usize;
     let mut count = 0usize;
     while at < data.len() {
@@ -150,7 +155,7 @@ pub(crate) fn read(
                 } else {
                     TextFont::Stroke {
                         width: stroke_width,
-                        font: StrokeFont::Default,
+                        font: stroke_font(body.get(STROKE_FONT_AT).copied(), &mut unknown_fonts),
                     }
                 };
                 texts.push(Text {
@@ -179,7 +184,30 @@ pub(crate) fn read(
             message: format!("{unreadable} text(s) could not be read"),
         });
     }
+    if unknown_fonts > 0 {
+        notes.push(Note {
+            severity: Severity::Info,
+            message: format!(
+                "{unknown_fonts} stroke text(s) name a stroke font other than Default, Sans Serif \
+                 or Serif; drawn in Default"
+            ),
+        });
+    }
     Ok(Texts { texts, comments })
+}
+
+/// The stroke font byte 25 names: 1 Default, 2 Sans Serif, 3 Serif. Any other value (or none)
+/// is counted in `unknown` and read as Default.
+fn stroke_font(byte: Option<u8>, unknown: &mut usize) -> StrokeFont {
+    match byte {
+        Some(1) => StrokeFont::Default,
+        Some(2) => StrokeFont::SansSerif,
+        Some(3) => StrokeFont::Serif,
+        _ => {
+            *unknown += 1;
+            StrokeFont::Default
+        }
+    }
 }
 
 /// False for a component's designator or comment text that its component hides.
