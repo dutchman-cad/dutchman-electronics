@@ -921,6 +921,39 @@ scripts, every scripted change read back and logged:
    Every other via keeps the board's rule (open, 0.1). Then Tools > Polygon Pours > Repour All
    and Tools > Split Planes > Rebuild Split Planes on All Layers, and the board saved; Arial
    was removed again as before.
+12. Later on 2026-11-27, from the board as described so far, opened through a copy of
+   all-features.PrjPcb (so with its parameters PCBNumber DN-0001 and BoardRevision A). Free
+   spots were found from the board's own objects (every object's box as Altium reports it, with
+   tracks and vias by their exact shape). By my own script, read back and logged: four free pads
+   (no component, no net, simple pad stack) and four texts on Top Overlay in the stroke font
+   (Default), height 0.600, stroke 0.100, rotation 0, not mirrored:
+        pad  at              kind
+        M1   35.600, 28.150  SMD, Top Layer, rectangle 1.200 x 0.800, no hole
+        M2   37.600, 28.150  SMD, Top Layer, rectangle 1.200 x 0.800, no hole
+        M3   43.300,  8.500  through-hole, Multi-Layer, round 1.600, hole 0.800, plated
+        M4   45.400,  8.500  through-hole, Multi-Layer, round 1.600, hole 0.800, plated
+
+        Stored text                       At             Owner  Altium shows  Box
+        Rev. '.BoardRevision'             33.700, 18.500 -      Rev. A        33.600, 18.400 to
+                                                                              37.099, 19.200
+        '.PCBNumber' / '.BoardRevision'   5.400, 11.700  -      DN-0001 / A   5.300, 11.600 to
+                                                                              11.798, 12.400
+        '.Designator'                     41.300, 14.500 R7     R7            41.200, 14.400 to
+                                                                              42.400, 15.200
+        (no characters)                   9.000, 10.600  -      (nothing)     the anchor point
+   The file keeps each text as typed (/WideStrings6/Data); the empty text has an entry of length
+   2 with no bytes, as on empty-texts. R7 is the part at (40.500, 16.270).
+   Then by hand, in each pad's Properties panel (Pad Stack > Solder), one setting per pad:
+        M1   Manual Expansion, 0.2mm
+        M2   Manual Expansion (0.1mm kept), Tented ticked
+        M3   Manual Expansion, top and bottom unlinked (the link button in the expanded Top
+             Solder row), top 0.2mm, bottom 0.05mm
+        M4   Manual Expansion, 0.1mm, From Hole Edge ticked (top and bottom linked); from the
+             pad's edge that is (0.8 + 0.2 - 1.6) / 2 = -0.300
+   Paste stays by the rule on every pad. The script read back: M1 0.2, M2 tented on top with
+   0.1, M3 0.2 (the top value), M4 0.1. Then, in the 2D view, Tools > Polygon Pours > Repour
+   All and Tools > Split Planes > Rebuild Split Planes on All Layers, the board saved and closed
+   and the project copy closed. Arial was removed again as before.
 A first try put the TrueType text and the free copper over "DUTCHMAN NODE 1"; a second script
 removed them and placed them as above before the board was first saved with the cutout.
 

@@ -1,7 +1,8 @@
 //! Pads with mask settings of their own (tests/boards/README.txt, "Pad mask overrides"): the
 //! reader puts them on the pads. P2 to P6 and P8 have a manual solder mask expansion (P8 from the
 //! hole's edge), P4 and P6 are tented and P7 has a manual paste expansion: seven pads. No other
-//! test board has a pad like that.
+//! test board has a pad like that, except all-features, which carries every feature the reader
+//! handles (its pads are checked in all_features.rs).
 
 use altium_pcbdoc::Altium;
 use board_model::{CopperItem, InputFormat, Severity};
@@ -66,7 +67,7 @@ fn no_other_board_has_a_pad_with_its_own_mask() -> Result<(), Box<dyn std::error
             if path.extension().is_none_or(|e| e != "PcbDoc")
                 || path
                     .file_name()
-                    .is_some_and(|n| n == "pad-mask-overrides.PcbDoc")
+                    .is_some_and(|n| n == "pad-mask-overrides.PcbDoc" || n == "all-features.PcbDoc")
             {
                 continue;
             }
