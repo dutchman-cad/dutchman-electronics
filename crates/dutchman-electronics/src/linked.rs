@@ -157,6 +157,7 @@ pub fn resolve(
             model.source = ModelSource::Embedded { id: r.id.clone() };
         }
     }
+    // We skip the size check for free bodies because they have no pads to compare against.
     for model in &mut outcome.board.free_models {
         let ModelSource::External { file, checksum } = &model.source else {
             continue;
