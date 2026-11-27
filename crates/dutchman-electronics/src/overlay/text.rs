@@ -1523,6 +1523,7 @@ mod tests {
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::panic,
+    clippy::unreachable,
     clippy::indexing_slicing
 )]
 mod kicad_gerber {
@@ -1537,8 +1538,11 @@ mod kicad_gerber {
     }
 
     /// The texts' boxes `gerber_text_extents.py` read from KiCad's export of one silkscreen.
-    fn gerber(side: &str) -> Vec<Ink> {
-        let path = dir().join(format!("gerber/text-justify-{side}_Silkscreen.extents.txt"));
+    fn gerber(board: &str, side: &str) -> Vec<Ink> {
+        let path = dir().join(format!("gerber/{board}-{side}_Silkscreen.extents.txt"));
+        if !path.exists() {
+            return Vec::new();
+        }
         std::fs::read_to_string(path)
             .unwrap()
             .lines()
@@ -1585,7 +1589,7 @@ mod kicad_gerber {
     fn every_justification_lands_where_kicads_own_gerber_has_it() {
         let bytes = std::fs::read(dir().join("boards/text-justify.kicad_pcb")).unwrap();
         let o = kicad_pcb::KiCad.read(&bytes).unwrap();
-        let (top, bottom) = (gerber("F"), gerber("B"));
+        let (top, bottom) = (gerber("text-justify", "F"), gerber("text-justify", "B"));
         assert_eq!(o.board.texts.len(), top.len() + bottom.len());
         let mut checked = 0;
         for t in &o.board.texts {
@@ -1634,5 +1638,58 @@ mod kicad_gerber {
             }
         }
         assert!(checked >= 2 * (top.len() + bottom.len()), "{checked}");
+    }
+
+    /// Ordinary strings ("R1", "GND", "0.1uF", "J3" at 1, 1.5 and 2.5 mm, centered and right-
+    /// justified): the constants of [`board_model::TextAnchor`] were fitted on "HIH", so other
+    /// letters show how far Roman Simplex's glyph widths are from KiCad's. The vertical edges
+    /// (every string stands on the baseline and reaches the capital height) stay within 0.01 mm.
+    /// Horizontally, the residual is the difference of the last (right) or the outer glyphs' widths
+    /// and scales with the height: measured, the right edge of a right-justified string is off by at
+    /// most 0.287 heights (the "1" of "R1"; "GND" and "J3" end exactly with KiCad's) and the ink's
+    /// middle of a centered one by at most 0.144 heights (the same string). The tolerances are
+    /// those worst cases with a 5 percent margin.
+    const STRING_RIGHT_EDGE: f64 = 0.30;
+    const STRING_MIDDLE: f64 = 0.15;
+    const STRING_VERTICAL: f64 = 0.01;
+
+    #[test]
+    fn ordinary_strings_land_within_the_glyph_width_differences() {
+        let bytes = std::fs::read(dir().join("boards/text-strings.kicad_pcb")).unwrap();
+        let o = kicad_pcb::KiCad.read(&bytes).unwrap();
+        let top = gerber("text-strings", "F");
+        assert_eq!(o.board.texts.len(), top.len());
+        assert_eq!(o.board.texts.len(), 24);
+        for t in &o.board.texts {
+            let (theirs, _) = top
+                .iter()
+                .min_by(|a, b| gap(t.at, &a.0).total_cmp(&gap(t.at, &b.0)))
+                .unwrap();
+            let mine = ours(t);
+            let what = format!(
+                "{:?} {:?} at height {}",
+                t.anchor.horizontal, t.content, t.height
+            );
+            for i in [1, 3] {
+                assert!(
+                    (mine[i] - theirs[i]).abs() <= STRING_VERTICAL,
+                    "{what}: vertical edge {i} {} against {}",
+                    mine[i],
+                    theirs[i]
+                );
+            }
+            let (residual, allowed) = match t.anchor.horizontal {
+                HorizontalAnchor::Right => (mine[2] - theirs[2], STRING_RIGHT_EDGE * t.height),
+                HorizontalAnchor::Center => (
+                    (mine[0] + mine[2] - theirs[0] - theirs[2]) / 2.0,
+                    STRING_MIDDLE * t.height,
+                ),
+                HorizontalAnchor::Left => unreachable!(),
+            };
+            assert!(
+                residual.abs() <= allowed,
+                "{what}: {residual:+.3} over {allowed:.3}"
+            );
+        }
     }
 }
