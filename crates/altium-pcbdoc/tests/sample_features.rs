@@ -188,3 +188,70 @@ fn a_sphere_body_is_left_out_with_a_note() -> Result<(), Box<dyn std::error::Err
     );
     Ok(())
 }
+
+/// arc-region: the copper region on Top Layer is a rounded slot, x 8 to 18 and y 13 to 17: two
+/// straight sides and two half circles of radius 2 about (10, 15) and (16, 15), read from
+/// `/ShapeBasedRegions6/Data` instead of the 38-corner polygon of `/Regions6/Data`.
+#[test]
+fn a_region_keeps_its_half_circles() -> Result<(), Box<dyn std::error::Error>> {
+    let out = read("arc-region.PcbDoc")?;
+    let regions: Vec<_> = out
+        .board
+        .copper
+        .iter()
+        .filter_map(|c| match c {
+            CopperItem::Region {
+                layer,
+                contour,
+                holes,
+            } => Some((layer, contour, holes)),
+            _ => None,
+        })
+        .collect();
+    let [(layer, contour, holes)] = regions.as_slice() else {
+        return Err(format!("{regions:?}").into());
+    };
+    let name = out.board.layers.get(**layer).map(|l| l.name.as_str());
+    assert_eq!(name, Some("Top Layer"));
+    assert!(holes.is_empty());
+    let mut centers = Vec::new();
+    let mut lines = 0;
+    for s in &contour.segments {
+        match s {
+            Segment::Arc {
+                center,
+                radius,
+                start_deg,
+                end_deg,
+                ..
+            } => {
+                assert!((radius - 2.0).abs() <= TOLERANCE, "{s:?}");
+                let sweep = s.sweep_deg().ok_or("no sweep")?;
+                assert!((sweep.abs() - 180.0).abs() <= TOLERANCE, "{s:?}");
+                assert!(start_deg.is_finite() && end_deg.is_finite());
+                centers.push((center.x, center.y));
+            }
+            Segment::Line { from, to } => {
+                lines += 1;
+                assert!((from.y - to.y).abs() <= TOLERANCE, "{s:?}");
+                let y = from.y;
+                assert!((y - 13.0).abs() <= TOLERANCE || (y - 17.0).abs() <= TOLERANCE);
+            }
+        }
+    }
+    assert_eq!(lines, 2, "{contour:?}");
+    centers.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let [(x0, y0), (x1, y1)] = centers.as_slice() else {
+        return Err(format!("{contour:?}").into());
+    };
+    assert!((x0 - 10.0).abs() <= TOLERANCE && (y0 - 15.0).abs() <= TOLERANCE);
+    assert!((x1 - 16.0).abs() <= TOLERANCE && (y1 - 15.0).abs() <= TOLERANCE);
+    assert!(
+        out.notes
+            .iter()
+            .all(|n| !n.message.contains("have arcs (in")),
+        "{:?}",
+        out.notes
+    );
+    Ok(())
+}

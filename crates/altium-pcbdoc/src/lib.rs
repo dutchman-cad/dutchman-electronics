@@ -145,7 +145,7 @@ impl InputFormat for Altium {
 
         let mut notes = Vec::new();
         // The shape-based streams repeat these two, with arcs where an outline has them (see
-        // `shape_based.rs`). Only a region's arcs are read (a board cutout's); a body's are not.
+        // `shape_based.rs`). A region's arcs are read; a body's are not.
         let mut region_arcs = Vec::new();
         for (copy, plain, data, kind) in [
             (
