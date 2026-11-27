@@ -1973,6 +1973,7 @@ pub fn sphere(radius: f64, name: &str) -> Result<BoardStep, StepError> {
         stats,
         thickness: 2.0 * radius,
         holes: Vec::new(),
+        merged: Vec::new(),
     })
 }
 

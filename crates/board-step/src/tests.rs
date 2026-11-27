@@ -275,10 +275,10 @@ fn holes_that_cannot_be_cut_are_reported() {
         vec![rect(30.0, 10.0, 40.0, 20.0)],
         vec![
             hole(10.0, 15.0, 3.0),
-            hole(11.0, 15.0, 3.0),  // overlaps the first: both are cut as one opening
-            hole(0.5, 15.0, 3.0),   // crosses the board edge
-            hole(35.0, 15.0, 2.0),  // inside the cutout
-            hole(90.0, 90.0, 1.0),  // off the board
+            hole(11.0, 15.0, 3.0), // overlaps the first: both are cut as one opening
+            hole(0.5, 15.0, 3.0),  // crosses the board edge
+            hole(35.0, 15.0, 2.0), // inside the cutout
+            hole(90.0, 90.0, 1.0), // off the board
             hole(20.0, 15.0, -1.0), // unusable size
         ],
     );
