@@ -629,6 +629,7 @@ fn named(list: &[String]) -> String {
 }
 
 /// Each component with a model the package can build becomes a part named by its designator.
+#[cfg(test)]
 fn components(list: &[Placement], embedded: &[EmbeddedModel], thickness: f64) -> Placed {
     components_with(list, embedded, thickness, None)
 }
@@ -667,22 +668,13 @@ fn components_with(
         }
         used.insert(name.clone());
         let wants_standard = match (&p.model, standard) {
-            (
-                None
-                | Some(ModelRef {
-                    source: ModelSource::External { .. },
-                    ..
-                }),
-                Some(_),
-            ) => true,
-            (
-                Some(ModelRef {
-                    source: ModelSource::Extruded { .. },
-                    ..
-                }),
-                Some((_, Bodies::Standard)),
-            ) => true,
-            _ => false,
+            (_, None) => false,
+            (None, _) => true,
+            (Some(m), Some((_, bodies))) => match m.source {
+                ModelSource::External { .. } => true,
+                ModelSource::Extruded { .. } => bodies == Bodies::Standard,
+                ModelSource::Embedded { .. } => false,
+            },
         };
         if let (true, Some((recognizer, _))) = (wants_standard, standard) {
             if let Some(found) = recognizer.recognize(p) {
