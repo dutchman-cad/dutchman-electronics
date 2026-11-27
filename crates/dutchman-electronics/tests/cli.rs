@@ -659,12 +659,14 @@ fn the_open_hardware_board_packages_are_named_after_their_boards_and_keep_their_
     let (v, out) = read_open_board("gb", "gb-cartpp-xc/GB-CARTPP-XC.kicad_pcb")?;
     let _ = std::fs::remove_dir_all(&out);
     assert_eq!(v["name"], "GB-CARTPP-XC");
-    // No 3D model is named by this board, so no part but the board and the plating.
+    // The board's 3D models are not found, so its parts get standard bodies where their pads
+    // are a known package (default `--bodies file`); the board is first and the plating last.
     let names: Vec<&str> = v["parts"]
         .as_array()
         .map(|a| a.iter().filter_map(|p| p["name"].as_str()).collect())
         .unwrap_or_default();
-    assert_eq!(names, ["Board", "Plating"], "{names:?}");
+    assert_eq!(names.first(), Some(&"Board"), "{names:?}");
+    assert_eq!(names.last(), Some(&"Plating"), "{names:?}");
     // The board names 3D models from KiCad's own library: said, not guessed.
     assert!(
         v["notes"].to_string().contains("3D model file"),
@@ -784,11 +786,15 @@ fn a_linked_model_is_found_in_a_models_folder_given() -> Result<(), Box<dyn std:
     let library = test_board("linked-model");
     let (ok, v, _) = read_into("linked-lone-out", &board, &[])?;
     assert!(ok, "{v}");
-    assert!(!v["parts"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .any(|p| p["name"] == "R1"));
+    // Not found: R1 gets the standard body of its 0603 pads, a body and its leads.
+    let named = |v: &serde_json::Value, n: &str| {
+        v["parts"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|p| p["name"] == n)
+    };
+    assert!(named(&v, "R1") && named(&v, "R1 leads"), "{v}");
     assert!(
         messages(&v).iter().any(|m| m.contains(
             "box-1608.step, which is not in the board's folder, its Models folder or a folder \
@@ -803,11 +809,8 @@ fn a_linked_model_is_found_in_a_models_folder_given() -> Result<(), Box<dyn std:
     )?;
     std::fs::remove_dir_all(board.parent().ok_or("no folder")?).ok();
     assert!(ok, "{v}");
-    assert!(v["parts"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .any(|p| p["name"] == "R1"));
+    // Found: R1 uses the linked model, one part, no leads part.
+    assert!(named(&v, "R1") && !named(&v, "R1 leads"), "{v}");
     Ok(())
 }
 
@@ -826,11 +829,15 @@ fn a_linked_model_of_the_same_name_but_another_checksum_is_not_used(
     let (ok, v, _) = read_into("linked-other-out", &board, &[])?;
     std::fs::remove_dir_all(&dir).ok();
     assert!(ok, "{v}");
-    assert!(!v["parts"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .any(|p| p["name"] == "R1"));
+    // The file is refused (said below), so R1 gets the standard body of its pads.
+    let named = |n: &str| {
+        v["parts"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|p| p["name"] == n)
+    };
+    assert!(named("R1") && named("R1 leads"), "{v}");
     assert!(
         messages(&v)
             .iter()
