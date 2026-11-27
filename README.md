@@ -24,7 +24,7 @@ Open an Altium board in SolidCraft and see what SolidCraft already shows for a K
 | Plated holes | The copper lining every via and every plated pad hole, as thin tubes (`Plating`) |
 | Copper traces, pads, vias, pours | Thin solids on the board (overlay, 0.035 mm thick): green under the mask, gold where bare |
 | Solder mask | A translucent green solid (0.020 mm thick) over the board face, open at the bare pads (each opening is the pad grown by the mask expansion: the board file's own value, for Altium its board-wide solder mask expansion rule, otherwise 0.1 mm, so a thin ring of bare laminate shows round it; tented vias get none), the copper under the mask and every drill, so tracks stand proud of it |
-| Silkscreen | Text and lines as outlines, in white, clipped away from the mask openings (pads and their ring of laminate) and the drills, as a fab does |
+| Silkscreen | Text and lines as outlines, in white (TrueType text with its real letter outlines, followed to a four-hundredth of its height; Altium stroke text in the Hershey font nearest the one it names: Sans Serif in Roman Simplex, Serif in Times Roman, and Default in Roman Simplex letters on Default's own character spacing, so its width and placement match Altium but its letter shapes differ), clipped away from the mask openings (pads and their ring of laminate) and the drills, as a fab does |
 | Components | Each one placed on the board with its 3D model (STEP) |
 
 It reads `.PcbDoc` files on Windows, macOS and Linux. Altium itself is only needed to make test boards. Pull requests are tested on Linux; every change on `main` is also tested on Windows and macOS.

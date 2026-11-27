@@ -153,7 +153,23 @@ fn grown(r: Rect, by: f64) -> Rect {
 /// The areas of `shape` thinned at `tolerance`, and how many areas under [`MIN_AREA`] were left
 /// out; each area that would turn invalid, or would touch or overlap another area, keeps its
 /// original outline.
+#[cfg(test)]
 pub fn thin(shape: &MultiPolygon, tolerance: f64) -> (MultiPolygon, usize) {
+    thin_keeping(shape, tolerance, &MultiPolygon::new(Vec::new()))
+}
+
+/// [`thin`], except that an area touching `keep` (letter outlines, which are followed to a
+/// fraction of their height and must stay as fine as that) keeps its outline.
+pub fn thin_keeping(
+    shape: &MultiPolygon,
+    tolerance: f64,
+    keep: &MultiPolygon,
+) -> (MultiPolygon, usize) {
+    let keep_box = keep.bounding_rect();
+    let fixed = |p: &Polygon| {
+        keep_box.is_some_and(|k| p.bounding_rect().is_some_and(|b| k.intersects(&b)))
+            && p.intersects(keep)
+    };
     let kept: Vec<Polygon> = shape
         .iter()
         .filter(|p| p.unsigned_area() >= MIN_AREA)
@@ -163,7 +179,12 @@ pub fn thin(shape: &MultiPolygon, tolerance: f64) -> (MultiPolygon, usize) {
     let shape = MultiPolygon::new(kept);
     let mut out: Vec<Polygon> = shape
         .iter()
-        .map(|p| polygon(p, tolerance).unwrap_or_else(|| p.clone()))
+        .map(|p| {
+            if fixed(p) {
+                return p.clone();
+            }
+            polygon(p, tolerance).unwrap_or_else(|| p.clone())
+        })
         .collect();
     let boxes: Vec<Option<Rect>> = shape
         .iter()
@@ -267,6 +288,20 @@ mod tests {
         assert!(p.exterior().0.len() <= 6, "{}", p.exterior().0.len());
         assert!(p.is_valid());
         assert!((p.unsigned_area() - shape.unsigned_area()).abs() < 10.0 * 2.0 * THIN);
+    }
+
+    #[test]
+    fn an_area_touching_the_kept_shape_is_not_thinned_and_the_others_are() {
+        // Two thinnable rectangles far apart; the second is also in `keep`.
+        let (a, b) = (wobbly(0.0, 0.002), wobbly(50.0, 0.002));
+        let shape = MultiPolygon::new(vec![a, b.clone()]);
+        let (out, _) = thin_keeping(&shape, THIN, &MultiPolygon::new(vec![b.clone()]));
+        assert_eq!(out.0.len(), 2);
+        assert!(out.0.contains(&b), "the kept area keeps every point");
+        assert!(
+            out.0.iter().any(|p| p.exterior().0.len() <= 6),
+            "the other is thinned"
+        );
     }
 
     #[test]

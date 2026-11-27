@@ -1,9 +1,16 @@
-rowmans.jhf: the Hershey Roman Simplex font, ASCII 32 to 126, one glyph per entry in the
-"James Hurt" format. Used to draw stroke-font text (silkscreen labels) in the parts package.
+Two Hershey fonts, ASCII 32 to 126, one glyph per entry in the "James Hurt" format. They draw
+stroke-font text (silkscreen labels) in the parts package:
 
-Taken unchanged from the Hershey fonts distribution at
+rowmans.jhf: Roman Simplex. Drawn for Sans Serif stroke text, and, on a fixed advance, for the
+Default stroke font (Altium's Default has no free equivalent: we keep its text width and
+placement, and the letter shapes differ).
+timesr.jhf: Times Roman, a serif face. Drawn for Serif stroke text.
+
+Both are taken unchanged from the Hershey fonts distribution at
 http://emergent.unpythonic.net/software/hershey (as mirrored in
-https://github.com/kamalmostafa/hershey-fonts, hershey-fonts/rowmans.jhf).
+https://github.com/kamalmostafa/hershey-fonts, hershey-fonts/rowmans.jhf and
+hershey-fonts/timesr.jhf; fetched 2026-11-26). The license is the use restriction below, the
+same for every font of the distribution.
 
 USE RESTRICTION (from that distribution):
 	This distribution of the Hershey Fonts may be used by anyone for

@@ -553,6 +553,8 @@ fn region(
 #[derive(Default)]
 struct Pile {
     polygons: Vec<Polygon>,
+    /// Letter outlines of TrueType texts: drawn like `polygons`, but not thinned.
+    outlined: Vec<Polygon>,
 }
 
 impl Pile {
@@ -564,7 +566,21 @@ impl Pile {
     }
 
     fn union(&self) -> MultiPolygon {
-        geo::unary_union(&self.polygons)
+        if self.outlined.is_empty() {
+            return geo::unary_union(&self.polygons);
+        }
+        let all: Vec<Polygon> = self
+            .polygons
+            .iter()
+            .chain(&self.outlined)
+            .cloned()
+            .collect();
+        geo::unary_union(&all)
+    }
+
+    /// The letter outlines alone, as one shape.
+    fn outlined_union(&self) -> MultiPolygon {
+        geo::unary_union(&self.outlined)
     }
 }
 
@@ -686,6 +702,8 @@ struct Built {
     /// How far the areas are extruded from `z`, away from the board; `None` for a flat sheet.
     thickness: Option<f64>,
     shape: MultiPolygon,
+    /// Letter outlines of TrueType texts inside `shape`: areas touching these are not thinned.
+    text: MultiPolygon,
     color: String,
     finish_look: Finish,
     opacity: Option<f64>,
@@ -1035,7 +1053,7 @@ fn overlays_within(
                         texts.glyphs_over_budget =
                             texts.glyphs_over_budget.saturating_add(o.over_budget);
                         texts.glyphs_failed = texts.glyphs_failed.saturating_add(o.failed);
-                        pile.polygons.extend(o.areas);
+                        pile.outlined.extend(o.areas);
                         texts.outlined = texts.outlined.saturating_add(1);
                         continue;
                     }
@@ -1213,6 +1231,7 @@ fn overlays_within(
                 flat_z: at(flat_lift),
                 thickness: Some(height),
                 shape,
+                text: MultiPolygon::new(Vec::new()),
                 color,
                 finish_look,
                 opacity: None,
@@ -1228,16 +1247,19 @@ fn overlays_within(
                         .union(&masked_all),
                 )
             });
-            built.push(plain(
-                format!("Copper {side}"),
-                "copper",
-                Some("masked"),
-                0.0,
-                FLAT_MASKED_COPPER_LIFT,
-                COPPER_THICKNESS,
-                masked,
-                (copper_color, MASK_FINISH),
-            ));
+            built.push(Built {
+                text: f.masked.outlined_union(),
+                ..plain(
+                    format!("Copper {side}"),
+                    "copper",
+                    Some("masked"),
+                    0.0,
+                    FLAT_MASKED_COPPER_LIFT,
+                    COPPER_THICKNESS,
+                    masked,
+                    (copper_color, MASK_FINISH),
+                )
+            });
             built.push(plain(
                 format!("Copper {side} pads"),
                 "copper",
@@ -1248,16 +1270,19 @@ fn overlays_within(
                 bare,
                 (pads.color.to_string(), pads.finish),
             ));
-            built.push(plain(
-                format!("Silkscreen {side}"),
-                "silkscreen",
-                None,
-                SILK_LIFT,
-                FLAT_SILK_LIFT,
-                SILK_THICKNESS,
-                silk,
-                (silk_color, SILKSCREEN_FINISH),
-            ));
+            built.push(Built {
+                text: f.silk.outlined_union(),
+                ..plain(
+                    format!("Silkscreen {side}"),
+                    "silkscreen",
+                    None,
+                    SILK_LIFT,
+                    FLAT_SILK_LIFT,
+                    SILK_THICKNESS,
+                    silk,
+                    (silk_color, SILKSCREEN_FINISH),
+                )
+            });
             if let Some(mask) = mask {
                 built.push(Built {
                     opacity: Some(MASK_OPACITY),
@@ -1293,15 +1318,17 @@ fn overlays_within(
                 flat_z: z + t / 2.0,
                 thickness: Some(t),
                 shape: pile.union().difference(&drilled).difference(&via_drilled),
+                text: pile.outlined_union(),
                 color: COPPER_COLOR.to_string(),
                 finish_look: COPPER_FINISH,
                 opacity: None,
             });
         }
-        // Fewer points, the same outlines within THIN, and no slivers without surface (#126).
+        // Fewer points, the same outlines within THIN, and no slivers without surface (#126);
+        // letter outlines of TrueType texts are left as fine as they were drawn.
         let mut slivers = Vec::new();
         for b in &mut built {
-            let (shape, n) = thin::thin(&b.shape, thin::THIN);
+            let (shape, n) = thin::thin_keeping(&b.shape, thin::THIN, &b.text);
             b.shape = shape;
             if n > 0 {
                 slivers.push((b.name.clone(), n));
@@ -1420,9 +1447,9 @@ fn overlays_within(
         notes.push(json!({
             "severity": "Degraded",
             "message": format!(
-                "{} text(s) are drawn in the Hershey Roman Simplex stroke font at their height \
-                 and pen width, not in the board's own font, so letter shapes and spacing differ \
-                 a little",
+                "{} text(s) are drawn in the Hershey stroke fonts at their height and pen width, not \
+                 in the board's own fonts, so letter shapes differ a little (and, except in the \
+                 Default stroke font, so does the spacing)",
                 texts.drawn
             ),
         }));
