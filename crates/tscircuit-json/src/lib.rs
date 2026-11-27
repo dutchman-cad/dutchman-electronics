@@ -14,8 +14,8 @@
 use std::collections::BTreeMap;
 
 use board_model::{
-    Board, Contour, CopperItem, Detection, InputFormat, Layer, LayerKind, Note, Outline, PadShape,
-    Placement, Point, ReadError, ReadOutcome, Segment, Severity, Side, Text, MAX_INPUT_BYTES,
+    Appearance, Board, Contour, CopperItem, Detection, InputFormat, Layer, LayerKind, Note, Outline, PadShape,
+    Placement, Point, ReadError, ReadOutcome, Segment, Severity, Side, Text, TextFont, MAX_INPUT_BYTES,
 };
 use serde_json::Value;
 
@@ -186,6 +186,7 @@ fn circle(center: Point, radius: f64) -> Contour {
             radius,
             start_deg: 0.0,
             end_deg: 360.0,
+            clockwise: false,
         }],
     }
 }
@@ -232,6 +233,7 @@ fn rect(center: Point, width: f64, height: f64, rotation: f64, corner: f64) -> C
             radius: r,
             start_deg: a0,
             end_deg: a0 + 90.0,
+            clockwise: false,
         });
         let a1 = (a0 + 90.0).to_radians();
         previous = Some(Point {
@@ -337,7 +339,13 @@ impl Reader {
         let mut layer_index: BTreeMap<String, usize> = BTreeMap::new();
         let mut add_layer = |name: String, kind: LayerKind, side: Option<Side>| {
             layer_index.insert(name.clone(), layers.len());
-            layers.push(Layer { name, kind, side });
+            layers.push(Layer {
+                name,
+                kind,
+                side,
+                // tscircuit gives no stack-up (copper thickness, layer depth) in Circuit JSON.
+                position: None,
+            });
         };
         add_layer("top".into(), LayerKind::Copper, Some(Side::Top));
         for i in 1..copper_count.saturating_sub(1) {
@@ -351,18 +359,21 @@ impl Reader {
             name: "top silkscreen".into(),
             kind: LayerKind::Silkscreen,
             side: Some(Side::Top),
+            position: None,
         });
         let silk_bottom = layers.len();
         layers.push(Layer {
             name: "bottom silkscreen".into(),
             kind: LayerKind::Silkscreen,
             side: Some(Side::Bottom),
+            position: None,
         });
         let multi = layers.len();
         layers.push(Layer {
             name: "all copper layers".into(),
             kind: LayerKind::Copper,
             side: None,
+            position: None,
         });
         let copper_layer = |name: Option<&str>| name.and_then(|n| layer_index.get(n).copied());
 
@@ -427,7 +438,12 @@ impl Reader {
                 "pcb_copper_pour" => {
                     match (pour_contour(e), copper_layer(text(e, "layer"))) {
                         (Some(contour), Some(layer)) => {
-                            copper.push(CopperItem::Region { layer, contour })
+                            copper.push(CopperItem::Region {
+                                layer,
+                                contour,
+                                // Circuit JSON pours carry no cut-outs around other copper.
+                                holes: Vec::new(),
+                            })
                         }
                         _ => self.bad(kind),
                     }
@@ -443,14 +459,19 @@ impl Reader {
                             if text(e, "anchor_alignment").is_some_and(|a| a != "center") {
                                 self.skip("silkscreen text anchors other than the centre (placed by their anchor point)");
                             }
+                            let height = length(e, "font_size").unwrap_or(1.0);
                             texts.push(Text {
                                 layer,
                                 at,
                                 content: content.to_string(),
-                                height: length(e, "font_size").unwrap_or(1.0),
+                                height,
                                 rotation_deg: angle(e, "ccw_rotation").unwrap_or(0.0),
                                 mirrored: layer == silk_bottom
                                     || e.get("is_mirrored").and_then(Value::as_bool) == Some(true),
+                                // tscircuit names no font for silkscreen text; its pen width
+                                // is not in Circuit JSON either, so a default stroke is used.
+                                font: TextFont::Stroke { width: height / 8.0 },
+                                component: None,
                             });
                         }
                         _ => self.bad(kind),
@@ -459,7 +480,7 @@ impl Reader {
                 "pcb_silkscreen_line" | "pcb_silkscreen_path" | "pcb_silkscreen_rect"
                 | "pcb_silkscreen_circle" | "pcb_silkscreen_oval" | "pcb_silkscreen_pill"
                 | "pcb_silkscreen_graphic" => {
-                    self.skip("silkscreen graphics (lines, paths, rectangles, circles): the board model has no silkscreen graphic yet")
+                    self.skip("silkscreen graphics (lines, paths, rectangles, circles): not read yet, though the board model has silkscreen lines and arcs now")
                 }
                 "pcb_component" => {
                     let designator = text(e, "source_component_id")
@@ -483,6 +504,7 @@ impl Reader {
                                 Side::Top
                             },
                             model: None,
+                            comment: String::new(),
                         }),
                         None => self.bad(kind),
                     }
@@ -548,10 +570,15 @@ impl Reader {
                 layers,
                 outline: Outline { outer, cutouts },
                 copper,
+                graphics: Vec::new(),
                 texts,
                 components,
+                appearance: Appearance::default(),
+                solder_mask_expansion: None,
             },
             notes: self.notes,
+            models: Vec::new(),
+            fonts: Vec::new(),
         })
     }
 }
@@ -634,6 +661,7 @@ fn plated_hole(e: &Value, multi: usize) -> Option<(CopperItem, Option<Contour>)>
             size_y,
             rotation_deg: rotation,
             drill,
+            plated: drill.is_some(),
             owner: None,
         }
     };
@@ -728,6 +756,7 @@ fn smt_pad(e: &Value, layer: Option<usize>) -> Option<CopperItem> {
         size_y,
         rotation_deg: rotation,
         drill: None,
+        plated: false,
         owner: None,
     })
 }
