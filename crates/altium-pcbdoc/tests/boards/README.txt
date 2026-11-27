@@ -1051,6 +1051,25 @@ Saved once and closed; Altium embedded Arial on saving and it was removed as bef
 this board uses it).
 
 
+Empty texts (empty-texts)
+-------------------------
+Made on 2026-11-27 from a file copy of empty-outline by my own script, read back and logged:
+seven stroke texts (Default, height 1.000, stroke 0.120, rotation 0), four with one letter and
+three with no characters at all:
+    Text  Layer           At
+    A     Top Overlay     5, 25
+    (none) Top Overlay    5, 20
+    B     Top Overlay     5, 15
+    (none) Bottom Overlay 25, 20
+    C     Bottom Overlay  25, 15
+    (none) Mechanical 1   5, 10
+    D     Mechanical 1    5, 5
+Altium reports an empty text's box as its anchor point. In /WideStrings6/Data each empty text has
+an entry of its index and a byte length of 2 but no bytes after it: the stream reads
+[1][2] [2][4]"A" ... [4][2] [5][4]"C" [6][2], where every other entry holds its UTF-16 text and a
+closing 0 in its length.
+
+
 Paths inside the files
 ----------------------
 Altium writes a few paths from the PC that saved a board into the file. After the last save, I
