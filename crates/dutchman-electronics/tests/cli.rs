@@ -520,7 +520,7 @@ fn a_project_board_behind_a_symbolic_link_out_of_the_folder_is_not_read(
 }
 
 /// Notes of a read manifest, as text.
-#[cfg(feature = "altium")]
+#[cfg(any(feature = "altium", feature = "kicad"))]
 fn messages(v: &serde_json::Value) -> Vec<String> {
     v["notes"]
         .as_array()
@@ -925,11 +925,11 @@ fn project_text(link: &str, value: &str) -> String {
 }
 
 /// The files of a package: (name, contents), sorted.
-#[cfg(feature = "altium")]
+#[cfg(any(feature = "altium", feature = "kicad"))]
 type Files = Vec<(String, Vec<u8>)>;
 
 /// Reads `board` into a new folder under `dir`; the manifest and every file written.
-#[cfg(feature = "altium")]
+#[cfg(any(feature = "altium", feature = "kicad"))]
 fn read_files(
     board: &std::path::Path,
     dir: &std::path::Path,
@@ -1086,6 +1086,110 @@ fn a_huge_or_broken_project_beside_the_board_is_skipped_with_a_note(
     );
     assert!(
         notes.contains(&"parameters taken from good.PrjPcb next to the board".to_string()),
+        "{notes:?}"
+    );
+    Ok(())
+}
+
+/// A new temporary folder `name` holding a copy of k10-text-vars.kicad_pcb, and its project
+/// when `with_project`.
+#[cfg(feature = "kicad")]
+fn folder_with_text_vars(
+    name: &str,
+    with_project: bool,
+) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
+    let dir = std::env::temp_dir().join(format!("{name}-{}", std::process::id()));
+    std::fs::create_dir_all(&dir)?;
+    std::fs::copy(
+        kicad_board("k10-text-vars.kicad_pcb"),
+        dir.join("k10-text-vars.kicad_pcb"),
+    )?;
+    if with_project {
+        std::fs::copy(
+            kicad_board("k10-text-vars.kicad_pro"),
+            dir.join("k10-text-vars.kicad_pro"),
+        )?;
+    }
+    Ok(dir)
+}
+
+#[cfg(feature = "kicad")]
+#[test]
+fn a_kicad_board_takes_the_text_variables_of_its_project_beside_it(
+) -> Result<(), Box<dyn std::error::Error>> {
+    // k10-text-vars.README.txt: ${PCB_NUMBER} and ${BOARD_ID} come from the .kicad_pro of the
+    // board's own name. Read alone, with --project naming it, and from a folder without it.
+    let board = kicad_board("k10-text-vars.kicad_pcb");
+    let bare = folder_with_text_vars("de-read-kicad-vars", false)?;
+    let alone = read_files(&board, &bare, &[]);
+    let with = read_files(
+        &board,
+        &bare,
+        &[
+            "--project",
+            &kicad_board("k10-text-vars.kicad_pro").to_string_lossy(),
+        ],
+    );
+    let without = read_files(&bare.join("k10-text-vars.kicad_pcb"), &bare, &["x"; 0]);
+    let given = read_files(
+        &board,
+        &bare,
+        &["--param", "PCB_NUMBER=X-1", "--param", "pcb_number=lower"],
+    );
+    std::fs::remove_dir_all(&bare).ok();
+    let ((alone_v, alone_files), (with_v, with_files)) = (alone?, with?);
+    let (without_v, without_files) = without?;
+    let (given_v, given_files) = given?;
+    let notes = messages(&alone_v);
+    assert!(
+        notes.contains(
+            &"text variables taken from k10-text-vars.kicad_pro next to the board".to_string()
+        ),
+        "{notes:?}"
+    );
+    assert!(
+        !notes.iter().any(|m| m.contains("${PCB_NUMBER}")),
+        "{notes:?}"
+    );
+    // The texts are drawn in the manifest's overlays.
+    assert_eq!(alone_files, with_files);
+    assert_eq!(alone_v["overlays"], with_v["overlays"]);
+    let mut alone_notes = notes;
+    alone_notes.retain(|m| !m.starts_with("text variables taken from"));
+    assert_eq!(alone_notes, messages(&with_v));
+    // Without the project, the two variables it defines stay as typed.
+    let notes = messages(&without_v);
+    // PCB_NUMBER is in one board text and the two BUILD fields.
+    for (name, n) in [("PCB_NUMBER", 3), ("BOARD_ID", 1)] {
+        assert!(
+            notes.iter().any(|m| m.starts_with(&format!(
+                "{n} text(s) use the text variable ${{{name}}}, which neither"
+            ))),
+            "{notes:?}"
+        );
+    }
+    assert_eq!(without_files, alone_files);
+    assert_ne!(without_v["overlays"], alone_v["overlays"]);
+    // --param wins over the project; names are case-sensitive, so pcb_number is a new one.
+    assert_eq!(given_files, alone_files);
+    assert_ne!(given_v["overlays"], alone_v["overlays"]);
+    assert_eq!(messages(&given_v), messages(&alone_v));
+    Ok(())
+}
+
+#[cfg(feature = "kicad")]
+#[test]
+fn a_kicad_project_beside_the_board_that_is_not_json_gives_a_warning(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let dir = folder_with_text_vars("de-read-kicad-badpro", false)?;
+    std::fs::write(dir.join("k10-text-vars.kicad_pro"), "(not json")?;
+    let result = read_files(&dir.join("k10-text-vars.kicad_pcb"), &dir, &[]);
+    std::fs::remove_dir_all(&dir).ok();
+    let notes = messages(&result?.0);
+    assert!(
+        notes.iter().any(|m| m.starts_with(
+            "the project k10-text-vars.kicad_pro next to the board was not used: not a KiCad project file"
+        )),
         "{notes:?}"
     );
     Ok(())

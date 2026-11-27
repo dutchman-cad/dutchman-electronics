@@ -143,7 +143,11 @@ pub fn open(path: &Path, with: &Open<'_>) -> Result<Input, String> {
         ));
     } else {
         let (parameters, notes) = match with.project {
+            Some(project) if is_kicad_project(project) => {
+                (kicad_project_variables(project)?, Vec::new())
+            }
             Some(project) => (project_parameters(project)?, Vec::new()),
+            None if is_kicad_board(path) => variables_next_to(path),
             None => parameters_next_to(path),
         };
         Input {
@@ -153,11 +157,16 @@ pub fn open(path: &Path, with: &Open<'_>) -> Result<Input, String> {
             notes,
         }
     };
+    // KiCad's text variable names are case-sensitive; Altium's parameter names are not.
+    let kicad = is_kicad_board(&input.path);
     for (name, value) in with.parameters {
-        let known = input
-            .parameters
-            .iter_mut()
-            .find(|(n, _)| n.eq_ignore_ascii_case(name));
+        let known = input.parameters.iter_mut().find(|(n, _)| {
+            if kicad {
+                n == name
+            } else {
+                n.eq_ignore_ascii_case(name)
+            }
+        });
         match known {
             Some((_, v)) => v.clone_from(value),
             None => input.parameters.push((name.clone(), value.clone())),
@@ -317,6 +326,120 @@ fn links_to(link: &str, file: &str) -> bool {
         .split(['\\', '/'])
         .filter(|p| !p.is_empty() && *p != ".");
     matches!((parts.next(), parts.next()), (Some(only), None) if only.eq_ignore_ascii_case(file))
+}
+
+/// True for a KiCad board file (`.kicad_pcb`, in any case), when this build reads KiCad.
+fn is_kicad_board(path: &Path) -> bool {
+    cfg!(feature = "kicad") && has_extension(path, "kicad_pcb")
+}
+
+/// True for a KiCad project file (`.kicad_pro`, in any case), when this build reads KiCad.
+fn is_kicad_project(path: &Path) -> bool {
+    cfg!(feature = "kicad") && has_extension(path, "kicad_pro")
+}
+
+fn has_extension(path: &Path, extension: &str) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case(extension))
+}
+
+/// The text variables of a KiCad project file given with `--project`.
+#[cfg(feature = "kicad")]
+fn kicad_project_variables(project: &Path) -> Result<Vec<(String, String)>, String> {
+    let bytes = read_input(project)?;
+    kicad_pcb::project_variables(&bytes).map_err(|e| format!("{}: {e}", project.display()))
+}
+
+#[cfg(not(feature = "kicad"))]
+fn kicad_project_variables(project: &Path) -> Result<Vec<(String, String)>, String> {
+    Err(format!(
+        "{}: this build does not read KiCad projects",
+        project.display()
+    ))
+}
+
+/// The text variables of the KiCad project beside a board passed without `--project`: the
+/// `.kicad_pro` of the board's own name in the board's folder, the one KiCad opens with the board.
+/// None there gives none, silently; one that cannot be used gives a warning naming it (by its file
+/// name only), as does one that is a symbolic link leading out of the folder.
+#[cfg(feature = "kicad")]
+fn variables_next_to(board: &Path) -> (Vec<(String, String)>, Vec<Value>) {
+    let project = board.with_extension("kicad_pro");
+    let Some(name) = project
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+    else {
+        return (Vec::new(), Vec::new());
+    };
+    if !project.is_file() {
+        return (Vec::new(), Vec::new());
+    }
+    let skipped = |why: &str| {
+        let message = format!("the project {name} next to the board was not used: {why}");
+        (
+            Vec::new(),
+            vec![json!({ "severity": "Degraded", "message": message })],
+        )
+    };
+    let folder = match board.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p,
+        _ => Path::new("."),
+    };
+    let inside = match (folder.canonicalize(), project.canonicalize()) {
+        (Ok(f), Ok(p)) => p.starts_with(f),
+        _ => false,
+    };
+    if !inside {
+        return skipped("it leads out of the board's folder through a symbolic link");
+    }
+    let too_big = std::fs::metadata(&project)
+        .map(|m| m.len() > u64::try_from(MAX_INPUT_BYTES).unwrap_or(u64::MAX))
+        .unwrap_or(false);
+    if too_big {
+        return skipped(&format!("it is larger than {MAX_INPUT_BYTES} bytes"));
+    }
+    let Ok(bytes) = std::fs::read(&project) else {
+        return skipped("it cannot be read");
+    };
+    match kicad_pcb::project_variables(&bytes) {
+        Ok(variables) => (
+            variables,
+            vec![json!({
+                "severity": "Info",
+                "message": format!("text variables taken from {name} next to the board"),
+            })],
+        ),
+        Err(e) => skipped(&e),
+    }
+}
+
+#[cfg(not(feature = "kicad"))]
+fn variables_next_to(_: &Path) -> (Vec<(String, String)>, Vec<Value>) {
+    (Vec::new(), Vec::new())
+}
+
+/// Reads a board file. A KiCad board gets its file name (no folder) and `parameters`, its
+/// project's text variables, for the texts that use them.
+fn read_board(
+    format: &dyn board_model::InputFormat,
+    path: &Path,
+    bytes: &[u8],
+    parameters: &[(String, String)],
+) -> Result<board_model::ReadOutcome, String> {
+    #[cfg(feature = "kicad")]
+    if format.id() == board_model::InputFormat::id(&kicad_pcb::KiCad) {
+        let variables = kicad_pcb::Variables {
+            file_name: path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(str::to_string),
+            project: parameters.to_vec(),
+        };
+        return kicad_pcb::read_with(bytes, &variables).map_err(|e| e.to_string());
+    }
+    let _ = (path, parameters);
+    format.read(bytes).map_err(|e| e.to_string())
 }
 
 /// True for an Altium project file (`.PrjPcb`, in any case), when this build reads Altium.
@@ -517,7 +640,7 @@ pub fn build_accepting(
     let head = bytes.get(..bytes.len().min(4096)).unwrap_or_default();
     let format = crate::detect(head, extension)
         .ok_or_else(|| "not a board file this module reads".to_string())?;
-    let mut outcome = format.read(bytes).map_err(|e| e.to_string())?;
+    let mut outcome = read_board(format.as_ref(), path, bytes, parameters)?;
     #[cfg(feature = "altium")]
     if format.id() == board_model::InputFormat::id(&altium_pcbdoc::Altium) {
         let notes = altium_pcbdoc::special_strings::resolve_texts(&mut outcome.board, parameters);

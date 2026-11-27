@@ -16,6 +16,7 @@ use crate::geom::{arc_through, circle_segment, place, pts_contour, split_fill, F
 use crate::outline;
 use crate::padshape;
 use crate::sexpr::Node;
+use crate::text_vars::{Fields, Resolver, Scope, Variables};
 
 /// The first board file version written by KiCad 9. Older files get a note instead of a guess.
 pub const FIRST_SUPPORTED_VERSION: u64 = 20_241_229;
@@ -131,6 +132,13 @@ struct Reader {
     embedded: Vec<crate::fonts::Embedded>,
     fonts_used: Vec<EmbeddedFont>,
     fonts_unused: Vec<bool>,
+    /// Each footprint's fields as stored, for the text variables.
+    fields: Vec<Fields>,
+    /// For each text in `texts`: its stored string, the footprint it belongs to (an index into
+    /// `fields`) and the name KiCad shows for its layer.
+    sources: Vec<(String, Option<usize>, String)>,
+    /// Canonical layer name -> the name KiCad shows for it (the layer table's user name).
+    shown_layer_names: HashMap<String, String>,
 }
 
 /// The sides a `(tenting ...)` list covers: top, bottom. KiCad 9 writes the sides it covers as
@@ -430,7 +438,16 @@ impl Reader {
     // Texts
     // -----------------------------------------------------------------------------------------
 
-    fn text(&mut self, content: &str, node: &Node, spot: TextSpot, frame: &Frame) {
+    /// Adds a text as stored; its text variables are filled in once the whole board is read.
+    /// `owner` is the footprint it belongs to (an index into `fields`).
+    fn text(
+        &mut self,
+        content: &str,
+        node: &Node,
+        spot: TextSpot,
+        frame: &Frame,
+        owner: Option<usize>,
+    ) {
         if node.has_flag("hide") || node.is_yes("hide") {
             self.tally
                 .add(Severity::Info, "hidden text(s) were not drawn");
@@ -537,6 +554,12 @@ impl Reader {
             font: text_font,
             component: None,
         });
+        let shown = self
+            .shown_layer_names
+            .get(layer_name)
+            .cloned()
+            .unwrap_or_else(|| layer_name.to_string());
+        self.sources.push((content.to_string(), owner, shown));
     }
 
     /// The embedded font a text's `face` names, in the style the text asks for or else the
@@ -806,13 +829,28 @@ impl Reader {
             })
             .unwrap_or("")
             .to_string();
-        let value = fp
-            .children("property")
-            .find(|p| p.str_at(0) == Some("Value"))
-            .and_then(|p| p.str_at(1))
-            .unwrap_or("")
-            .to_string();
         let owner = (!designator.is_empty()).then_some(designator.as_str());
+        let mut fields: Vec<(String, String)> = fp
+            .children("property")
+            .filter_map(|p| Some((p.str_at(0)?.to_string(), p.str_at(1)?.to_string())))
+            .collect();
+        if !fields.iter().any(|(n, _)| n == "Reference") {
+            fields.push(("Reference".into(), designator.clone()));
+        }
+        if !fields.iter().any(|(n, _)| n == "Value") {
+            let value = fp
+                .children("fp_text")
+                .find(|t| t.str_at(0) == Some("value"))
+                .and_then(|t| t.str_at(1));
+            if let Some(value) = value {
+                fields.push(("Value".into(), value.to_string()));
+            }
+        }
+        let fields_at = self.fields.len();
+        self.fields.push(Fields {
+            reference: designator.clone(),
+            fields,
+        });
         // `solder_mask_margin`: how far the mask opens past a pad's edge. A pad's own value wins
         // over its footprint's; both sides of the pad get it.
         let footprint_margin = fp
@@ -827,15 +865,19 @@ impl Reader {
             match head {
                 "pad" => self.pad(item, &frame, owner, footprint_margin),
                 "property" => {
-                    if let (Some(spot), Some(text)) = (Self::text_spot(item), item.str_at(1)) {
-                        if matches!(item.str_at(0), Some("Reference") | Some("Value")) {
-                            self.text(&expand(text, &designator, &value), item, spot, &frame);
-                        }
+                    // Every field that is shown is a text, through the same path as any other;
+                    // a hidden field is left out without a note (most footprints hide their
+                    // Datasheet and Description).
+                    let hidden = item.has_flag("hide") || item.is_yes("hide");
+                    if let (Some(spot), Some(text), false) =
+                        (Self::text_spot(item), item.str_at(1), hidden)
+                    {
+                        self.text(text, item, spot, &frame, Some(fields_at));
                     }
                 }
                 "fp_text" => {
                     if let (Some(spot), Some(text)) = (Self::text_spot(item), item.str_at(1)) {
-                        self.text(&expand(text, &designator, &value), item, spot, &frame);
+                        self.text(text, item, spot, &frame, Some(fields_at));
                     }
                 }
                 h if h.starts_with("fp_") => {
@@ -1235,10 +1277,50 @@ impl Reader {
     }
 }
 
-/// Fills in the two text variables KiCad uses on silkscreen labels.
-fn expand(text: &str, reference: &str, value: &str) -> String {
-    text.replace("${REFERENCE}", reference)
-        .replace("${VALUE}", value)
+/// The names KiCad shows for the layers (`F.SilkS` shows as `F.Silkscreen`): the user name the
+/// layer table gives after the layer's kind, or the canonical name when it gives none.
+fn shown_layer_names(root: &Node) -> HashMap<String, String> {
+    let mut names = HashMap::new();
+    if let Some(layers) = root.child("layers") {
+        for entry in layers.args() {
+            let Node::List(items) = entry else { continue };
+            let (Some(name), Some(shown)) = (
+                items.get(1).and_then(Node::text),
+                items.get(3).and_then(Node::text),
+            ) else {
+                continue;
+            };
+            names.insert(name.to_string(), shown.to_string());
+        }
+    }
+    names
+}
+
+/// The title block's fields as text variables: `TITLE`, `REVISION`, `COMPANY`, `ISSUE_DATE` and
+/// `COMMENT1` to `COMMENT9`.
+fn title_block_variables(root: &Node) -> Vec<(String, String)> {
+    let Some(tb) = root.child("title_block") else {
+        return Vec::new();
+    };
+    let mut vars = Vec::new();
+    for (key, name) in [
+        ("title", "TITLE"),
+        ("rev", "REVISION"),
+        ("company", "COMPANY"),
+        ("date", "ISSUE_DATE"),
+    ] {
+        if let Some(v) = tb.child(key).and_then(|c| c.str_at(0)) {
+            vars.push((name.to_string(), v.to_string()));
+        }
+    }
+    for c in tb.children("comment") {
+        if let (Some(n), Some(v)) = (c.num(0), c.str_at(1)) {
+            if (1.0..=9.0).contains(&n) && n.fract() == 0.0 {
+                vars.push((format!("COMMENT{}", n as u32), v.to_string()));
+            }
+        }
+    }
+    vars
 }
 
 /// Reads the layer table: canonical names in stack order, with kind and side.
@@ -1379,7 +1461,8 @@ fn place_copper(root: &Node, layers: &mut [Layer], thickness: Option<f64>, tally
 }
 
 /// Reads a parsed `.kicad_pcb`.
-pub fn read(mut root: Node) -> ReadOutcome {
+/// `variables` is what the texts' text variables may use besides the board file.
+pub fn read(mut root: Node, variables: &Variables) -> ReadOutcome {
     let absurd = crate::sexpr::limit_numbers(&mut root);
     let root = &root;
     let mut tally = Tally::default();
@@ -1467,6 +1550,9 @@ pub fn read(mut root: Node) -> ReadOutcome {
         fonts_unused: Vec::new(),
         fonts_used: Vec::new(),
         embedded: Vec::new(),
+        fields: Vec::new(),
+        sources: Vec::new(),
+        shown_layer_names: shown_layer_names(root),
     };
     let mut font_notes = Vec::new();
     r.embedded = crate::fonts::read(root, &mut font_notes);
@@ -1488,7 +1574,7 @@ pub fn read(mut root: Node) -> ReadOutcome {
             "zone" => r.zone(item),
             "gr_text" => {
                 if let (Some(spot), Some(text)) = (Reader::text_spot(item), item.str_at(0)) {
-                    r.text(text, item, spot, &Frame::IDENTITY);
+                    r.text(text, item, spot, &Frame::IDENTITY, None);
                 }
             }
             h if h.starts_with("gr_") => {
@@ -1554,7 +1640,21 @@ pub fn read(mut root: Node) -> ReadOutcome {
         Severity::Info,
         "board(s) whose stack-up colors, materials, copper weights and finish were not read",
     );
+    let scope = Scope {
+        title_block: title_block_variables(root),
+        properties: root
+            .children("property")
+            .filter_map(|p| Some((p.str_at(0)?.to_string(), p.str_at(1)?.to_string())))
+            .collect(),
+        footprints: &r.fields,
+        variables,
+    };
+    let mut resolver = Resolver::new(&scope);
+    for (text, (raw, owner, layer)) in r.texts.iter_mut().zip(&r.sources) {
+        text.content = resolver.resolve(raw, *owner, layer);
+    }
     let mut notes = r.tally.into_notes();
+    notes.extend(resolver.notes());
     notes.sort_by_key(|n| match n.severity {
         Severity::Dropped => 0,
         Severity::Warning => 1,

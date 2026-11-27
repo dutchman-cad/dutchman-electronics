@@ -9,7 +9,8 @@
 //! What is read: the outline from `Edge.Cuts` (lines, arcs, circles, rectangles, polygons) with
 //! its cutouts; the thickness from the stack-up; the layer list in stack order; footprints with
 //! placement, side, rotation and 3D model references; tracks, arcs, vias, pads and filled zones;
-//! silkscreen lines, arcs, circles, polygons and texts. Anything else becomes a note.
+//! silkscreen lines, arcs, circles, polygons and texts, with their text variables filled in
+//! ([`read_with`]). Anything else becomes a note.
 
 mod fonts;
 mod geom;
@@ -17,6 +18,9 @@ mod outline;
 mod padshape;
 mod reader;
 pub mod sexpr;
+mod text_vars;
+
+pub use text_vars::{project_variables, Variables, MAX_DEPTH, MAX_LEN};
 
 use board_model::{Detection, InputFormat, ReadError, ReadOutcome, MAX_INPUT_BYTES};
 
@@ -64,18 +68,24 @@ impl InputFormat for KiCad {
     }
 
     fn read(&self, bytes: &[u8]) -> Result<ReadOutcome, ReadError> {
-        if bytes.len() > MAX_INPUT_BYTES {
-            return Err(ReadError::TooLarge { bytes: bytes.len() });
-        }
-        let text = String::from_utf8_lossy(bytes);
-        let root = sexpr::parse(&text).map_err(ReadError::Invalid)?;
-        if root.head() != Some("kicad_pcb") {
-            return Err(ReadError::Invalid(
-                "the file does not start with (kicad_pcb".into(),
-            ));
-        }
-        Ok(reader::read(root))
+        read_with(bytes, &Variables::default())
     }
+}
+
+/// Reads a board file like [`KiCad`]'s `read`, filling in its texts' text variables with what
+/// `variables` adds to the board file (its file name and its project's variables).
+pub fn read_with(bytes: &[u8], variables: &Variables) -> Result<ReadOutcome, ReadError> {
+    if bytes.len() > MAX_INPUT_BYTES {
+        return Err(ReadError::TooLarge { bytes: bytes.len() });
+    }
+    let text = String::from_utf8_lossy(bytes);
+    let root = sexpr::parse(&text).map_err(ReadError::Invalid)?;
+    if root.head() != Some("kicad_pcb") {
+        return Err(ReadError::Invalid(
+            "the file does not start with (kicad_pcb".into(),
+        ));
+    }
+    Ok(reader::read(root, variables))
 }
 
 #[cfg(test)]

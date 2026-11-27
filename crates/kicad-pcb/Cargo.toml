@@ -13,6 +13,8 @@ board-model = { path = "../board-model" }
 # Unpacks zstd, which KiCad compresses an embedded font with, within a size and window cap. Pure
 # Rust. MIT licensed. Without its checksum feature (we bound the size ourselves).
 ruzstd = { version = "0.9", default-features = false, features = ["std"] }
+# Reads the text variables of a KiCad project file (.kicad_pro, JSON). MIT or Apache-2.0.
+serde_json = "1"
 
 [lints]
 workspace = true
