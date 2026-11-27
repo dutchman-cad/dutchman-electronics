@@ -1,0 +1,89 @@
+Original test board made for Dutchman Electronics. Released under CC0 1.0 (public domain): https://creativecommons.org/publicdomain/zero/1.0/
+
+The board holds one font file made by others, under the license in LICENSE-DejaVu.txt (DejaVu Sans Mono, Bitstream Vera license): the embedded font is not CC0, everything else is.
+
+k10-all-features: the KiCad twin of the Altium all-features board, one board with every feature the KiCad reader handles. When the reader learns something new, add it to this board, to its build in fixtures/kicad/build_k10_boards.py and to crates/kicad-pcb/tests/all_features.rs. A note the board still raises is listed in that file's only_the_known_gaps test.
+
+Made with KiCad 10.0.8 (file version 20260206) by fixtures/kicad/build_k10_boards.py, then:
+- fixtures/kicad/fill_zones.py (KiCad fills the zone);
+- add_stackup.py with stackup-all-features.sexp (the stack-up table);
+- add_pad_arcs.py with 1 (the arc of pad 8);
+- embed_fonts.py "TrueType 789=DejaVu Sans Mono" (KiCad embeds the font);
+- add_text_vars.py PCB_NUMBER=DN-0100, which writes k10-all-features.kicad_pro.
+
+Every number below was read back with KiCad's own scripting. KiCad shows coordinates in millimeters with Y pointing down; the board's top-left corner is at page position (100, 100), and every number below is relative to that corner (so add 100 to x and y for the page position). The reader gives Y up: model x = 100 + X, model y = -(100 + Y).
+
+Board
+- Outline on Edge.Cuts (line width 0.1): a 100 x 70 rectangle with its four corners rounded, radius 3. Four lines, (3,0)-(97,0), (100,3)-(100,67), (97,70)-(3,70) and (0,67)-(0,3), joined by four quarter arcs about (97,3), (97,67), (3,67) and (3,3).
+- Cutouts: a circle of radius 2 about (90,60), and a rectangle (80,6) to (86,12).
+- Four copper layers, 1.6 mm thick. Stack-up, top to bottom: F.Mask 0.01, F.Cu 0.035, prepreg 0.2, In1.Cu 0.0175, core 1.075, In2.Cu 0.0175, prepreg 0.2, B.Cu 0.035, B.Mask 0.01 (FR4, epsilon_r 4.5). Copper finish ENIG; no mask or silkscreen colors.
+- Pad-to-mask clearance 0. Vias are tented on both sides unless a via says otherwise (KiCad's default).
+- Title block: title "All Features", revision "C1", company "Dutchman Test". Project text variable (in k10-all-features.kicad_pro): PCB_NUMBER = DN-0100.
+- Nets: GND (1), SIG (2).
+
+U1 (test:Shapes, top, at (30,8), not turned, value SHAPES): ten pads on a row at y = 8. Pads 1 to 8 are surface-mount on F.Cu.
+- 1 circle 1.5 at (12,8);
+- 2 rectangle 2 x 1.5 at (16,8);
+- 3 oval 2.5 x 1.5 at (20,8);
+- 4 rounded rectangle 2 x 1.5, radius ratio 0.25 (corner radius 0.375), at (24,8);
+- 5 chamfered rectangle 2 x 1.5, chamfer ratio 0.25 (0.375) on the top-left and bottom-right corners, at (28,8);
+- 6 trapezoid 2 x 1.5, delta (0, 0.5), at (32,8): KiCad's corners (31.25,7.25), (32.75,7.25), (33.25,8.75), (30.75,8.75), so 1.5 wide at Y = 7.25 and 2.5 at Y = 8.75, area 3.0;
+- 7 custom: a 0.8 square anchor plus a filled L, corners (0,0), (1.5,0), (1.5,0.6), (0.6,0.6), (0.6,1.5), (0,1.5) from the pad's center, at (36,8);
+- 8 custom: a 1.0 circle anchor plus a filled D, from (0,-1.2) an arc through (1.2,0) to (0,1.2) and the straight edge back, at (40,8). KiCad's outline of the pad covers 2.650 mm2 (the D, pi * 1.2^2 / 2 = 2.262, plus the half of the anchor left of the straight edge, pi * 0.5^2 / 2 = 0.393: 2.655, less KiCad's facets);
+- 9 plated through hole, circle 1.6, drill 0.8, at (44,8);
+- a plain (unplated) hole of 1.0, no number, at (48,8).
+
+Zone and J1
+- A zone on F.Cu, net GND, outline (5,18), (45,18), (45,38), (5,38). Minimum width 0.25, clearance 0.5, pad connection thermal relief, gap 0.5, spokes 0.5.
+- J1 (test:Pin, top, at (15,28)): a plated circle pad of 1.6, drill 0.8, net GND.
+- A SIG via at (30,28), 0.8, drill 0.4.
+- KiCad's fill, read back: 793.948 mm2 of copper (800 less the two gaps and the rounded corners).
+  - The via's gap: a disc of radius 0.9, pi * 0.81 = 2.545 mm2.
+  - The pad's gap: a disc of radius 1.3 less the four 0.5 mm spokes, 3.470 mm2 by the formula in zone-thermal.README.txt (3.481 with KiCad's facets).
+  - The file saves it as one polygon with bridges; the reader gives one region with two holes.
+
+Tracks and vias, all net SIG
+- F.Cu track (5,45) to (20,45), width 0.25.
+- F.Cu track arc from (20,45) through (25,40) to (30,45), width 0.25: radius 5 about (25,45), the half above it.
+- A through via at (30,45), 0.8, drill 0.4.
+- B.Cu track (30,45) to (40,45), width 0.3.
+- Vias on a row at y = 50, 0.8 with drill 0.4 unless said:
+  - x=5 through, tenting from the board (tented both sides);
+  - x=10 through, tented front and back;
+  - x=15 through, open front and back;
+  - x=20 blind, F.Cu to In1.Cu;
+  - x=25 buried, In1.Cu to In2.Cu;
+  - x=30 micro, F.Cu to In1.Cu, 0.5 with drill 0.2.
+
+Silkscreen on F.SilkS
+- Line (50,20) to (60,20), width 0.15.
+- Arc from (65,20) through (67.12132,20.87868) to (68,23), width 0.2: a quarter circle of radius 3 about (65,23).
+- Circle of radius 2 about (75,22), width 0.15.
+- Rectangle (80,19) to (85,24), width 0.15.
+- Polygon (88,19), (94,19), (93,24), (89,24), width 0.15, not filled.
+- Texts, pen 0.2, vertically centered:
+  - "STROKE", 1.5 high, centered at (55,30), KiCad's stroke font;
+  - "TrueType 789", 2 high, left-justified at (65,30), DejaVu Sans Mono (embedded);
+  - "Rev ${REVISION}", 1.5, left at (55,35): KiCad shows "Rev C1";
+  - "${PCB_NUMBER}", 1.5, left at (75,35): KiCad shows "DN-0100" (project file).
+
+Silkscreen on B.SilkS
+- "BOTTOM", 1.5 high, pen 0.2, centered at (60,40), mirrored.
+
+R1 and R2 (test:R_0603)
+- Each has two 0.9 x 0.95 rectangle pads, 0.8 either side of the origin.
+- Each has the model R_0603.step (not in the board), offset (0.1, 0.2, 0), rotation (0, 0, 90).
+- Each has a shown MPN field: 1.0 high, pen 0.15, 2 from the origin, on the footprint's silkscreen. The Reference field (1.27 high) sits 2 the other way. The Value field is on the Fab layer.
+- R1, top, at (15,58), not turned, value 10k:
+  - pads at (14.2,58) and (15.8,58);
+  - Reference "R1" at (15,60);
+  - MPN "RC0603-10K" at (15,56).
+- R2, flipped to the bottom, at (35,58), turned 90, value 1k:
+  - pads at (35,58.8) and (35,57.2), turned 90, on B.Cu;
+  - Reference "R2" at (33,58), turned 90 and mirrored;
+  - MPN "RC0603-1K" at (37,58), turned 90 and mirrored.
+
+What the reader still loses on this board (crates/kicad-pcb/tests/all_features.rs, only_the_known_gaps):
+- the four Value fields on F.Fab (U1, J1, R1) and B.Fab (R2), which the reader does not draw;
+- the stack-up's finish and materials (an Info note);
+- the model files, which the board names but does not hold (an Info note).

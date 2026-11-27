@@ -84,6 +84,7 @@ for board in "${boards[@]}"; do
     kicad-text-justify) width=96; height=432; thickness=1.6 ;;
     kicad-text-strings) width=96; height=144; thickness=1.6 ;;
     kicad-k10-text-vars) width=100; height=80; thickness=1.6 ;;
+    kicad-k10-all-features) width=100; height=70; thickness=1.6 ;;
     open-GB-CARTPP-XC) width=80; height=55; thickness=1.0 ;;
     open-Franzininho-DIY) width=51.0675; height=30.03; thickness=1.6 ;;
     open-*) echo "::error::no expected size for $name"; failed=1; continue ;;

@@ -185,3 +185,229 @@ for ref, value, mpn, at, flip in [
     if flip:
         fp.Flip(fp.GetPosition(), False)
 save(b, "k10-text-vars")
+
+
+def line(b, a, c, layer=pcbnew.Edge_Cuts, width=0.1):
+    s = shape(b, pcbnew.SHAPE_T_SEGMENT, layer, width)
+    s.SetStart(p(*a))
+    s.SetEnd(p(*c))
+    return s
+
+
+def arc(b, start, mid, end, layer=pcbnew.Edge_Cuts, width=0.1):
+    s = shape(b, pcbnew.SHAPE_T_ARC, layer, width)
+    s.SetArcGeometry(p(*start), p(*mid), p(*end))
+    return s
+
+
+def poly(b, pts, layer=pcbnew.Edge_Cuts, width=0.1):
+    s = shape(b, pcbnew.SHAPE_T_POLY, layer, width)
+    s.SetPolyPoints([p(*q) for q in pts])
+    return s
+
+
+def mm(x, y):
+    return VECTOR2I(FromMM(x), FromMM(y))
+
+
+def pad(fp, number, x, size, kind, attrib=pcbnew.PAD_ATTRIB_SMD, drill=None):
+    d = pcbnew.PAD(fp)
+    d.SetNumber(number)
+    d.SetShape(kind)
+    d.SetAttribute(attrib)
+    d.SetSize(mm(*size))
+    if attrib == pcbnew.PAD_ATTRIB_PTH:
+        d.SetLayerSet(d.PTHMask())
+        d.SetDrillSize(mm(drill, drill))
+    elif attrib == pcbnew.PAD_ATTRIB_NPTH:
+        d.SetLayerSet(d.UnplatedHoleMask())
+        d.SetDrillSize(mm(drill, drill))
+    else:
+        d.SetLayerSet(d.SMDMask())
+    d.SetPosition(mm(x, 0))
+    fp.Add(d)
+    return d
+
+
+def via(b, at, net_, size=0.8, drill=0.4, span=None, tenting=None, micro=False):
+    v = pcbnew.PCB_VIA(b)
+    v.SetPosition(p(*at))
+    v.SetWidth(FromMM(size))
+    v.SetDrill(FromMM(drill))
+    if span is None:
+        v.SetViaType(pcbnew.VIATYPE_THROUGH)
+    else:
+        v.SetViaType(pcbnew.VIATYPE_MICROVIA if micro else pcbnew.VIATYPE_BLIND)
+        v.SetLayerPair(*span)
+    if tenting is not None:
+        v.SetFrontTentingMode(tenting[0])
+        v.SetBackTentingMode(tenting[1])
+    v.SetNet(net_)
+    b.Add(v)
+    return v
+
+
+# k10-all-features (then fill_zones.py, add_stackup.py with stackup-all-features.sexp,
+# add_pad_arcs.py with 1 arc, embed_fonts.py for "TrueType 789", and add_text_vars.py with
+# PCB_NUMBER = DN-0100): the KiCad twin of the Altium all-features board, one of everything the
+# reader handles. k10-all-features.README.txt gives every number; in short:
+# - a 100 x 70 mm outline with corners rounded (radius 3), a circle cutout (radius 2 at (90, 60))
+#   and a rectangle cutout (80, 6) to (86, 12); four copper layers, 1.6 mm, a stack-up with ENIG;
+# - U1 at (30, 8): ten pads 4 mm apart from x = -18, one of each shape (circle, rect, oval,
+#   roundrect, chamfered, trapezoid, custom polygon, custom with an arc, plated hole, plain hole);
+# - a GND zone on F.Cu (5, 18) to (45, 38) with a thermal-relief pad J1 at (15, 28) and a SIG via
+#   at (30, 28);
+# - tracks and an arc on F.Cu and B.Cu along y = 45, joined by a via at (30, 45), and six vias
+#   along y = 50 (tenting, blind, buried, micro);
+# - silkscreen shapes and texts (stroke, TrueType, text variables, one on the bottom);
+# - R1 on the top at (15, 58) and R2 on the bottom at (35, 58), turned 90, with models and a
+#   shown MPN field.
+R2 = 0.70710678
+b = new_board(4, 1.6)
+line(b, (3, 0), (97, 0))
+arc(b, (97, 0), (97 + 3 * R2, 3 - 3 * R2), (100, 3))
+line(b, (100, 3), (100, 67))
+arc(b, (100, 67), (97 + 3 * R2, 67 + 3 * R2), (97, 70))
+line(b, (97, 70), (3, 70))
+arc(b, (3, 70), (3 - 3 * R2, 67 + 3 * R2), (0, 67))
+line(b, (0, 67), (0, 3))
+arc(b, (0, 3), (3 - 3 * R2, 3 - 3 * R2), (3, 0))
+circle(b, (90, 60), 2.0)
+rect(b, (80, 6), (86, 12))
+tb = b.GetTitleBlock()
+tb.SetTitle("All Features")
+tb.SetRevision("C1")
+tb.SetCompany("Dutchman Test")
+gnd = net(b, "GND")
+sig = net(b, "SIG")
+
+fp = pcbnew.FOOTPRINT(b)
+fp.SetReference("U1")
+fp.SetValue("SHAPES")
+fp.SetFPID(pcbnew.LIB_ID("test", "Shapes"))
+pad(fp, "1", -18, (1.5, 1.5), pcbnew.PAD_SHAPE_CIRCLE)
+pad(fp, "2", -14, (2.0, 1.5), pcbnew.PAD_SHAPE_RECT)
+pad(fp, "3", -10, (2.5, 1.5), pcbnew.PAD_SHAPE_OVAL)
+d = pad(fp, "4", -6, (2.0, 1.5), pcbnew.PAD_SHAPE_ROUNDRECT)
+d.SetRoundRectRadiusRatio(0.25)
+d = pad(fp, "5", -2, (2.0, 1.5), pcbnew.PAD_SHAPE_CHAMFERED_RECT)
+d.SetChamferRectRatio(0.25)
+d.SetChamferPositions(1 | 8)  # top-left and bottom-right
+d = pad(fp, "6", 2, (2.0, 1.5), pcbnew.PAD_SHAPE_TRAPEZOID)
+d.SetDelta(mm(0, 0.5))
+d = pad(fp, "7", 6, (0.8, 0.8), pcbnew.PAD_SHAPE_CUSTOM)
+d.SetAnchorPadShape(pcbnew.F_Cu, pcbnew.PAD_SHAPE_RECT)
+L_SHAPE = [(0, 0), (1.5, 0), (1.5, 0.6), (0.6, 0.6), (0.6, 1.5), (0, 1.5)]
+d.AddPrimitivePoly(pcbnew.F_Cu, [mm(x, y) for x, y in L_SHAPE], 0, True)
+d = pad(fp, "8", 10, (1.0, 1.0), pcbnew.PAD_SHAPE_CUSTOM)
+d.SetAnchorPadShape(pcbnew.F_Cu, pcbnew.PAD_SHAPE_CIRCLE)
+# A D: add_pad_arcs.py turns these three points into one arc through (1.2, 0).
+d.AddPrimitivePoly(pcbnew.F_Cu, [mm(0, -1.2), mm(1.2, 0), mm(0, 1.2)], 0, True)
+pad(fp, "9", 14, (1.6, 1.6), pcbnew.PAD_SHAPE_CIRCLE, pcbnew.PAD_ATTRIB_PTH, 0.8)
+pad(fp, "", 18, (1.0, 1.0), pcbnew.PAD_SHAPE_CIRCLE, pcbnew.PAD_ATTRIB_NPTH, 1.0)
+b.Add(fp)
+fp.SetPosition(p(30, 8))
+
+z = pcbnew.ZONE(b)
+z.SetLayer(pcbnew.F_Cu)
+z.SetNet(gnd)
+z.SetMinThickness(FromMM(0.25))
+z.SetLocalClearance(FromMM(0.5))
+z.SetThermalReliefGap(FromMM(0.5))
+z.SetThermalReliefSpokeWidth(FromMM(0.5))
+z.SetPadConnection(pcbnew.ZONE_CONNECTION_THERMAL)
+b.Add(z)
+ol = z.Outline()
+ol.NewOutline()
+for q in [(5, 18), (45, 18), (45, 38), (5, 38)]:
+    ol.Append(FromMM(X0 + q[0]), FromMM(Y0 + q[1]))
+fp = pcbnew.FOOTPRINT(b)
+fp.SetReference("J1")
+fp.SetValue("PIN")
+fp.SetFPID(pcbnew.LIB_ID("test", "Pin"))
+pad(fp, "1", 0, (1.6, 1.6), pcbnew.PAD_SHAPE_CIRCLE, pcbnew.PAD_ATTRIB_PTH, 0.8).SetNet(gnd)
+b.Add(fp)
+fp.SetPosition(p(15, 28))
+via(b, (30, 28), sig)
+
+for a, c, layer, w in [
+    ((5, 45), (20, 45), pcbnew.F_Cu, 0.25),
+    ((30, 45), (40, 45), pcbnew.B_Cu, 0.3),
+]:
+    t = pcbnew.PCB_TRACK(b)
+    t.SetStart(p(*a))
+    t.SetEnd(p(*c))
+    t.SetLayer(layer)
+    t.SetWidth(FromMM(w))
+    t.SetNet(sig)
+    b.Add(t)
+t = pcbnew.PCB_ARC(b)
+t.SetStart(p(20, 45))
+t.SetMid(p(25, 40))
+t.SetEnd(p(30, 45))
+t.SetLayer(pcbnew.F_Cu)
+t.SetWidth(FromMM(0.25))
+t.SetNet(sig)
+b.Add(t)
+via(b, (30, 45), sig)
+T, N = pcbnew.TENTING_MODE_TENTED, pcbnew.TENTING_MODE_NOT_TENTED
+via(b, (5, 50), sig)
+via(b, (10, 50), sig, tenting=(T, T))
+via(b, (15, 50), sig, tenting=(N, N))
+via(b, (20, 50), sig, span=(pcbnew.F_Cu, pcbnew.In1_Cu))
+via(b, (25, 50), sig, span=(pcbnew.In1_Cu, pcbnew.In2_Cu))
+via(b, (30, 50), sig, size=0.5, drill=0.2, span=(pcbnew.F_Cu, pcbnew.In1_Cu), micro=True)
+
+SILK = pcbnew.F_SilkS
+line(b, (50, 20), (60, 20), SILK, 0.15)
+arc(b, (65, 20), (65 + 3 * R2, 23 - 3 * R2), (68, 23), SILK, 0.2)
+circle(b, (75, 22), 2.0, SILK, 0.15)
+rect(b, (80, 19), (85, 24), SILK, 0.15)
+poly(b, [(88, 19), (94, 19), (93, 24), (89, 24)], SILK, 0.15)
+for content, at, layer, size, h in [
+    ("STROKE", (55, 30), SILK, 1.5, pcbnew.GR_TEXT_H_ALIGN_CENTER),
+    ("TrueType 789", (65, 30), SILK, 2.0, pcbnew.GR_TEXT_H_ALIGN_LEFT),
+    ("Rev ${REVISION}", (55, 35), SILK, 1.5, pcbnew.GR_TEXT_H_ALIGN_LEFT),
+    ("${PCB_NUMBER}", (75, 35), SILK, 1.5, pcbnew.GR_TEXT_H_ALIGN_LEFT),
+    ("BOTTOM", (60, 40), pcbnew.B_SilkS, 1.5, pcbnew.GR_TEXT_H_ALIGN_CENTER),
+]:
+    tx = pcbnew.PCB_TEXT(b)
+    tx.SetText(content)
+    tx.SetLayer(layer)
+    tx.SetPosition(p(*at))
+    tx.SetTextSize(mm(size, size))
+    tx.SetTextThickness(FromMM(0.2))
+    tx.SetHorizJustify(h)
+    tx.SetMirrored(layer == pcbnew.B_SilkS)
+    b.Add(tx)
+
+for ref, value, at, rot, flip, mpn in [
+    ("R1", "10k", (15, 58), 0.0, False, "RC0603-10K"),
+    ("R2", "1k", (35, 58), 90.0, True, "RC0603-1K"),
+]:
+    fp = pcbnew.FOOTPRINT(b)
+    fp.SetReference(ref)
+    fp.SetValue(value)
+    fp.SetFPID(pcbnew.LIB_ID("test", "R_0603"))
+    for n, x in (("1", -0.8), ("2", 0.8)):
+        pad(fp, n, x, (0.9, 0.95), pcbnew.PAD_SHAPE_RECT)
+    m = pcbnew.FP_3DMODEL()
+    m.m_Filename = "R_0603.step"
+    m.m_Offset = pcbnew.VECTOR3D(0.1, 0.2, 0.0)
+    m.m_Scale = pcbnew.VECTOR3D(1, 1, 1)
+    m.m_Rotation = pcbnew.VECTOR3D(0, 0, 90)
+    fp.Models().append(m)
+    fp.SetField("MPN", mpn)
+    f = fp.GetField("MPN")
+    f.SetLayer(SILK)
+    f.SetPosition(mm(0, -2))
+    f.SetTextSize(mm(1.0, 1.0))
+    f.SetTextThickness(FromMM(0.15))
+    fp.GetField("Reference").SetPosition(mm(0, 2))
+    b.Add(fp)
+    fp.SetPosition(p(*at))
+    if rot:
+        fp.SetOrientationDegrees(rot)
+    if flip:
+        fp.Flip(fp.GetPosition(), False)
+save(b, "k10-all-features")
