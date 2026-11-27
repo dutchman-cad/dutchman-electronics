@@ -20,8 +20,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use board_model::{
-    Board, CopperItem, EmbeddedModel, ModelRef, ModelSource, Note, Placement, Severity, Side,
-    MAX_INPUT_BYTES,
+    Board, CopperItem, EmbeddedModel, ModelSource, Note, Placement, Severity, Side, MAX_INPUT_BYTES,
 };
 use serde_json::{json, Value};
 
