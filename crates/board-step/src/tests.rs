@@ -1555,3 +1555,72 @@ fn contained_and_merged_via_notes_count_drills_instead_of_openings() {
         assert!(out.notes.iter().any(|n| n.message.starts_with("2 buried via(s)")));
     }
 }
+
+#[test]
+fn unequal_drills_form_a_closed_union_with_clockwise_hole_loops() {
+    let b = board(
+        rect(0.0, 0.0, 50.0, 30.0),
+        vec![],
+        vec![plated_hole(24.6, 15.0, 1.2), plated_hole(25.4, 15.0, 1.0)],
+    );
+    let out = write(&b, "unequal").unwrap();
+    assert_eq!(out.merged.len(), 1);
+    let mut notes = Vec::new();
+    let profile = profile(&b, 1.6, &mut notes).unwrap();
+    assert!(profile.openings.iter().all(|e| exact_area(e) < 0.0));
+    let tube = UnionTube {
+        circles: out.merged[0].circles.clone(),
+        wall: 0.025,
+        span: None,
+    };
+    let plating = tubes_and_unions(&[], &[tube], 0.0, 1.6, "unequal").unwrap();
+    check_topology(&out.text);
+    check_topology(&plating.text);
+}
+
+#[test]
+fn three_circles_through_one_point_fall_back_with_a_loss_note() {
+    // Three unit circles through (0, 0), centered 120 degrees apart. Their boundary
+    // meets at the origin, so chaining has multiple choices and cannot form one loop.
+    let height = 3f64.sqrt() / 2.0;
+    let circles = [(p(1.0, 0.0), 1.0), (p(-0.5, height), 1.0), (p(-0.5, -height), 1.0)];
+    assert!(union_outline(&circles).is_none());
+    let b = board(
+        rect(0.0, 0.0, 50.0, 30.0),
+        vec![],
+        circles.iter().map(|(c, r)| hole(25.0 + c.x, 15.0 + c.y, 2.0 * r)).collect(),
+    );
+    let out = write(&b, "triple").unwrap();
+    assert_eq!(out.holes.len(), 1);
+    assert!(out.notes.iter().any(|n| n.severity == Severity::Dropped));
+    check_topology(&out.text);
+}
+
+#[test]
+fn merged_blind_drills_keep_their_plating_height_after_write() {
+    let b = four_layer(vec![via_on(10.0, Some((0, 1))), via_on(10.3, Some((0, 1)))]);
+    let out = write(&b, "blind-union").unwrap();
+    assert_eq!(out.merged.len(), 1);
+    assert_eq!(out.merged[0].span, Some((1.065, 1.6)));
+    check_topology_blind(&out.text, 1);
+    let mut notes = Vec::new();
+    let profile = profile(&b, 1.6, &mut notes).unwrap();
+    assert!(profile.pockets.iter().all(|p| exact_area(&p.edges) < 0.0));
+    let tube = UnionTube {
+        circles: out.merged[0].circles.clone(),
+        wall: 0.025,
+        span: out.merged[0].span,
+    };
+    let plating = tubes_and_unions(&[], &[tube], 0.0, 1.6, "blind").unwrap();
+    let all = entities(&plating.text);
+    let heights: Vec<f64> = all.values()
+        .filter(|(name, _)| name == "VERTEX_POINT")
+        .map(|(_, args)| {
+            let point = &all[&refs(args)[0]].1;
+            point.trim_end_matches(')').rsplit(',').next().unwrap().parse().unwrap()
+        })
+        .collect();
+    assert!((heights.iter().copied().fold(f64::INFINITY, f64::min) - 1.065).abs() < 1e-9);
+    assert!((heights.iter().copied().fold(f64::NEG_INFINITY, f64::max) - 1.6).abs() < 1e-9);
+    check_topology(&plating.text);
+}

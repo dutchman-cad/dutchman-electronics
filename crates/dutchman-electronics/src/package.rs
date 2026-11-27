@@ -2947,6 +2947,25 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "kicad")]
+    #[test]
+    fn board_info_and_dropped_notes_reach_the_manifest() {
+        let bytes = br#"(kicad_pcb (version 20241229) (generator "pcbnew")
+          (general (thickness 1.6))
+          (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+          (footprint "test" (layer "F.Cu") (at 0 0)
+            (pad "1" thru_hole circle (at 10 5) (size 2 2) (drill 1) (layers "*.Cu" "*.Mask"))
+            (pad "2" thru_hole circle (at 10.8 5) (size 2 2) (drill 1) (layers "*.Cu" "*.Mask"))
+            (pad "3" thru_hole circle (at 0 0) (size 2 2) (drill 1) (layers "*.Cu" "*.Mask")))
+          (gr_rect (start 0 0) (end 20 10) (stroke (width 0.1) (type default)) (fill no) (layer "Edge.Cuts")))"#;
+        let package = build(Path::new("notes.kicad_pcb"), bytes, &[], &[], crate::overlay::Copper::Outer).unwrap();
+        let notes = package.manifest["notes"].as_array().unwrap();
+        assert!(notes.iter().any(|n| n["severity"] == "Info"
+            && n["message"].as_str().unwrap().contains("2 overlapping drilled hole(s)")));
+        assert!(notes.iter().any(|n| n["severity"] == "Dropped"
+            && n["message"].as_str().unwrap().contains("board edge")));
+    }
+
     #[test]
     fn overlapping_plated_holes_have_one_tube() {
         use board_model::{Board, CopperItem, Outline};
