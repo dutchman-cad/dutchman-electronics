@@ -1222,8 +1222,13 @@ fn pad_arcs_match_kicads_own_gerber_export() {
             assert!(!kicad.is_empty(), "{name}: no Gerber flash at {at:?}");
             for p in kicad.iter().flatten() {
                 let d = dist_to_contours(*p, shapes);
+                // KiCad cuts an arc into chords with at most 5 micrometers of error and places the
+                // corners of a concave edge (the inside of a stroked arc) up to that far off the
+                // circle: its corner at (113.000091, -107.905464) on the inner edge of pad 2's
+                // stroke, radius 1.0, sits at radius 1.0044. So 5 micrometers plus the 1e-6
+                // rounding of the Gerber file is the tolerance.
                 assert!(
-                    d < 0.002,
+                    d < 0.0051,
                     "{name} pad at {at:?}: KiCad's corner {p:?} is {d} off our outline"
                 );
             }
