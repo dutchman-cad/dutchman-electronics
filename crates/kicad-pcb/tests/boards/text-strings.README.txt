@@ -1,0 +1,7 @@
+Original test board made for Dutchman Electronics. Released under CC0 1.0 (public domain): https://creativecommons.org/publicdomain/zero/1.0/
+
+text-strings: 24 ordinary silkscreen strings, one per cell of a grid 24 mm apart (4 across), to see how far KiCad's own letters differ from ours in where they land. Cell i (counting from 0, left to right then down) is at (12 + 24 * (i mod 4), 12 + 24 * (i div 4)) in KiCad's coordinates relative to the board's own corner (page position (100, 100)). The outline is a rectangle 96 mm wide and 144 mm high.
+
+Made with KiCad 9.0.9 (file version 20241229) by fixtures/kicad/build_boards.py. All on the top silkscreen, not turned, vertically centered. In order, for each of 1 mm (pen 0.15), 1.5 mm (pen 0.2) and 2.5 mm (pen 0.3): the strings "R1", "GND", "0.1uF" and "J3", each centered and then right-justified.
+
+The boxes of the strokes KiCad's Gerber export draws are in tests/gerber/text-strings-F_Silkscreen.extents.txt (read by fixtures/kicad/gerber_text_extents.py; only the extents are kept, not the Gerber file).
