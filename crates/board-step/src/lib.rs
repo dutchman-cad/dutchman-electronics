@@ -1035,7 +1035,9 @@ fn inset_outline(
         let &(center, radius) = circles.get(circle)?;
         let start = shrunk(edge.start, circle)?;
         let end = shrunk(edge.end, circle)?;
-        if radius * sweep(&edge) < 4.0 * wall {
+        // Long union arcs have already been split in half for STEP side faces.
+        // Each half needs only half of the full arc's bend allowance.
+        if radius * sweep(&edge) < 2.0 * wall {
             return None;
         }
         out.push(Edge2 {

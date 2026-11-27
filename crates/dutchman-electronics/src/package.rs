@@ -858,11 +858,25 @@ fn plating(board: &Board, step: &board_step::BoardStep) -> Plating {
             left_out = left_out.saturating_add(merged.circles.len().saturating_add(merged.also));
             continue;
         }
-        unions.push(board_step::UnionTube {
+        let tube = board_step::UnionTube {
             circles: merged.circles.clone(),
             wall: PLATING_THICKNESS,
             span: merged.span,
-        });
+        };
+        // A failed union must not prevent the other openings from receiving copper.
+        if board_step::tubes_and_unions(
+            &[],
+            std::slice::from_ref(&tube),
+            0.0,
+            thickness,
+            PLATING_PART,
+        )
+        .is_err()
+        {
+            left_out = left_out.saturating_add(merged.circles.len().saturating_add(merged.also));
+            continue;
+        }
+        unions.push(tube);
     }
     let mut notes = Vec::new();
     if not_cut > 0 {
@@ -878,7 +892,7 @@ fn plating(board: &Board, step: &board_step::BoardStep) -> Plating {
             "severity": "Dropped",
             "message": format!(
                 "{left_out} plated drilled hole(s) are too small to line with {PLATING_THICKNESS} mm of \
-                 plating, or past the first {} tubes, and have no plating",
+                 plating, have an outline that cannot be lined, or are past the first {} tubes, and have no plating",
                 board_step::MAX_TUBES
             ),
         }));
@@ -2966,6 +2980,45 @@ mod tests {
             "{:?}",
             p.notes
         );
+    }
+
+    #[test]
+    fn small_merged_drills_and_other_holes_keep_their_plating() {
+        let via = |x, drill| CopperItem::Via {
+            at: Point { x, y: 5.0 },
+            diameter: 1.8,
+            drill,
+            tented: [None, None],
+            mask_expansion: [None, None],
+            layers: None,
+        };
+        let board = Board {
+            thickness: Some(1.6),
+            outline: board_model::Outline {
+                outer: rect(0.0, 0.0, 20.0, 10.0),
+                cutouts: Vec::new(),
+            },
+            copper: vec![via(5.0, 0.11), via(5.01, 0.11), via(10.0, 1.0)],
+            ..Board::default()
+        };
+        let mut step = board_step::write(&board, "small").unwrap();
+        assert_eq!((step.merged.len(), step.holes.len()), (1, 1));
+        let p = plating(&board, &step);
+        assert_eq!(p.text.unwrap().matches("MANIFOLD_SOLID_BREP(").count(), 2);
+        assert!(p.notes.iter().all(|n| n["severity"] == "Info"));
+
+        // A union whose outline cannot be lined leaves both usable tubes intact.
+        step.merged.push(board_step::MergedHole {
+            circles: vec![(Point { x: 15.0, y: 5.0 }, 0.5),
+                (Point { x: 15.99999, y: 5.0 }, 0.5)],
+            plated: true,
+            span: None,
+            also: 0,
+        });
+        let p = plating(&board, &step);
+        assert_eq!(p.text.unwrap().matches("MANIFOLD_SOLID_BREP(").count(), 2);
+        assert!(p.notes.iter().any(|n| n["severity"] == "Dropped"
+            && n["message"].as_str().unwrap().starts_with("2 plated drilled")));
     }
 
     #[test]
