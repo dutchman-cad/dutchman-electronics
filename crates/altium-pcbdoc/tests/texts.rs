@@ -41,7 +41,7 @@ fn one_text_is_test_on_top_overlay() -> Result<(), Box<dyn std::error::Error>> {
     assert!(!t.mirrored);
     // README.txt: Altium's stroke font, stroke width 0.200.
     assert!(
-        matches!(t.font, TextFont::Stroke { width } if near(width, 0.2)),
+        matches!(t.font, TextFont::Stroke { width, .. } if near(width, 0.2)),
         "{:?}",
         t.font
     );

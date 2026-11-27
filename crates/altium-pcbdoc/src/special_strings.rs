@@ -175,7 +175,10 @@ mod tests {
             height: 1.5,
             rotation_deg: 0.0,
             mirrored: false,
-            font: TextFont::Stroke { width: 0.15 },
+            font: TextFont::Stroke {
+                width: 0.15,
+                font: board_model::StrokeFont::Default,
+            },
             component,
         }
     }
