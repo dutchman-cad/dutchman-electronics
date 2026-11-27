@@ -142,7 +142,7 @@ pub(crate) fn read(
         };
         let Some(layer) = layers.text_layer(layer_number) else {
             *other_layers
-                .entry(layers.layer_name(layer_number))
+                .entry(layers.off_copper_label(layer_number))
                 .or_default() += 1;
             continue;
         };
@@ -179,7 +179,7 @@ pub(crate) fn read(
     for (layer, n) in other_layers {
         notes.push(Note {
             severity: Severity::Dropped,
-            message: format!("{n} text(s) on {layer} (not a copper or overlay layer) not read yet"),
+            message: format!("{n} text(s) on {layer} not read yet"),
         });
     }
     if unreadable > 0 {

@@ -168,3 +168,28 @@ fn each_pour_is_read_as_altium_poured_it() -> Result<(), Box<dyn std::error::Err
     assert_eq!(regions, [1, 0, 0, 0]);
     Ok(())
 }
+
+/// mech-layer-kinds: what lies on the typed mechanical layers is not read yet, and each note
+/// names the layer's kind and side.
+#[test]
+fn notes_for_mechanical_layers_name_their_kind() -> Result<(), Box<dyn std::error::Error>> {
+    let out = read("mech-layer-kinds.PcbDoc")?;
+    let mut dropped: Vec<&str> = out
+        .notes
+        .iter()
+        .filter(|n| n.severity == Severity::Dropped)
+        .map(|n| n.message.as_str())
+        .collect();
+    dropped.sort_unstable();
+    assert_eq!(
+        dropped,
+        [
+            "1 track(s) on Bottom Courtyard (courtyard, bottom) not read yet",
+            "2 text(s) on Top Designator (designator, top) not read yet",
+            "4 track(s) on Top Assembly (assembly, top) not read yet",
+            "4 track(s) on Top Component Outline (component outline, top) not read yet",
+            "4 track(s) on Top Courtyard (courtyard, top) not read yet",
+        ]
+    );
+    Ok(())
+}

@@ -99,6 +99,15 @@
 //!   fill 31 at byte 46 and the region `KEEPOUTRESTRICTIONS=31` (Altium's default restrictions).
 //!   A keepout is a rule for placing and routing, not something that is made, so both kinds are
 //!   left out, each kind with an Info note.
+//! - Mechanical layer kinds (`mech-layer-kinds`, one-resistor with four Component Layer Pairs
+//!   added in View Configuration): `/Board6/Data` has `LAYERnMECHKIND` for each typed mechanical
+//!   layer, `3DBodyTop` and `3DBodyBottom` on 58 and 59 (Mechanical 2 and 3, as on one-resistor),
+//!   `CourtyardTop`, `CourtyardBottom`, `AssemblyTop`, `AssemblyBottom`, `ComponentOutlineTop`,
+//!   `ComponentOutlineBottom`, `DesignatorTop` and `DesignatorBottom` on 60 to 67 (Mechanical 4
+//!   to 11; Mechanical k is layer byte 56 + k), and the pairs as `MECHPAIRnL1`/`MECHPAIRnL2` =
+//!   `MECHANICAL4`/`MECHANICAL5` and so on. The reader keeps each layer's kind, side and pair
+//!   (no board model place yet), and the notes for what lies on such a layer name its kind:
+//!   "on Bottom Courtyard (courtyard, bottom)".
 //! - Nets (`one-net`): `/Nets6/Data` is a run of records, each a `u32` length and text with
 //!   `NAME=GND`; the n-th record (from 0) is net n. Bytes 3..5 of a track's body are its net
 //!   index: 0 on `one-net`'s track, `ff ff` for no net.
@@ -177,6 +186,8 @@ const MAX_RECORDS: usize = 10_000_000;
 /// The most layers named in `/Board6/Data` that are looked at.
 const MAX_LAYER_NUMBER: u8 = u8::MAX;
 const NO_NET: u16 = 0xffff;
+/// Altium's mechanical layers: Mechanical 1 to 16.
+const MAX_MECHANICAL: u8 = 16;
 /// Byte 2 of a track, arc, fill or region body is [`KEEPOUT`] when Altium's Keepout box is ticked.
 pub(crate) const KEEPOUT_AT: usize = 2;
 pub(crate) const KEEPOUT: u8 = 2;
@@ -208,6 +219,76 @@ pub(crate) struct CopperLayers {
     /// Each plane layer's pull-back from the board edge (`PULLBACKDISTANCE` in the V9 stack), by
     /// the layer's name, in mm.
     pull_backs: std::collections::BTreeMap<String, f64>,
+    /// For each layer byte, its mechanical layer kind, when `/Board6/Data` gives one.
+    mech: Vec<Option<MechLayer>>,
+}
+
+/// What a typed mechanical layer is for (`LAYERnMECHKIND`), and its pair.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct MechLayer {
+    /// The kind in words, from Altium's name for it: `CourtyardBottom` is "courtyard",
+    /// `ComponentOutlineTop` "component outline", `3DBodyTop` "3D body".
+    pub kind: String,
+    /// `Top` or `Bottom` at the end of the kind; `None` for a kind with neither.
+    pub side: Option<Side>,
+    /// The layer byte of the other layer of its pair (`MECHPAIRnL1`/`L2`), if it has one.
+    pub pair: Option<u8>,
+}
+
+impl MechLayer {
+    fn parse(value: &str) -> Option<Self> {
+        let value = value.trim();
+        let (base, side) = if let Some(b) = value.strip_suffix("Top") {
+            (b, Some(Side::Top))
+        } else if let Some(b) = value.strip_suffix("Bottom") {
+            (b, Some(Side::Bottom))
+        } else {
+            (value, None)
+        };
+        if base.is_empty() {
+            return None;
+        }
+        Some(Self {
+            kind: kind_words(base),
+            side,
+            pair: None,
+        })
+    }
+}
+
+/// Altium's run-together kind name in words: a new word at each capital that follows a small
+/// letter, or that starts a capitalised word; a word that is all capitals and digits ("3D")
+/// keeps its case, the others are put in small letters.
+fn kind_words(name: &str) -> String {
+    let chars: Vec<char> = name.chars().collect();
+    let mut words: Vec<String> = Vec::new();
+    let mut word = String::new();
+    for (i, &c) in chars.iter().enumerate() {
+        let before = i.checked_sub(1).and_then(|j| chars.get(j)).copied();
+        let after = chars.get(i + 1).copied();
+        let starts = c.is_uppercase()
+            && (before.is_some_and(char::is_lowercase)
+                || (before.is_some_and(|b| b.is_uppercase() || b.is_ascii_digit())
+                    && after.is_some_and(char::is_lowercase)));
+        if starts && !word.is_empty() {
+            words.push(std::mem::take(&mut word));
+        }
+        word.push(c);
+    }
+    if !word.is_empty() {
+        words.push(word);
+    }
+    words
+        .into_iter()
+        .map(|w| {
+            if w.chars().all(|c| c.is_uppercase() || c.is_ascii_digit()) {
+                w
+            } else {
+                w.to_lowercase()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 impl CopperLayers {
@@ -290,13 +371,63 @@ impl CopperLayers {
                 });
             }
         }
+        let mut mech: Vec<Option<MechLayer>> = (0..=MAX_LAYER_NUMBER)
+            .map(|n| {
+                board
+                    .get(&format!("LAYER{n}MECHKIND"))
+                    .and_then(MechLayer::parse)
+            })
+            .collect();
+        // Mechanical k is layer byte 56 + k.
+        let mechanical = |value: Option<&str>| -> Option<u8> {
+            let k: u8 = value?.trim().strip_prefix("MECHANICAL")?.parse().ok()?;
+            (1..=MAX_MECHANICAL).contains(&k).then(|| 56 + k)
+        };
+        for i in 0..=usize::from(MAX_MECHANICAL) {
+            let (Some(a), Some(b)) = (
+                mechanical(board.get(&format!("MECHPAIR{i}L1"))),
+                mechanical(board.get(&format!("MECHPAIR{i}L2"))),
+            ) else {
+                continue;
+            };
+            for (this, other) in [(a, b), (b, a)] {
+                if let Some(Some(m)) = mech.get_mut(usize::from(this)) {
+                    m.pair = Some(other);
+                }
+            }
+        }
         Self {
             layers,
             by_number,
             names,
             nets: Vec::new(),
             pull_backs,
+            mech,
         }
+    }
+
+    /// The mechanical layer kind of a layer byte, when the file gives one.
+    pub(crate) fn mech(&self, number: u8) -> Option<&MechLayer> {
+        self.mech.get(usize::from(number))?.as_ref()
+    }
+
+    /// A layer's name for a note, with its mechanical kind and side when it has one
+    /// ("Bottom Courtyard (courtyard, bottom)"); `None` when it has no kind.
+    pub(crate) fn kind_label(&self, number: u8) -> Option<String> {
+        let m = self.mech(number)?;
+        let side = match m.side {
+            Some(Side::Top) => ", top",
+            Some(Side::Bottom) => ", bottom",
+            None => "",
+        };
+        Some(format!("{} ({}{side})", self.name(number), m.kind))
+    }
+
+    /// A layer's name for a "not read yet" note: with its mechanical kind when it has one, else
+    /// saying that it is neither copper nor overlay.
+    pub(crate) fn off_copper_label(&self, number: u8) -> String {
+        self.kind_label(number)
+            .unwrap_or_else(|| format!("{} (not a copper or overlay layer)", self.name(number)))
     }
 
     /// The pull-back from the board edge of the plane layer at `index` in `layers`, in mm, when
@@ -351,10 +482,6 @@ impl CopperLayers {
             position: None,
         });
         Some(self.layers.len() - 1)
-    }
-
-    pub(crate) fn layer_name(&self, number: u8) -> String {
-        self.name(number)
     }
 
     /// The net of a record whose body holds the net index at bytes 3..5: `Ok(None)` for no net,
@@ -465,9 +592,7 @@ impl Skipped {
         for (layer, count) in self.off_copper {
             notes.push(Note {
                 severity: Severity::Dropped,
-                message: format!(
-                    "{count} {what} on {layer} (not a copper or overlay layer) not read yet"
-                ),
+                message: format!("{count} {what} on {layer} not read yet"),
             });
         }
         if self.bad_angle > 0 {
@@ -573,7 +698,7 @@ pub(crate) fn tracks(
         } else {
             *skipped
                 .off_copper
-                .entry(layers.name(layer_number))
+                .entry(layers.off_copper_label(layer_number))
                 .or_default() += 1;
         }
     }
@@ -639,7 +764,7 @@ pub(crate) fn pads(
         let Some(layer) = layers.copper_index(layer_number) else {
             *skipped
                 .off_copper
-                .entry(layers.name(layer_number))
+                .entry(layers.off_copper_label(layer_number))
                 .or_default() += 1;
             continue;
         };
@@ -916,7 +1041,7 @@ pub(crate) fn arcs(
                 None => {
                     *skipped
                         .off_copper
-                        .entry(layers.name(layer_number))
+                        .entry(layers.off_copper_label(layer_number))
                         .or_default() += 1;
                 }
             }
@@ -1046,12 +1171,14 @@ pub(crate) fn fills(
         }
         let Some(layer) = layers.copper_index(layer_number) else {
             let name = layers.name(layer_number);
-            let counts = if is_overlay(&name) {
-                &mut on_overlay
+            if is_overlay(&name) {
+                *on_overlay.entry(name).or_default() += 1;
             } else {
-                &mut skipped.off_copper
-            };
-            *counts.entry(name).or_default() += 1;
+                *skipped
+                    .off_copper
+                    .entry(layers.off_copper_label(layer_number))
+                    .or_default() += 1;
+            }
             continue;
         };
         let center = Point {
@@ -1121,7 +1248,9 @@ pub(crate) fn regions(
                 let what = format!(
                     "region(s) of KIND {} on {}",
                     kind.unwrap_or("?"),
-                    layers.name(region.layer)
+                    layers
+                        .kind_label(region.layer)
+                        .unwrap_or_else(|| layers.name(region.layer))
                 );
                 *not_copper.entry(what).or_default() += 1;
             }
@@ -1309,6 +1438,41 @@ mod tests {
              |LAYER1NAME=Top Layer|LAYER74NAME=Multi-Layer|LAYER33NAME=Top Overlay\
              |LAYER57NAME=Mechanical 1",
         ))
+    }
+
+    /// mech-layer-kinds: each typed mechanical layer's kind, side and pair, and the labels the
+    /// notes use.
+    #[test]
+    fn mechanical_layers_keep_their_kind_side_and_pair() {
+        let l = CopperLayers::new(&board(
+            "|LAYER58NAME=Mechanical 2|LAYER58MECHKIND=3DBodyTop\
+             |LAYER59NAME=Mechanical 3|LAYER59MECHKIND=3DBodyBottom\
+             |LAYER60NAME=Top Courtyard|LAYER60MECHKIND=CourtyardTop\
+             |LAYER61NAME=Bottom Courtyard|LAYER61MECHKIND=CourtyardBottom\
+             |LAYER64NAME=Top Component Outline|LAYER64MECHKIND=ComponentOutlineTop\
+             |LAYER65NAME=Bottom Component Outline|LAYER65MECHKIND=ComponentOutlineBottom\
+             |LAYER57NAME=Mechanical 1\
+             |MECHPAIR0L1=MECHANICAL2|MECHPAIR0L2=MECHANICAL3\
+             |MECHPAIR1L1=MECHANICAL4|MECHPAIR1L2=MECHANICAL5\r",
+        ));
+        let mech = |n: u8| l.mech(n).map(|m| (m.kind.as_str(), m.side, m.pair));
+        assert_eq!(mech(58), Some(("3D body", Some(Side::Top), Some(59))));
+        assert_eq!(mech(59), Some(("3D body", Some(Side::Bottom), Some(58))));
+        assert_eq!(mech(60), Some(("courtyard", Some(Side::Top), Some(61))));
+        assert_eq!(mech(61), Some(("courtyard", Some(Side::Bottom), Some(60))));
+        assert_eq!(mech(64), Some(("component outline", Some(Side::Top), None)));
+        assert_eq!(mech(57), None);
+        assert_eq!(
+            l.off_copper_label(61),
+            "Bottom Courtyard (courtyard, bottom)"
+        );
+        assert_eq!(
+            l.off_copper_label(57),
+            "Mechanical 1 (not a copper or overlay layer)"
+        );
+        assert_eq!(kind_words("GoldPlating"), "gold plating");
+        assert_eq!(kind_words("Coating"), "coating");
+        assert_eq!(MechLayer::parse("Top"), None);
     }
 
     #[test]
