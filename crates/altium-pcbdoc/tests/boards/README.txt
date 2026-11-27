@@ -1270,6 +1270,53 @@ body-arc-outline.PcbDoc  (from one-resistor)
 Saving embedded Arial in each of them (none of their texts uses it); it was removed as before
 (see "Paths inside the files").
 
+Feature gaps, first batch (pad-hole-shapes, keepouts)
+-----------------------------------------------------
+Made on 2026-11-27, each from a file copy of empty-outline, one feature per board, by my own
+scripts; every object was read back and logged, and each board was saved once and closed. These
+are features Altium offers that no board here had before. "Units" below are the file's own
+1/10000 mil (1 mm = 393700.787 units).
+
+pad-hole-shapes.PcbDoc
+    Five free pads (no component, no net), simple pad stack, Multi-Layer, at y 15.000:
+        pad  x       pad shape and size        hole                                 plated
+        1    8.000   round 2.000 x 2.000       round, 1.000                         yes
+        2    16.000  round 3.000 x 1.600 (oval) slot, width 0.800, length 2.200, 0 deg yes
+        3    25.000  round 3.000 x 3.000       slot, width 0.800, length 2.200, 45 deg yes
+        4    34.000  rectangle 2.000 x 2.000   square, 1.000                        yes
+        5    42.000  round 3.000 x 1.600 (oval) slot, width 0.800, length 2.200, 0 deg no
+    The pads themselves are not turned; pad 3's hole is turned 45 degrees inside its round pad.
+    What the file stores (/Pads6/Data, each pad a record of six blocks):
+        block 4 (geometry), from byte 45: the hole size, which is the slot's width (0.800 on
+            pads 2, 3 and 5) or the square's side (1.000 on pad 4); byte 60 the plating (0 on
+            pad 5)
+        block 5: empty (length 0) on pad 1; 651 bytes on pads 2 to 5. In it, byte 262 is the hole
+            type (1 square, 2 slot), bytes 263..267 the slot's length (866142 units, 2.200, on
+            pads 2, 3 and 5; 0 on pad 4), and bytes 267..275 the hole's rotation as an f64 in
+            degrees (45.0 on pad 3, 0.0 on the others)
+    Altium draws pads 2, 3 and 5 with a rounded slot and pad 4 with a square hole.
+
+keepouts.PcbDoc
+    Objects on the Keep-Out layer (layer byte 56), no net:
+        track   (5, 24) to (15, 24), width 0.300
+        arc     center (22, 24), radius 2.000, 0 to 180 degrees, width 0.300
+        fill    (30, 22) to (36, 26), rotation 0
+        region  (40, 22), (46, 22), (46, 26), (40, 26), KIND 0
+    Objects on Top Layer (layer byte 1) with the keepout flag set (Altium's "Keepout" box), no
+    net, and Altium's default keepout restrictions:
+        track   (5, 8) to (15, 8), width 0.300
+        fill    (30, 6) to (36, 10), rotation 0
+        region  (40, 6), (46, 6), (46, 10), (40, 10), KIND 0
+    And one plain Top Layer track, (5, 15) to (15, 15), width 0.300, to compare with.
+    What the file stores: byte 2 of the track, fill and region record is 2 on the three flagged
+    objects and 0 on every other one. The flagged track has 31 at byte 45 and the flagged fill 31
+    at byte 46 (0 on the plain track); the flagged region's text part has
+    KEEPOUTRESTRICTIONS=31, which no other region has. So a keepout on Top Layer looks like
+    copper unless byte 2 is read: it is not copper on the made board.
+
+Saving embedded Arial in keepouts (no text uses it); it was removed as before (see "Paths inside
+the files").
+
 Paths inside the files
 ----------------------
 Altium writes a few paths from the PC that saved a board into the file. After the last save, I
