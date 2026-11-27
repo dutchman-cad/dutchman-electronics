@@ -624,11 +624,13 @@ pub(crate) fn read(
     let origin = (board.length_mm("ORIGINX")?, board.length_mm("ORIGINY")?);
     if let (Some(x), Some(y)) = origin {
         if x != 0.0 || y != 0.0 {
+            // `origin-moved`: moving the origin moves nothing on the board; Altium only shows
+            // positions from there. The stored coordinates are the board's, so they are kept.
             notes.push(Note {
-                severity: Severity::Warning,
+                severity: Severity::Info,
                 message: format!(
-                    "the board's origin is at ({x:.3}, {y:.3}) mm; coordinates are kept as stored, \
-                     not moved to that origin"
+                    "the board's origin is at ({x:.3}, {y:.3}) mm; Altium shows positions from \
+                     there, here they are kept as stored (nothing on the board moves)"
                 ),
             });
         }

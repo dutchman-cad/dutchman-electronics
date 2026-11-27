@@ -3,7 +3,7 @@
 //! origin and a solid 3D mask. Numbers to 0.001 mm, as AGENTS.md asks.
 
 use altium_pcbdoc::Altium;
-use board_model::{CopperItem, InputFormat, ReadOutcome, Severity};
+use board_model::{CopperItem, InputFormat, ReadOutcome, Segment, Severity};
 
 const TOLERANCE: f64 = 0.001;
 
@@ -47,5 +47,69 @@ fn filled_shapes_on_the_overlay_are_left_out_with_the_right_reason(
             format!("2 fill(s) on Top Overlay {why}"),
         ]
     );
+    Ok(())
+}
+
+/// origin-moved: one-resistor with the origin 10 right and 5 up. Nothing on the board moved, so
+/// it reads exactly as one-resistor does (the outline's corner at (0, 0), R1 at (25, 15), its
+/// pads at (24.2, 15) and (25.8, 15)); only an Info note names the origin.
+#[test]
+fn a_moved_origin_moves_nothing() -> Result<(), Box<dyn std::error::Error>> {
+    let moved = read("origin-moved.PcbDoc")?;
+    let plain = read("one-resistor.PcbDoc")?;
+    assert!(moved.board == plain.board, "the boards differ");
+
+    let starts: Vec<(f64, f64)> = moved
+        .board
+        .outline
+        .outer
+        .segments
+        .iter()
+        .filter_map(|s| match s {
+            Segment::Line { from, .. } => Some((from.x, from.y)),
+            _ => None,
+        })
+        .collect();
+    let corner = starts
+        .iter()
+        .fold((f64::MAX, f64::MAX), |(x, y), p| (x.min(p.0), y.min(p.1)));
+    assert!(
+        corner.0.abs() <= TOLERANCE && corner.1.abs() <= TOLERANCE,
+        "{starts:?}"
+    );
+    let r1 = moved.board.components.first().ok_or("no R1")?;
+    assert!((r1.at.x - 25.0).abs() <= TOLERANCE && (r1.at.y - 15.0).abs() <= TOLERANCE);
+    let mut pads: Vec<f64> = moved
+        .board
+        .copper
+        .iter()
+        .filter_map(|c| match c {
+            CopperItem::Pad { at, .. } if (at.y - 15.0).abs() <= TOLERANCE => Some(at.x),
+            _ => None,
+        })
+        .collect();
+    pads.sort_by(f64::total_cmp);
+    assert!(
+        pads.len() == 2
+            && (pads[0] - 24.2).abs() <= TOLERANCE
+            && (pads[1] - 25.8).abs() <= TOLERANCE,
+        "{pads:?}"
+    );
+
+    let extra: Vec<_> = moved
+        .notes
+        .iter()
+        .filter(|n| !plain.notes.contains(n))
+        .collect();
+    let [origin] = extra.as_slice() else {
+        return Err(format!("{:?}", moved.notes).into());
+    };
+    assert_eq!(origin.severity, Severity::Info);
+    assert_eq!(
+        origin.message,
+        "the board's origin is at (10.000, 5.000) mm; Altium shows positions from there, here \
+         they are kept as stored (nothing on the board moves)"
+    );
+    assert_eq!(moved.notes.len(), plain.notes.len() + 1);
     Ok(())
 }
