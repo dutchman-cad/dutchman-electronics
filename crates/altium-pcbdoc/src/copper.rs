@@ -965,6 +965,7 @@ pub(crate) fn regions(
     let mut poured = 0usize;
     let mut not_copper: std::collections::BTreeMap<String, usize> = Default::default();
     let mut on_overlay = std::collections::BTreeMap::<String, usize>::new();
+    let mut on_mask = std::collections::BTreeMap::<String, usize>::new();
     for region in others {
         let layer = layers.copper_index(region.layer);
         match (layer, region.kind.as_deref().map(str::trim)) {
@@ -980,6 +981,9 @@ pub(crate) fn regions(
             }
             (None, Some("0")) if is_overlay(&layers.name(region.layer)) => {
                 *on_overlay.entry(layers.name(region.layer)).or_default() += 1;
+            }
+            (None, Some("0")) if is_solder_mask(&layers.name(region.layer)) => {
+                *on_mask.entry(layers.name(region.layer)).or_default() += 1;
             }
             (_, kind) => {
                 let what = format!(
@@ -1004,7 +1008,22 @@ pub(crate) fn regions(
         });
     }
     filled_on_overlay("region(s)", on_overlay, notes);
+    // `solder-mask-region`: a solid region on Top Solder is an opening in the mask drawn by hand.
+    for (layer, count) in on_mask {
+        notes.push(Note {
+            severity: Severity::Dropped,
+            message: format!(
+                "{count} region(s) on {layer} left out: a solder mask opening drawn by hand has \
+                 no place in the board model yet"
+            ),
+        });
+    }
     items
+}
+
+/// Whether a layer is one of the solder mask layers, by its name (`Top Solder`, `Bottom Solder`).
+fn is_solder_mask(name: &str) -> bool {
+    name == "Top Solder" || name == "Bottom Solder"
 }
 
 /// Whether a layer is one of the silkscreen layers, by its name.
