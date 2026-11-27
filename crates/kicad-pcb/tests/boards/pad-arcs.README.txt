@@ -6,7 +6,7 @@ Made with KiCad 9.0.9 (file version 20241229) by fixtures/kicad/build_boards.py,
 
 Every pad is surface mount on F.Cu (bottom footprints: B.Cu). Primitives are in the pad's own frame (KiCad's Y down):
 - kind "d": a circle anchor of 1.0 and a filled gr_poly that is one arc from (0,-1.5) through (1.5,0) to (0,1.5), closed by the straight edge between its ends: a half disk of radius 1.5.
-- kind "arc": a square anchor of 0.6 and a gr_arc stroke of width 0.4 from (0,-1.2) through (0,1.2) to (-1.2,0): 270 degrees about the pad's center, radius 1.2, round ends.
+- kind "arc": a square anchor of 0.6 and a gr_arc stroke of width 0.4 from (1.2,0) through (0,-1.2) to (0,1.2): 270 degrees counter-clockwise on the screen about the pad's center, radius 1.2, round ends. (A clockwise 270 degree arc, from (0,-1.2) through (0,1.2) to (-1.2,0), came out of KiCad's own plot as a distorted band, so the board uses the counter-clockwise one, which KiCad draws as a true arc.)
 - kind "ring": a circle anchor of 0.5 and an unfilled gr_circle of radius 1.2 and width 0.3: a ring from radius 1.05 to 1.35.
 - kind "dot": a square anchor of 1.0 and a filled gr_circle of radius 0.9 centered at (0.8,0).
 - U1 (top, at (6,8), not turned): d at (0,0), arc at (6,0), ring at (12,0), dot at (18,0). Pad centers in the model: (106,-108), (112,-108), (118,-108), (124,-108).

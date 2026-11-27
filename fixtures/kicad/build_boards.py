@@ -571,8 +571,9 @@ save(b, "via-default-open")
 #     own frame (KiCad's Y down, millimeters):
 #     kind "d": a 1.0 circle anchor and a filled D: from (0, -1.5) an arc through (1.5, 0) to
 #       (0, 1.5), then the straight edge back;
-#     kind "arc": a 0.6 square anchor and a stroke arc of width 0.4 from (0, -1.2) through
-#       (0, 1.2) to (-1.2, 0): 270 degrees about the pad's center, radius 1.2;
+#     kind "arc": a 0.6 square anchor and a stroke arc of width 0.4 from (1.2, 0) through
+#       (0, -1.2) to (0, 1.2): 270 degrees counter-clockwise on the screen about the pad's center,
+#       radius 1.2;
 #     kind "ring": a 0.5 circle anchor and an unfilled circle of radius 1.2 and width 0.3;
 #     kind "dot": a 1.0 square anchor and a filled circle of radius 0.9 centered at (0.8, 0).
 #     U1 (top, at (6, 8), not turned): d at (0, 0), arc at (6, 0), ring at (12, 0), dot at (18, 0).
@@ -603,7 +604,7 @@ def arc_pad(fp, number, at, kind):
     elif kind == "arc":
         s = pcbnew.PCB_SHAPE(b)
         s.SetShape(pcbnew.SHAPE_T_ARC)
-        s.SetArcGeometry(mm(0, -1.2), mm(0, 1.2), mm(-1.2, 0))
+        s.SetArcGeometry(mm(1.2, 0), mm(0, -1.2), mm(0, 1.2))
         s.SetWidth(FromMM(0.4))
         pad.AddPrimitiveShape(pcbnew.F_Cu, s)
         s.thisown = 0  # the pad owns it now
