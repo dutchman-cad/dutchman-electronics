@@ -667,3 +667,54 @@ for content, y, bold in (("Regular 123", 10, False), ("Bold 456", 20, True)):
     tx.SetBold(bold)
     b.Add(tx)
 save(b, "embedded-font")
+
+# 17. text-justify: "HIH" (and "HIH" over "HIH") on the silkscreens, one text per grid cell (24 mm
+#     apart, the text's position at the cell's center), 2 mm high with a 0.25 mm pen unless noted,
+#     in every justification (left, center, right across; top, center, bottom down), not turned,
+#     turned 30 and 90 degrees, and on the bottom silkscreen (where KiCad mirrors the text), also
+#     turned 30 degrees; then
+#     other sizes and pens (1.2 mm with 0.15, 3 mm with 0.5, 2 mm with 0.5, 3 mm with 0.15, 1 mm with 0.3). `gerber_text_extents.py` reads
+#     the ink of each text back from KiCad's own Gerber export of the silkscreens.
+b = new_board()
+H_ALIGN = {
+    "left": pcbnew.GR_TEXT_H_ALIGN_LEFT,
+    "center": pcbnew.GR_TEXT_H_ALIGN_CENTER,
+    "right": pcbnew.GR_TEXT_H_ALIGN_RIGHT,
+}
+V_ALIGN = {
+    "top": pcbnew.GR_TEXT_V_ALIGN_TOP,
+    "center": pcbnew.GR_TEXT_V_ALIGN_CENTER,
+    "bottom": pcbnew.GR_TEXT_V_ALIGN_BOTTOM,
+}
+cells = []  # (side, angle, h, v, content, size, pen)
+for side, angle in (("F", 0.0), ("F", 30.0), ("F", 90.0), ("B", 0.0), ("B", 30.0)):
+    for v in ("top", "center", "bottom"):
+        for h in ("left", "center", "right"):
+            cells.append((side, angle, h, v, "HIH", 2.0, 0.25))
+for h, v in (("left", "top"), ("center", "center"), ("right", "bottom"), ("center", "top")):
+    cells.append(("F", 0.0, h, v, "HIH\nHIH", 2.0, 0.25))
+for size, pen in ((1.2, 0.15), (3.0, 0.5)):
+    for h, v, content in (
+        ("left", "top", "HIH"),
+        ("left", "bottom", "HIH"),
+        ("left", "top", "HIH\nHIH"),
+        ("left", "bottom", "HIH\nHIH"),
+    ):
+        cells.append(("F", 0.0, h, v, content, size, pen))
+for size, pen in ((2.0, 0.5), (3.0, 0.15), (1.0, 0.3)):
+    cells.append(("F", 0.0, "left", "top", "HIH", size, pen))
+rows = (len(cells) + 3) // 4
+rect(b, (0, 0), (96, 24 * rows))
+for i, (side, angle, h, v, content, size, pen) in enumerate(cells):
+    tx = pcbnew.PCB_TEXT(b)
+    tx.SetText(content)
+    tx.SetLayer(pcbnew.F_SilkS if side == "F" else pcbnew.B_SilkS)
+    tx.SetPosition(p(12 + 24 * (i % 4), 12 + 24 * (i // 4)))
+    tx.SetTextSize(VECTOR2I(FromMM(size), FromMM(size)))
+    tx.SetTextThickness(FromMM(pen))
+    tx.SetHorizJustify(H_ALIGN[h])
+    tx.SetVertJustify(V_ALIGN[v])
+    tx.SetTextAngleDegrees(angle)
+    tx.SetMirrored(side == "B")
+    b.Add(tx)
+save(b, "text-justify")

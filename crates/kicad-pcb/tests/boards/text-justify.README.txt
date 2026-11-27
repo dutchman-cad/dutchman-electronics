@@ -1,0 +1,14 @@
+Original test board made for Dutchman Electronics. Released under CC0 1.0 (public domain): https://creativecommons.org/publicdomain/zero/1.0/
+
+text-justify: 60 silkscreen texts, one per cell of a grid 24 mm apart (4 across), to check where KiCad puts a text for each justification, turned, mirrored and in different sizes. The text's position is the cell's center: cell i (counting from 0, left to right then down) is at (12 + 24 * (i mod 4), 12 + 24 * (i div 4)) in KiCad's coordinates relative to the board's own corner (page position (100, 100)). The outline is a rectangle 96 mm wide and 360 mm high.
+
+Made with KiCad 9.0.9 (file version 20241229) by fixtures/kicad/build_boards.py. Every text is "HIH" unless noted, 2 mm high with a 0.25 mm pen unless noted.
+
+- Cells 0 to 8: top silkscreen, not turned; justify (left, center, right across) x (top, center, bottom down).
+- Cells 9 to 17: the same turned 30 degrees. Cells 18 to 26: turned 90 degrees.
+- Cells 27 to 35: the same on the bottom silkscreen, mirrored. Cells 36 to 44: bottom, mirrored, turned 30 degrees.
+- Cells 45 to 48: "HIH" over "HIH" (two lines), top silkscreen, justify left top, center center, right bottom, center top.
+- Cells 49 to 56: 1.2 mm high with a 0.15 mm pen, then 3 mm high with a 0.5 mm pen; each: "HIH" left top, "HIH" left bottom, two lines left top, two lines left bottom.
+- Cells 57 to 59: "HIH" left top at 2 mm with a 0.5 mm pen, 3 mm with 0.15 mm, and 1 mm with 0.3 mm (KiCad draws that pen at 0.25).
+
+KiCad's own Gerber export of the silkscreens (F_Silkscreen, B_Silkscreen in tests/gerber/, made with `kicad-cli pcb export gerbers --layers F.SilkS,B.SilkS --no-protel-ext`) shows where the letters really are. fixtures/kicad/gerber_text_extents.py reads the boxes of each text's pen strokes (and the pen width) from it into text-justify-<layer>.extents.txt, in board coordinates (Y up).
