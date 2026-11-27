@@ -830,13 +830,13 @@ fn merge_overlapping(kept: Vec<Drill>, notes: &mut Vec<Note>) -> Vec<Cut> {
         notes.push(Note {
             severity: Severity::Info,
             message: format!(
-                "{merged_holes} overlapping holes were cut as {merged_openings} merged openings"
+                "{merged_holes} overlapping drilled hole(s) were cut as {merged_openings} merged opening(s)"
             ),
         });
     }
     if left_out > 0 {
         notes.push(Note {
-            severity: Severity::Warning,
+            severity: Severity::Dropped,
             message: format!(
                 "{left_out} drilled hole(s) in groups of overlapping holes that are too large \
                  (more than {MAX_MERGED_HOLES} holes), too tangled or too thin to make one \
