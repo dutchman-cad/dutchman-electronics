@@ -839,7 +839,7 @@ fn plating(board: &Board, step: &board_step::BoardStep) -> Plating {
     for hole in step.holes.iter().filter(|h| h.plated) {
         let inner_radius = hole.radius - PLATING_THICKNESS;
         if inner_radius <= board_step::TOLERANCE || list.len() >= board_step::MAX_TUBES {
-            left_out = left_out.saturating_add(1);
+            left_out = left_out.saturating_add(hole.also.saturating_add(1));
             continue;
         }
         list.push(board_step::Tube {
@@ -3052,6 +3052,15 @@ mod tests {
         );
         assert!(p.text.is_some());
         assert!(p.notes.iter().any(|n| n["severity"] == "Dropped"));
+    }
+
+    #[test]
+    fn unlined_contained_drills_are_all_counted() {
+        let mut small = cut(1.0, 0.025, true);
+        small.also = 2;
+        let p = plating(&Board::default(), &solid_with(vec![small]));
+        assert!(p.text.is_none());
+        assert!(p.notes[0]["message"].as_str().unwrap().starts_with("3 plated drilled"));
     }
 
     #[test]

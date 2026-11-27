@@ -1543,3 +1543,15 @@ fn holes_half_a_micrometer_apart_share_one_round_opening() {
     assert_eq!(out.notes[0].severity, Severity::Info);
     check_topology(&out.text);
 }
+
+#[test]
+fn contained_and_merged_via_notes_count_drills_instead_of_openings() {
+    for spacing in [0.0, 0.3] {
+        let unknown = four_layer(vec![via_on(10.0, Some((0, 99))), via_on(10.0 + spacing, Some((0, 99)))]);
+        let out = write(&unknown, "unplaced").unwrap();
+        assert!(out.notes.iter().any(|n| n.message.starts_with("2 blind or buried via(s)")));
+        let buried = four_layer(vec![via_on(10.0, Some((1, 2))), via_on(10.0 + spacing, Some((1, 2)))]);
+        let out = write(&buried, "buried").unwrap();
+        assert!(out.notes.iter().any(|n| n.message.starts_with("2 buried via(s)")));
+    }
+}

@@ -698,21 +698,28 @@ enum Cut {
         hole: Drill,
         /// Holes wholly inside it.
         also: usize,
+        unplaced: usize,
     },
     Merged {
-        /// The holes whose circles make the outline (at least two).
         members: Vec<Drill>,
         /// The union's outline, counter-clockwise.
         outline: Vec<Edge2>,
         also: usize,
+        unplaced: usize,
     },
 }
 
 impl Cut {
-    fn members(&self) -> &[Drill] {
+    fn count(&self) -> usize {
         match self {
-            Self::Single { hole, .. } => std::slice::from_ref(hole),
-            Self::Merged { members, .. } => members,
+            Self::Single { also, .. } => also.saturating_add(1),
+            Self::Merged { members, also, .. } => members.len().saturating_add(*also),
+        }
+    }
+
+    fn unplaced(&self) -> usize {
+        match self {
+            Self::Single { unplaced, .. } | Self::Merged { unplaced, .. } => *unplaced,
         }
     }
 }
@@ -780,6 +787,7 @@ fn merge_overlapping(kept: Vec<Drill>, notes: &mut Vec<Note>) -> Vec<Cut> {
     for group in groups {
         let [only] = group.as_slice() else {
             let total = group.len();
+            let unplaced = group.iter().filter(|h| h.unplaced).count();
             if total > MAX_MERGED_HOLES {
                 keep_clear(group, &mut out, &mut left_out);
                 continue;
@@ -802,7 +810,7 @@ fn merge_overlapping(kept: Vec<Drill>, notes: &mut Vec<Note>) -> Vec<Cut> {
             if let [hole] = rest.as_slice() {
                 merged_holes = merged_holes.saturating_add(total);
                 merged_openings = merged_openings.saturating_add(1);
-                out.push(Cut::Single { hole: *hole, also });
+                out.push(Cut::Single { hole: *hole, also, unplaced });
                 continue;
             }
             match union_outline(&circles) {
@@ -813,6 +821,7 @@ fn merge_overlapping(kept: Vec<Drill>, notes: &mut Vec<Note>) -> Vec<Cut> {
                         members: rest,
                         outline: pieces.into_iter().map(|(e, _)| e).collect(),
                         also,
+                        unplaced,
                     });
                 }
                 None => {
@@ -824,6 +833,7 @@ fn merge_overlapping(kept: Vec<Drill>, notes: &mut Vec<Note>) -> Vec<Cut> {
         out.push(Cut::Single {
             hole: *only,
             also: 0,
+            unplaced: usize::from(only.unplaced),
         });
     }
     if merged_openings > 0 {
@@ -859,7 +869,7 @@ fn keep_clear(group: Vec<Drill>, out: &mut Vec<Cut>, left_out: &mut usize) {
             *left_out = left_out.saturating_add(1);
         }
     }
-    out.extend(clear.into_iter().map(|hole| Cut::Single { hole, also: 0 }));
+    out.extend(clear.into_iter().map(|hole| Cut::Single { hole, also: 0, unplaced: usize::from(hole.unplaced) }));
 }
 
 /// One arc of a union outline, counter-clockwise on its circle.
@@ -1229,11 +1239,7 @@ fn profile(board: &Board, thickness: f64, notes: &mut Vec<Note>) -> Result<Profi
         }
     }
     let cuts = merge_overlapping(kept, notes);
-    let unplaced = cuts
-        .iter()
-        .flat_map(|c| c.members())
-        .filter(|h| h.unplaced)
-        .count();
+    let unplaced = cuts.iter().map(Cut::unplaced).fold(0usize, usize::saturating_add);
     if unplaced > 0 {
         notes.push(Note {
             severity: Severity::Warning,
@@ -1248,8 +1254,9 @@ fn profile(board: &Board, thickness: f64, notes: &mut Vec<Note>) -> Result<Profi
     let mut pockets = Vec::new();
     let mut buried = 0usize;
     for item in cuts {
+        let count = item.count();
         let (mut edges, kind) = match item {
-            Cut::Single { hole, also } => {
+            Cut::Single { hole, also, .. } => {
                 cut.push(CutHole {
                     at: hole.at,
                     radius: hole.radius,
@@ -1263,6 +1270,7 @@ fn profile(board: &Board, thickness: f64, notes: &mut Vec<Note>) -> Result<Profi
                 members,
                 outline,
                 also,
+                ..
             } => {
                 let Some(first) = members.first().copied() else {
                     continue;
@@ -1299,7 +1307,7 @@ fn profile(board: &Board, thickness: f64, notes: &mut Vec<Note>) -> Result<Profi
             }
             // A buried hole is invisible from outside: the body stays solid there. Its plating
             // (a separate part) still follows the span.
-            Some(_) => buried = buried.saturating_add(1),
+            Some(_) => buried = buried.saturating_add(count),
         }
     }
     if buried > 0 {
