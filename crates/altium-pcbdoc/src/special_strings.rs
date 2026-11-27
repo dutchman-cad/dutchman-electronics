@@ -33,6 +33,13 @@
 //! - `Rev '.BoardRevision`, with no closing quote, shows `Rev 'B`;
 //! - unquoted, `Rev .BoardRevision end` shows `Rev B end` (while `.PCBNumber rev` above stays).
 //!
+//! Quoted component strings, on `quoted-component-strings` (a copy of `one-resistor`, no
+//! project): on R1's own texts `'.Designator'` shows `R1`, `'.designator'` `R1`,
+//! `R: '.Designator'` `R: R1`, `'.Comment' ohm` `10k ohm`, `'.Designator' '.Comment'` `R1 10k`,
+//! `L: '.Layer_Name'` `L: Top Overlay` and, mirrored on Bottom Overlay, `B: '.Designator'`
+//! `B: R1`; on free texts `'.Designator'`, `'.Comment'` and `R: '.Designator' x` stay as typed,
+//! and `'.Layer_Name' x` on Bottom Overlay shows `Bottom Overlay x`.
+//!
 //! Two rules give all of these. First, every `'.name'` (a quote, a dot, a name, a quote) whose
 //! name names a value is replaced by that value, quotes and all, wherever it stands and as often
 //! as it occurs; one that names nothing keeps its quotes. A text with no such reference is then

@@ -230,3 +230,69 @@ fn quoted_references_show_what_altium_shows() -> Result<(), Box<dyn std::error::
     );
     Ok(())
 }
+
+/// The test board `quoted-component-strings` (issue 146; README.txt "Quoted component strings"),
+/// read with no parameters: R1's special strings in quotes on its own texts, on both sides, and
+/// the same strings on free texts, which stay as typed. Each text found by its position.
+#[test]
+fn quoted_component_strings_show_what_altium_shows() -> Result<(), Box<dyn std::error::Error>> {
+    let (out, notes) = read("quoted-component-strings.PcbDoc", &[])?;
+    // (x, y, owned by R1, layer, mirrored, shown)
+    let want = [
+        (28.0, 27.0, true, "Top Overlay", false, "R1"),
+        (28.0, 24.8, true, "Top Overlay", false, "R: R1"),
+        (28.0, 22.6, true, "Top Overlay", false, "10k ohm"),
+        (28.0, 20.4, true, "Top Overlay", false, "R1 10k"),
+        (28.0, 18.2, true, "Top Overlay", false, "R1"),
+        (30.0, 11.0, true, "Top Overlay", false, "L: Top Overlay"),
+        (48.0, 7.0, true, "Bottom Overlay", true, "B: R1"),
+        (2.0, 27.0, false, "Top Overlay", false, "'.Designator'"),
+        (2.0, 24.8, false, "Top Overlay", false, "'.Comment'"),
+        (2.0, 22.6, false, "Top Overlay", false, "R: '.Designator' x"),
+        (48.0, 3.0, false, "Bottom Overlay", true, "Bottom Overlay x"),
+    ];
+    for (x, y, owned, layer, mirrored, shown) in want {
+        let found: Vec<_> = out
+            .board
+            .texts
+            .iter()
+            .filter(|t| (t.at.x - x).abs() <= 0.001 && (t.at.y - y).abs() <= 0.001)
+            .collect();
+        let [t] = found.as_slice() else {
+            return Err(format!("{} text(s) at ({x}, {y})", found.len()).into());
+        };
+        let name = out.board.layers.get(t.layer).map(|l| l.name.as_str());
+        assert_eq!(
+            (t.content.as_str(), t.component == Some(0), name, t.mirrored),
+            (shown, owned, Some(layer), mirrored),
+            "at ({x}, {y})"
+        );
+    }
+    // The rest is one-resistor's own: R1's designator text, which shows "R1".
+    let others: Vec<_> = out
+        .board
+        .texts
+        .iter()
+        .filter(|t| {
+            !want
+                .iter()
+                .any(|w| (t.at.x - w.0).abs() <= 0.001 && (t.at.y - w.1).abs() <= 0.001)
+        })
+        .map(|t| t.content.as_str())
+        .collect();
+    assert_eq!(others, ["R1"]);
+    assert_eq!(warnings(&notes), Vec::<&str>::new());
+    let info: Vec<&str> = notes
+        .iter()
+        .filter(|n| n.severity == Severity::Info)
+        .map(|n| n.message.as_str())
+        .collect();
+    assert_eq!(
+        info,
+        [
+            "8 text(s) refer to a project parameter or to .Designator, .Comment or .Layer_Name and show its value, as Altium does",
+            "3 text(s) read .Designator or .Comment but belong to no component; they are drawn as written, as Altium does",
+        ]
+    );
+    Ok(())
+}
