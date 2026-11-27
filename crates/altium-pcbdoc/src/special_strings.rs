@@ -23,11 +23,31 @@
 //! - `.Print_Date` shows the day the board is looked at. It is left as it is, with a note: a
 //!   conversion should not stamp a date onto a board.
 //!
-//! One rule gives all of these: a text that starts with `.` is replaced when everything after
-//! that dot names a value; any other text is replaced when the part after its last `.` names a
-//! value, keeping what comes before that dot. A text holds at most one reference. A parameter
-//! that has the name of a special string has not been tried in Altium; here the special string
-//! wins.
+//! Quoted references, on `quoted-strings` (issue 146, in a copy of `param-project`, so with its
+//! parameters):
+//! - `Rev. '.BoardRevision'` shows `Rev. B`, `'.BoardRevision' end` `B end`,
+//!   `'.PCBNumber' Rev '.BoardRevision'` `DN-0042 Rev B`, `'.PCBNumber''.BoardRevision'`
+//!   `DN-0042B`, `'.pcbnumber'` `DN-0042`, `'.Layer_Name'` `Top Overlay` and
+//!   `L: '.Layer_Name' x` `L: Top Overlay x`;
+//! - `'.NoSuchParameter'`, `Rev ''` and `'word' Rev` stay as they are;
+//! - `Rev '.BoardRevision`, with no closing quote, shows `Rev 'B`;
+//! - unquoted, `Rev .BoardRevision end` shows `Rev B end` (while `.PCBNumber rev` above stays).
+//!
+//! Quoted component strings, on `quoted-component-strings` (a copy of `one-resistor`, no
+//! project): on R1's own texts `'.Designator'` shows `R1`, `'.designator'` `R1`,
+//! `R: '.Designator'` `R: R1`, `'.Comment' ohm` `10k ohm`, `'.Designator' '.Comment'` `R1 10k`,
+//! `L: '.Layer_Name'` `L: Top Overlay` and, mirrored on Bottom Overlay, `B: '.Designator'`
+//! `B: R1`; on free texts `'.Designator'`, `'.Comment'` and `R: '.Designator' x` stay as typed,
+//! and `'.Layer_Name' x` on Bottom Overlay shows `Bottom Overlay x`.
+//!
+//! Two rules give all of these. First, every `'.name'` (a quote, a dot, a name, a quote) whose
+//! name names a value is replaced by that value, quotes and all, wherever it stands and as often
+//! as it occurs; one that names nothing keeps its quotes. A text with no such reference is then
+//! read unquoted: a text that starts with `.` is replaced when everything after that dot names a
+//! value; any other text when the part after its last `.`, up to the first space, names a value,
+//! keeping what comes before that dot and from that space on. So an unquoted text holds at most
+//! one reference. A parameter that has the name of a special string has not been tried in
+//! Altium; here the special string wins.
 
 use std::collections::BTreeMap;
 
@@ -60,20 +80,24 @@ pub fn resolve_texts(board: &mut Board, parameters: &[(String, String)]) -> Vec<
                 replaced = replaced.saturating_add(1);
             }
             None => {
-                let Some(name) = text.content.strip_prefix('.') else {
-                    continue;
+                let quoted = quoted_names(&text.content);
+                let names = match text.content.strip_prefix('.') {
+                    Some(name) if quoted.is_empty() => vec![name],
+                    _ => quoted,
                 };
-                if text.component.is_none()
-                    && (name.eq_ignore_ascii_case("Designator")
-                        || name.eq_ignore_ascii_case("Comment"))
-                {
-                    free_component_strings = free_component_strings.saturating_add(1);
-                    continue;
+                for name in names {
+                    if text.component.is_none()
+                        && (name.eq_ignore_ascii_case("Designator")
+                            || name.eq_ignore_ascii_case("Comment"))
+                    {
+                        free_component_strings = free_component_strings.saturating_add(1);
+                        continue;
+                    }
+                    let entry = left
+                        .entry(name.to_ascii_lowercase())
+                        .or_insert_with(|| (name.to_string(), 0, text.content.clone()));
+                    entry.1 = entry.1.saturating_add(1);
                 }
-                let entry = left
-                    .entry(name.to_ascii_lowercase())
-                    .or_insert_with(|| (name.to_string(), 0, text.content.clone()));
-                entry.1 = entry.1.saturating_add(1);
             }
         }
     }
@@ -126,19 +150,82 @@ pub fn resolve_texts(board: &mut Board, parameters: &[(String, String)]) -> Vec<
     notes
 }
 
-/// The text with its reference replaced by the value it names, or `None` when it names none.
+/// The text with its references replaced by the values they name, or `None` when it names none.
 fn substitute(text: &Text, board: &Board, parameters: &[(String, String)]) -> Option<String> {
-    let (before, name) = match text.content.strip_prefix('.') {
-        Some(rest) => ("", rest),
-        None => text.content.rsplit_once('.')?,
+    let lookup = |name: &str| {
+        special(text, board, name).or_else(|| {
+            parameters
+                .iter()
+                .find(|(n, _)| !n.is_empty() && n.eq_ignore_ascii_case(name))
+                .map(|(_, v)| v.clone())
+        })
     };
-    let value = special(text, board, name).or_else(|| {
-        parameters
-            .iter()
-            .find(|(n, _)| !n.is_empty() && n.eq_ignore_ascii_case(name))
-            .map(|(_, v)| v.clone())
-    })?;
-    Some(format!("{before}{value}"))
+    quoted(&text.content, &lookup).or_else(|| unquoted(&text.content, &lookup))
+}
+
+/// Replaces every `'.name'` whose name has a value; `None` when none has.
+fn quoted(content: &str, lookup: &dyn Fn(&str) -> Option<String>) -> Option<String> {
+    let mut out = String::new();
+    let mut rest = content;
+    let mut replaced = false;
+    while let Some(open) = rest.find("'.") {
+        let after = rest.get(open + 2..).unwrap_or_default();
+        let Some(close) = after.find('\'') else {
+            break;
+        };
+        let name = after.get(..close).unwrap_or_default();
+        match lookup(name).filter(|_| !name.is_empty()) {
+            Some(value) => {
+                out.push_str(rest.get(..open).unwrap_or_default());
+                out.push_str(&value);
+                rest = after.get(close + 1..).unwrap_or_default();
+                replaced = true;
+            }
+            None => {
+                // Keep the quote and look again from the dot after it.
+                out.push_str(rest.get(..=open).unwrap_or_default());
+                rest = rest.get(open + 1..).unwrap_or_default();
+            }
+        }
+    }
+    out.push_str(rest);
+    replaced.then_some(out)
+}
+
+/// The names of the `'.name'` references in a text, whether they have a value or not.
+fn quoted_names(content: &str) -> Vec<&str> {
+    let mut names = Vec::new();
+    let mut rest = content;
+    while let Some(open) = rest.find("'.") {
+        let after = rest.get(open + 2..).unwrap_or_default();
+        let Some(close) = after.find('\'') else {
+            break;
+        };
+        if close > 0 {
+            names.extend(after.get(..close));
+        }
+        rest = after.get(close..).unwrap_or_default();
+    }
+    names
+}
+
+/// The one unquoted reference of a text replaced by its value; `None` when it names none.
+fn unquoted(content: &str, lookup: &dyn Fn(&str) -> Option<String>) -> Option<String> {
+    let (before, name, after) = match content.strip_prefix('.') {
+        Some(rest) => ("", rest, ""),
+        None => {
+            let (before, rest) = content.rsplit_once('.')?;
+            match rest.find(' ') {
+                Some(space) => (before, rest.get(..space)?, rest.get(space..)?),
+                None => (before, rest, ""),
+            }
+        }
+    };
+    if name.is_empty() {
+        return None;
+    }
+    let value = lookup(name)?;
+    Some(format!("{before}{value}{after}"))
 }
 
 /// The value of one of Altium's special strings that the board determines, for this text.
@@ -236,11 +323,52 @@ mod tests {
             (".x.PCBNumber", ".x.PCBNumber"),
             (".PCBNumber/.BoardRevision", ".PCBNumber/.BoardRevision"),
             (".PCBNumber rev", ".PCBNumber rev"),
+            ("Rev .BoardRevision end", "Rev B end"),
             ("=PCBNumber", "=PCBNumber"),
             ("plain text", "plain text"),
         ] {
             assert_eq!(resolved(content, None), shown, "{content}");
         }
+    }
+
+    /// tests/boards/README.txt, "Quoted special strings": every row of its table.
+    #[test]
+    fn follows_what_altium_showed_for_quoted_references() {
+        for (content, shown) in [
+            ("Rev. '.BoardRevision'", "Rev. B"),
+            ("'.BoardRevision' end", "B end"),
+            ("'.PCBNumber' Rev '.BoardRevision'", "DN-0042 Rev B"),
+            ("'.PCBNumber''.BoardRevision'", "DN-0042B"),
+            ("'.pcbnumber'", "DN-0042"),
+            ("'.Layer_Name'", "Top Overlay"),
+            ("L: '.Layer_Name' x", "L: Top Overlay x"),
+            ("'.NoSuchParameter'", "'.NoSuchParameter'"),
+            ("Rev '.BoardRevision", "Rev 'B"),
+            ("Rev ''", "Rev ''"),
+            ("'word' Rev", "'word' Rev"),
+            ("Rev .BoardRevision end", "Rev B end"),
+            ("'.BoardRevision'", "B"),
+        ] {
+            assert_eq!(resolved(content, None), shown, "{content}");
+        }
+        // As often as it occurs; an unknown one beside a known one keeps its quotes.
+        assert_eq!(resolved("'.BoardRevision''.BoardRevision'", None), "BB");
+        assert_eq!(resolved("'.NoSuch' '.BoardRevision'", None), "'.NoSuch' B");
+        assert_eq!(resolved("''.BoardRevision'", None), "'B");
+    }
+
+    #[test]
+    fn an_unknown_quoted_name_gets_a_note() {
+        let mut b = board(vec![text("x '.NoSuch' y", 1, None)]);
+        let notes = resolve_texts(&mut b, &params());
+        let got: Vec<_> = notes.iter().map(|n| n.message.as_str()).collect();
+        assert_eq!(
+            got,
+            [
+                "1 text(s) read \".NoSuch\", which names no parameter given and no special string \
+              read here; drawn as written"
+            ]
+        );
     }
 
     #[test]

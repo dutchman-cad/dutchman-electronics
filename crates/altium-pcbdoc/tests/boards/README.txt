@@ -1051,6 +1051,55 @@ Saved once and closed; Altium embedded Arial on saving and it was removed as bef
 this board uses it).
 
 
+Quoted special strings (quoted-strings, issue 146)
+--------------------------------------------------
+Made on 2026-11-27 in a copy of param-project (PCBNumber DN-0042, BoardRevision B; see
+param-project/README.txt), whose param-board-2 was replaced by a file copy of empty-outline. With
+the project open, my own script added these texts and read each back with the string Altium
+shows for it; the board was then saved and copied here alone (it is not part of any project
+here: a reader gives it the parameters of param-project). Every text is in the stroke font
+(Default), height 1.000, stroke 0.120, rotation 0, x 2.000, on Top Overlay unless noted:
+    y       Stored text                          Altium shows
+    27.500  Rev. '.BoardRevision'                Rev. B
+    25.300  '.BoardRevision' end                 B end
+    23.100  '.PCBNumber' Rev '.BoardRevision'    DN-0042 Rev B
+    20.900  '.PCBNumber''.BoardRevision'         DN-0042B
+    18.700  '.pcbnumber'                         DN-0042
+    16.500  '.Layer_Name'                        Top Overlay
+    14.300  L: '.Layer_Name' x                   L: Top Overlay x
+    12.100  '.NoSuchParameter'                   '.NoSuchParameter'
+    9.900   Rev '.BoardRevision                  Rev 'B
+    7.700   Rev ''                               Rev ''
+    5.500   'word' Rev                           'word' Rev
+    3.300   Rev .BoardRevision end               Rev B end
+    1.100   '.BoardRevision'  (Bottom Overlay)   B
+The file keeps each text as typed. A name in quotes is replaced wherever it stands, as often as
+it occurs, the quotes with it; an unknown name keeps its quotes; a quote with no name after it
+stays. With no closing quote ("Rev '.BoardRevision") Altium drops the reference and keeps the
+opening quote. Unquoted, a reference followed by more text ("Rev .BoardRevision end") is replaced
+too here, although ".PCBNumber rev" on param-board stays as typed.
+
+Quoted component strings (quoted-component-strings, issue 146)
+--------------------------------------------------------------
+Made on 2026-11-27 from a file copy of one-resistor.PcbDoc (R1 at 25, 15, comment "10k") by my
+own script, with no project open; each text read back with the string Altium shows. Stroke font
+(Default), height 1.000, stroke 0.120, rotation 0. "Owner" R1: the text was added to R1.
+    Stored text                  Owner Layer           At       Mir. Altium shows
+    '.Designator'                R1    Top Overlay     28, 27   no   R1
+    R: '.Designator'             R1    Top Overlay     28, 24.8 no   R: R1
+    '.Comment' ohm               R1    Top Overlay     28, 22.6 no   10k ohm
+    '.Designator' '.Comment'     R1    Top Overlay     28, 20.4 no   R1 10k
+    '.designator'                R1    Top Overlay     28, 18.2 no   R1
+    L: '.Layer_Name'             R1    Top Overlay     30, 11   no   L: Top Overlay
+    B: '.Designator'             R1    Bottom Overlay  48, 7    yes  B: R1
+    '.Designator'                -     Top Overlay     2, 27    no   '.Designator'
+    '.Comment'                   -     Top Overlay     2, 24.8  no   '.Comment'
+    R: '.Designator' x           -     Top Overlay     2, 22.6  no   R: '.Designator' x
+    '.Layer_Name' x              -     Bottom Overlay  48, 3    yes  Bottom Overlay x
+So the component's special strings resolve inside quotes as the project parameters do, on either
+side; on a free text '.Designator' and '.Comment' stay as typed, quotes included.
+
+
 Empty texts (empty-texts)
 -------------------------
 Made on 2026-11-27 from a file copy of empty-outline by my own script, read back and logged:
