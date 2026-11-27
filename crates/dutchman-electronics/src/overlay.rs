@@ -625,6 +625,9 @@ struct SideFaces {
     /// The drills of vias this side leaves open (not tented): cut from this side's copper, mask
     /// and laminate only.
     open_drill: Pile,
+    /// The drills of every via that reaches this side: cut from its silkscreen, which is not
+    /// printed over a via.
+    via_drill: Pile,
     silk: Pile,
 }
 
@@ -802,7 +805,6 @@ fn overlays_within(
     // the faces and inner layers its span covers. The board part and the plating keep the real
     // hole.
     let mut holes = Pile::default();
-    let mut via_holes = Pile::default();
     // Vias drawn tented because the file does not say.
     let mut guessed_tenting = 0usize;
     let (mut inner, mut unusable, mut other_graphics) = (0usize, 0usize, 0usize);
@@ -837,6 +839,8 @@ fn overlays_within(
         Vec::new()
     };
     let mut inner_piles: Vec<Pile> = inner_layers.iter().map(|_| Pile::default()).collect();
+    // The drills of the vias that reach each inner layer, cut from it.
+    let mut inner_via_drills: Vec<Pile> = inner_layers.iter().map(|_| Pile::default()).collect();
     // Vias and drilled pads have a pad on each inner signal layer, but none on a plane, which
     // has its clearances and reliefs instead.
     let takes_pads: Vec<bool> = inner_layers
@@ -851,6 +855,7 @@ fn overlays_within(
     let mut faces = (top, bottom);
     // Real fabs open the mask a little wider than each pad (and than each via not tented).
     let usable = |e: &f64| e.is_finite() && (0.0..=MAX_MASK_EXPANSION).contains(e);
+    let via_usable = |e: &f64| e.is_finite() && e.abs() <= MAX_MASK_EXPANSION;
     let expansion = board
         .solder_mask_expansion
         .filter(usable)
@@ -945,14 +950,29 @@ fn overlays_within(
                 } => {
                     match circle(*at, diameter / 2.0) {
                         Some(ring) => {
-                            for ((pile, takes), &layer) in
-                                inner_piles.iter_mut().zip(&takes_pads).zip(&inner_layers)
+                            // The drill, counted once if it cannot be drawn (no diameter).
+                            let hole = circle(*at, drill / 2.0);
+                            if hole.is_none() {
+                                unusable = unusable.saturating_add(1);
+                            }
+                            for (((pile, drills), takes), &layer) in inner_piles
+                                .iter_mut()
+                                .zip(&mut inner_via_drills)
+                                .zip(&takes_pads)
+                                .zip(&inner_layers)
                             {
-                                if *takes && in_span(*span, layer) {
+                                if !in_span(*span, layer) {
+                                    continue;
+                                }
+                                if *takes {
                                     pile.polygons.push(ring.clone());
                                 }
+                                drills.polygons.extend(hole.clone());
                             }
-                            let open_by = mask_expansion.filter(usable).unwrap_or(expansion);
+                            // A via's own expansion may be negative (a smaller opening), but the
+                            // opening never shrinks below the drill.
+                            let open_by = mask_expansion.filter(via_usable).unwrap_or(expansion);
+                            let open_radius = (diameter / 2.0 + open_by).max(drill / 2.0);
                             let mut guessed = false;
                             let sides = [(Side::Top, tented[0]), (Side::Bottom, tented[1])];
                             for (side, flag) in sides {
@@ -964,12 +984,12 @@ fn overlays_within(
                                     Side::Bottom => &mut faces.1,
                                 };
                                 f.masked.polygons.push(ring.clone());
+                                f.via_drill.polygons.extend(hole.clone());
                                 match flag {
                                     Some(false) => {
-                                        let open = circle(*at, diameter / 2.0 + open_by);
+                                        let open = circle(*at, open_radius);
                                         f.opening.add(open, &mut unusable);
-                                        let drilled = circle(*at, drill / 2.0);
-                                        f.open_drill.add(drilled, &mut unusable);
+                                        f.open_drill.polygons.extend(hole.clone());
                                     }
                                     Some(true) => {}
                                     None => guessed = true,
@@ -978,7 +998,6 @@ fn overlays_within(
                             if guessed {
                                 guessed_tenting = guessed_tenting.saturating_add(1);
                             }
-                            via_holes.add(circle(*at, drill / 2.0), &mut unusable);
                         }
                         None => unusable = unusable.saturating_add(1),
                     }
@@ -1265,7 +1284,6 @@ fn overlays_within(
     // A failure inside the polygon library must not take the whole package down with it.
     let built = catch_unwind(AssertUnwindSafe(|| {
         let all_drilled = holes.union();
-        let via_drilled = via_holes.union();
         let face = outline.map(|o| o.difference(&cutouts.union()));
         let mut built = Vec::new();
         for (side, f, sign) in [("top", &top, 1.0), ("bottom", &bottom, -1.0)] {
@@ -1306,7 +1324,7 @@ fn overlays_within(
                 .silk
                 .union()
                 .difference(&drilled)
-                .difference(&via_drilled)
+                .difference(&f.via_drill.union())
                 .difference(&opening_all);
             let plain = |name: String,
                          kind,
@@ -1400,7 +1418,8 @@ fn overlays_within(
             }
         }
         // Each inner layer at its height in the stack, drills and via holes cut out.
-        for (&i, pile) in inner_layers.iter().zip(&inner_piles) {
+        for ((&i, pile), via_drills) in inner_layers.iter().zip(&inner_piles).zip(&inner_via_drills)
+        {
             let (Some(layer), Some(place)) = (
                 board.layers.get(i),
                 board.layers.get(i).and_then(|l| l.position),
@@ -1420,7 +1439,7 @@ fn overlays_within(
                 shape: pile
                     .union()
                     .difference(&all_drilled)
-                    .difference(&via_drilled),
+                    .difference(&via_drills.union()),
                 text: pile.outlined_union(),
                 color: COPPER_COLOR.to_string(),
                 finish_look: COPPER_FINISH,

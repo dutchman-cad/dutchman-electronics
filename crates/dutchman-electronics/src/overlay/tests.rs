@@ -2096,3 +2096,66 @@ fn inner_rings_are_only_on_the_layers_in_the_span() {
         assert!((area(named(&list, name)) - ring).abs() < 0.01, "{name}");
     }
 }
+
+#[test]
+fn a_blind_via_drill_cuts_only_the_faces_and_inner_layers_its_span_reaches() {
+    // Four copper layers (top, In1 at depth 0.5, In2 at 1.0, bottom) and a blind via from the top
+    // to In1 at (5, 5), drill 0.5. A copper pour covers In2 (a 10 x 10 square, 100 mm2) and a
+    // silkscreen line along y = 5 runs on both faces (bottom silkscreen on layer 4). The via's
+    // drill must not punch In2 (area stays 100) and must not cut the bottom silkscreen, which the
+    // via does not reach, but cuts the top silkscreen (0.5 mm of the line, 0.2 wide: 0.1 less).
+    let layer = |name: &str, kind, side, depth: Option<f64>| Layer {
+        name: name.into(),
+        kind,
+        side,
+        position: depth.map(|depth| board_model::StackPosition {
+            depth,
+            thickness: 0.035,
+        }),
+    };
+    let mut b = via_at([Some(true), Some(true)], None, Some((0, 1)));
+    b.layers = vec![
+        layer("F.Cu", LayerKind::Copper, Some(Side::Top), Some(0.0)),
+        layer("In1.Cu", LayerKind::Copper, None, Some(0.5)),
+        layer("In2.Cu", LayerKind::Copper, None, Some(1.0)),
+        layer("B.Cu", LayerKind::Copper, Some(Side::Bottom), Some(1.565)),
+        layer("F.SilkS", LayerKind::Silkscreen, Some(Side::Top), None),
+        layer("B.SilkS", LayerKind::Silkscreen, Some(Side::Bottom), None),
+    ];
+    let line = |layer| Graphic::Line {
+        layer,
+        from: p(0.0, 5.0),
+        to: p(10.0, 5.0),
+        width: 0.2,
+    };
+    b.graphics = vec![line(4), line(5)];
+    b.copper.push(CopperItem::Region {
+        layer: 2,
+        contour: square(0.0, 0.0, 10.0, 10.0),
+        holes: vec![],
+    });
+    let (list, _) = super::overlays(&b, &[], 1.6, "Board", Copper::All);
+    let in2 = area(named(&list, "Copper In2.Cu"));
+    assert!((in2 - 100.0).abs() < 1e-5, "{in2}");
+    let top = area(named(&list, "Silkscreen top"));
+    let bottom = area(named(&list, "Silkscreen bottom"));
+    // The line is 10 x 0.2 = 2 mm2 (round ends add pi * 0.01 = 0.0314 each pair); the drill, 0.5
+    // wide, takes about 0.5 * 0.2 = 0.1 from the top one only.
+    assert!((bottom - top - 0.1).abs() < 0.02, "{top} {bottom}");
+}
+
+#[test]
+fn a_negative_via_expansion_shrinks_the_opening_but_not_below_the_drill() {
+    // The via is 1 mm across with a 0.5 mm drill, open on both sides. An expansion of -0.2 gives
+    // an opening of radius 0.5 - 0.2 = 0.3: the mask is 200 - pi * 0.09 = 199.7173. An expansion
+    // of -0.4 would give 0.1, below the drill's 0.25, so the opening stays at the drill:
+    // 200 - pi * 0.0625 = 199.8036.
+    for (e, want) in [(-0.2, 199.7173), (-0.4, 199.8036)] {
+        let b = via_at([Some(false), Some(false)], Some(e), None);
+        let (list, _) = overlays(&b, 1.6, "Board");
+        for side in ["top", "bottom"] {
+            let mask = area(named(&list, &format!("Solder mask {side}")));
+            assert!((mask - want).abs() < 0.01, "{e} {side}: {mask}");
+        }
+    }
+}
