@@ -1025,3 +1025,73 @@ fn copper_layers_get_their_place_in_the_stack() {
     }
     assert!(notes_contain(&o, "placed evenly through the thickness"));
 }
+
+/// The vias of a board in the order of their x position: (x, tented, span as layer names).
+fn vias(o: &ReadOutcome) -> Vec<(f64, [Option<bool>; 2], Option<(String, String)>)> {
+    let mut out: Vec<_> = o
+        .board
+        .copper
+        .iter()
+        .filter_map(|c| match c {
+            CopperItem::Via {
+                at,
+                tented,
+                mask_expansion,
+                layers,
+                ..
+            } => {
+                assert_eq!(*mask_expansion, None);
+                let span = layers.map(|(a, b)| {
+                    (
+                        o.board.layers[a].name.clone(),
+                        o.board.layers[b].name.clone(),
+                    )
+                });
+                Some((at.x - 100.0, *tented, span))
+            }
+            _ => None,
+        })
+        .collect();
+    out.sort_by(|a, b| a.0.total_cmp(&b.0));
+    out
+}
+
+#[test]
+fn vias_have_their_tenting_and_spans() {
+    let s = |a: &str, b: &str| Some((a.to_string(), b.to_string()));
+    let (yes, no) = (Some(true), Some(false));
+    for name in ["via-tenting-spans", "k10-via-tenting-spans"] {
+        let o = board(name);
+        let want = [
+            (5.0, [yes, yes], None),
+            (10.0, [yes, yes], None),
+            (15.0, [no, no], None),
+            (20.0, [yes, no], None),
+            (25.0, [no, yes], None),
+            (30.0, [yes, yes], s("F.Cu", "In1.Cu")),
+            (35.0, [yes, yes], s("In1.Cu", "In2.Cu")),
+        ];
+        let got = vias(&o);
+        assert_eq!(got.len(), want.len(), "{name}");
+        for (g, w) in got.iter().zip(&want) {
+            assert!(near(g.0, w.0), "{name}: {g:?} {w:?}");
+            assert_eq!((g.1, &g.2), (w.1, &w.2), "{name} via at {}", w.0);
+        }
+        assert!(
+            !o.notes.iter().any(|n| n.message.contains("blind")),
+            "{name}: {:?}",
+            o.notes
+        );
+    }
+}
+
+#[test]
+fn a_via_with_no_tenting_of_its_own_takes_the_board_default() {
+    let (yes, no) = (Some(true), Some(false));
+    for name in ["via-default-open", "k10-via-default-open"] {
+        let got = vias(&board(name));
+        assert_eq!(got.len(), 2, "{name}");
+        assert_eq!((got[0].1, &got[0].2), ([no, yes], &None), "{name}");
+        assert_eq!((got[1].1, &got[1].2), ([yes, yes], &None), "{name}");
+    }
+}

@@ -1,0 +1,12 @@
+Original test board made for Dutchman Electronics. Released under CC0 1.0 (public domain): https://creativecommons.org/publicdomain/zero/1.0/
+
+via-default-open: a four-layer board, 1.6 mm thick, whose default covers only the bottom side's vias.
+
+Made with KiCad 9.0.9 (file version 20241229) by fixtures/kicad/build_boards.py. KiCad shows coordinates in millimeters with Y pointing down; the board's top-left corner is at page position (100, 100), and every number below is relative to that corner (so add 100 to x and y for the page position). The reader gives Y up: model x = 100 + X, model y = -(100 + Y).
+
+- Edge.Cuts: one rectangle, corners (0,0) and (50,30).
+- Copper layers, top to bottom: F.Cu, In1.Cu, In2.Cu, B.Cu.
+- Setup tenting: back only (top vias are open, bottom vias are covered).
+- Two through vias at y = 15, each 0.8 mm across with a 0.4 mm drill, on net SIG:
+  - x=10: no tenting of its own, so it takes the board default (top open, bottom covered).
+  - x=20: tenting front and back (both covered).
