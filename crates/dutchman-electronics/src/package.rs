@@ -58,6 +58,14 @@ pub const PLATING_THICKNESS: f64 = 0.025;
 pub const GROUP_TOP: &str = "Components top";
 pub const GROUP_BOTTOM: &str = "Components bottom";
 pub const GROUP_LAYERS: &str = "Layers";
+/// The folder of the 3D bodies that belong to no part.
+pub const GROUP_FREE: &str = "Free bodies";
+/// The most bodies one part gets; more are left out, with a note.
+pub const MAX_BODIES_PER_PART: usize = 256;
+/// The most free bodies the package holds; more are left out, with a note.
+pub const MAX_FREE_BODIES: usize = 10_000;
+/// The most bodies (of parts and free) the package holds in all.
+pub const MAX_BODIES: usize = 100_000;
 
 /// A package before it is written: the manifest and its files.
 #[derive(Clone, Debug, PartialEq)]
@@ -699,6 +707,7 @@ pub fn build_accepting(
         &board.components,
         &outcome.models,
         step.thickness,
+        &board.free_models,
         Some((&recognizer, bodies)),
     );
     models.extend(
@@ -945,6 +954,162 @@ fn part_frame(p: &Placement, thickness: f64) -> Transform {
     compose(&turned, &flip)
 }
 
+/// `base`, or `base (2)`, `base (3)` ... when taken; the name is then taken.
+fn unique_name(used: &mut std::collections::BTreeSet<String>, base: &str) -> String {
+    let mut name = base.to_string();
+    let mut n = 2usize;
+    while used.contains(&name) {
+        name = format!("{base} ({n})");
+        n = n.saturating_add(1);
+    }
+    used.insert(name.clone());
+    name
+}
+
+/// What the bodies of a package share: equal bodies share one model file.
+#[derive(Default)]
+struct Models {
+    /// Embedded model id to model id in the package.
+    unpacked: std::collections::BTreeMap<String, String>,
+    /// Extruded body (outline and heights) to model id.
+    extruded: std::collections::BTreeMap<String, String>,
+    /// Sphere radius (as text, exact) to model id.
+    spheres: std::collections::BTreeMap<String, String>,
+}
+
+/// Why a body could not be placed.
+enum Lost {
+    Missing,
+    External(String),
+    Failed(String),
+}
+
+/// The model id (in the package) for one body, writing its file the first time.
+fn body_model(
+    ctx: &mut Models,
+    model: &ModelRef,
+    embedded: &[EmbeddedModel],
+    placed: &mut Placed,
+) -> Result<String, Lost> {
+    match &model.source {
+        ModelSource::Embedded { id } => {
+            if let Some(model_id) = ctx.unpacked.get(id.as_str()) {
+                return Ok(model_id.clone());
+            }
+            match embedded.iter().find(|m| &m.id == id) {
+                Some(m) if m.step.starts_with(b"ISO-10303-21") => {
+                    let model_id = format!("model-{}", placed.models.len().saturating_add(1));
+                    let file = format!("{model_id}.step");
+                    placed.models.push((model_id.clone(), file, m.step.clone()));
+                    ctx.unpacked.insert(m.id.clone(), model_id.clone());
+                    Ok(model_id)
+                }
+                Some(m) => Err(Lost::Failed(format!("{} is not a STEP file", m.name))),
+                None => Err(Lost::Missing),
+            }
+        }
+        ModelSource::External { file, .. } => Err(Lost::External(file.clone())),
+        ModelSource::Extruded {
+            outline,
+            standoff,
+            height,
+        } => {
+            let key = format!("{outline:?} {standoff} {height}");
+            if let Some(id) = ctx.extruded.get(&key) {
+                return Ok(id.clone());
+            }
+            let id = format!("model-{}", placed.models.len().saturating_add(1));
+            let step = board_step::prism(outline, *standoff, *height, &id)
+                .map_err(|why| Lost::Failed(why.to_string()))?;
+            placed
+                .models
+                .push((id.clone(), format!("{id}.step"), step.text.into_bytes()));
+            ctx.extruded.insert(key, id.clone());
+            Ok(id)
+        }
+        ModelSource::Sphere { center, z, radius } => {
+            if !(center.x.is_finite() && center.y.is_finite() && z.is_finite()) {
+                return Err(Lost::Failed(format!(
+                    "a sphere centered at ({}, {}, {z}) is not at a place",
+                    center.x, center.y
+                )));
+            }
+            // One model per radius, at the origin: the part's transform puts it in place.
+            let key = format!("{radius:?}");
+            if let Some(id) = ctx.spheres.get(&key) {
+                return Ok(id.clone());
+            }
+            let id = format!("model-{}", placed.models.len().saturating_add(1));
+            let step =
+                board_step::sphere(*radius, &id).map_err(|why| Lost::Failed(why.to_string()))?;
+            placed
+                .models
+                .push((id.clone(), format!("{id}.step"), step.text.into_bytes()));
+            ctx.spheres.insert(key, id.clone());
+            Ok(id)
+        }
+    }
+}
+
+/// The manifest part of one body: `frame` is the part's frame (or the board's, for a free
+/// body) and the body's own offset and rotation go on top of it.
+fn body_part(
+    model: &ModelRef,
+    name: &str,
+    id: &str,
+    frame: &Transform,
+    group: &str,
+    notes: &mut Vec<Value>,
+) -> Result<Value, Lost> {
+    let [rx, ry, rz] = model.rotation_deg;
+    let [dx, dy, dz] = model.offset;
+    let mut on_part = compose(
+        &translation(dx, dy, dz),
+        &compose(&turn(2, rz), &compose(&turn(1, ry), &turn(0, rx))),
+    );
+    // A sphere's file is centered on the origin; its place is part of the body.
+    if let ModelSource::Sphere { center, z, .. } = &model.source {
+        on_part = compose(&on_part, &translation(center.x, center.y, *z));
+    }
+    let transform = compose(frame, &on_part);
+    if !transform.iter().flatten().all(|number| number.is_finite()) {
+        return Err(Lost::Failed("the body's placement is not finite".into()));
+    }
+    let mut part_notes = Vec::new();
+    // A tilt about X is confirmed on top- and bottom-side parts by the tenth batch of test
+    // boards; a tilt about Y is on none of them yet.
+    if ry != 0.0 {
+        part_notes.push(json!({
+            "severity": "Degraded",
+            "message": "the model is tilted about Y on its part; no test board confirms \
+                        that turn yet",
+        }));
+    }
+    let mut part = json!({
+        "name": name,
+        "model": id,
+        "transform": transform,
+        "group": group,
+        "notes": part_notes,
+    });
+    // An extruded body or sphere the file colors; an embedded STEP model keeps its own colors.
+    if let Some(color) = &model.color {
+        if color.opacity <= 0.0 {
+            notes.push(json!({
+                "severity": "Info",
+                "message": format!("{name}'s 3D body is fully transparent, as the board file says"),
+            }));
+        }
+    }
+    if let (Some(color), Some(map)) = (&model.color, part.as_object_mut()) {
+        map.insert("color".into(), json!(hex(color)));
+        map.insert("opacity".into(), json!(color.opacity));
+        map.insert("metallic".into(), json!(BODY_FINISH.metallic));
+        map.insert("roughness".into(), json!(BODY_FINISH.roughness));
+    }
+    Ok(part)
+}
+
 /// The placed components: model files `(id, file, STEP file)`, parts, and package notes.
 #[derive(Default)]
 struct Placed {
@@ -967,7 +1132,7 @@ fn named(list: &[String]) -> String {
 /// Each component with a model the package can build becomes a part named by its designator.
 #[cfg(test)]
 fn components(list: &[Placement], embedded: &[EmbeddedModel], thickness: f64) -> Placed {
-    components_with(list, embedded, thickness, None)
+    components_with(list, embedded, thickness, &[], None)
 }
 
 /// [`components`], and with `standard` (what recognizes a part's package, and which bodies are
@@ -977,7 +1142,20 @@ fn components_with(
     list: &[Placement],
     embedded: &[EmbeddedModel],
     thickness: f64,
+    free: &[ModelRef],
     standard: Option<(&Recognizer<'_>, Bodies)>,
+) -> Placed {
+    components_with_limit(list, embedded, thickness, free, standard, MAX_BODIES)
+}
+
+/// The package body limit is supplied separately so small tests can reach it.
+fn components_with_limit(
+    list: &[Placement],
+    embedded: &[EmbeddedModel],
+    thickness: f64,
+    free: &[ModelRef],
+    standard: Option<(&Recognizer<'_>, Bodies)>,
+    max_bodies: usize,
 ) -> Placed {
     let mut placed = Placed::default();
     // Equal standard bodies share their two model files.
@@ -989,38 +1167,32 @@ fn components_with(
     let mut used =
         std::collections::BTreeSet::from([BOARD_PART.to_string(), PLATING_PART.to_string()]);
     // Equal extruded bodies share one model file; so do parts naming the same embedded model.
-    let mut extruded: std::collections::BTreeMap<String, String> = Default::default();
-    let mut unpacked: std::collections::BTreeMap<&str, String> = Default::default();
+    let mut ctx = Models::default();
     let (mut no_model, mut missing, mut external, mut failed) =
         (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let mut bodies_placed = 0usize;
+    let mut over_part = Vec::new();
+    let mut total_over = 0usize;
     for (index, p) in list.iter().enumerate() {
         let base = match p.designator.trim() {
             "" => format!("Part {}", index.saturating_add(1)),
             d => d.to_string(),
         };
-        let mut name = base.clone();
-        let mut n = 2usize;
-        while used.contains(&name) {
-            name = format!("{base} ({n})");
-            n = n.saturating_add(1);
-        }
-        used.insert(name.clone());
-        let wants_standard = match (&p.model, standard) {
-            (_, None) => false,
-            (None, _) => true,
-            (Some(m), Some((_, bodies))) => match m.source {
-                ModelSource::External { .. } => true,
-                ModelSource::Extruded { .. } => bodies == Bodies::Standard,
-                ModelSource::Embedded { .. } => false,
-            },
+        let name = unique_name(&mut used, &base);
+        // A part has no usable model at all when it names none, or only links to files that
+        // were not found; a plain extruded body is replaced when `--bodies standard` asks.
+        let all_external = p
+            .models
+            .iter()
+            .all(|m| matches!(m.source, ModelSource::External { .. }));
+        let extruded_body = !p.models.is_empty()
+            && p.models
+                .iter()
+                .all(|m| matches!(m.source, ModelSource::Extruded { .. }));
+        let wants_standard = match standard {
+            None => false,
+            Some((_, bodies)) => all_external || (extruded_body && bodies == Bodies::Standard),
         };
-        let extruded_body = matches!(
-            &p.model,
-            Some(ModelRef {
-                source: ModelSource::Extruded { .. },
-                ..
-            })
-        );
         if let (true, Some((recognizer, _))) = (wants_standard, standard) {
             if let Some(found) = recognizer.recognize(p) {
                 match standard_parts(
@@ -1056,107 +1228,102 @@ fn components_with(
                 }
             }
         }
-        let Some(model) = &p.model else {
+        if p.models.is_empty() {
             no_model.push(name);
             continue;
+        }
+        let group = match p.side {
+            Side::Top => GROUP_TOP,
+            Side::Bottom => GROUP_BOTTOM,
         };
-        let id = match &model.source {
-            ModelSource::Embedded { id } => match unpacked.get(id.as_str()) {
-                Some(model_id) => model_id.clone(),
-                None => match embedded.iter().find(|m| &m.id == id) {
-                    Some(m) if m.step.starts_with(b"ISO-10303-21") => {
-                        let model_id = format!("model-{}", placed.models.len().saturating_add(1));
-                        let file = format!("{model_id}.step");
-                        placed.models.push((model_id.clone(), file, m.step.clone()));
-                        unpacked.insert(m.id.as_str(), model_id.clone());
-                        model_id
-                    }
-                    Some(m) => {
-                        failed.push(format!("{name}: {} is not a STEP file", m.name));
-                        continue;
-                    }
-                    None => {
-                        missing.push(name);
-                        continue;
-                    }
-                },
-            },
-            ModelSource::External { file, .. } => {
-                external.push(format!("{name} ({file})"));
-                continue;
-            }
-            ModelSource::Extruded {
-                outline,
-                standoff,
-                height,
-            } => {
-                let key = format!("{outline:?} {standoff} {height}");
-                match extruded.get(&key) {
-                    Some(id) => id.clone(),
-                    None => {
-                        let id = format!("model-{}", placed.models.len().saturating_add(1));
-                        match board_step::prism(outline, *standoff, *height, &id) {
-                            Ok(step) => {
-                                let file = format!("{id}.step");
-                                placed
-                                    .models
-                                    .push((id.clone(), file, step.text.into_bytes()));
-                                extruded.insert(key, id.clone());
-                                id
-                            }
-                            Err(why) => {
-                                failed.push(format!("{name}: {why}"));
-                                continue;
-                            }
-                        }
-                    }
+        let frame = part_frame(p, thickness);
+        if p.models.len() > MAX_BODIES_PER_PART {
+            over_part.push(format!("{name} ({})", p.models.len()));
+        }
+        for (k, model) in p.models.iter().take(MAX_BODIES_PER_PART).enumerate() {
+            if bodies_placed >= max_bodies {
+                total_over = total_over
+                    .saturating_add(p.models.len().min(MAX_BODIES_PER_PART).saturating_sub(k));
+                if k == 0 {
+                    no_model.push(format!(
+                        "{name} (main body left out by the package body limit)"
+                    ));
                 }
+                break;
             }
-        };
-        let [rx, ry, rz] = model.rotation_deg;
-        let [dx, dy, dz] = model.offset;
-        let on_part = compose(
-            &translation(dx, dy, dz),
-            &compose(&turn(2, rz), &compose(&turn(1, ry), &turn(0, rx))),
-        );
-        let mut part_notes = Vec::new();
-        // A tilt about X is confirmed on top- and bottom-side parts by the tenth batch of test
-        // boards; a tilt about Y is on none of them yet.
-        if ry != 0.0 {
-            part_notes.push(json!({
-                "severity": "Degraded",
-                "message": "the model is tilted about Y on its part; no test board confirms \
-                            that turn yet",
-            }));
+            bodies_placed = bodies_placed.saturating_add(1);
+            // The first body is the part itself; the others are "<designator> body 2", ...
+            let body_name = if k == 0 {
+                name.clone()
+            } else {
+                unique_name(&mut used, &format!("{name} body {}", k.saturating_add(1)))
+            };
+            let outcome = body_model(&mut ctx, model, embedded, &mut placed)
+                .and_then(|id| body_part(model, &body_name, &id, &frame, group, &mut placed.notes));
+            match outcome {
+                Ok(part) => placed.parts.push(part),
+                Err(Lost::Missing) => missing.push(body_name),
+                Err(Lost::External(file)) => external.push(format!("{body_name} ({file})")),
+                Err(Lost::Failed(why)) => failed.push(format!("{body_name}: {why}")),
+            }
         }
-        let mut part = json!({
-            "name": name,
-            "model": id,
-            "transform": compose(&part_frame(p, thickness), &on_part),
-            "group": match p.side {
-                Side::Top => GROUP_TOP,
-                Side::Bottom => GROUP_BOTTOM,
-            },
-            "notes": part_notes,
+    }
+    if !over_part.is_empty() {
+        placed.notes.push(json!({
+            "severity": "Dropped",
+            "message": format!(
+                "{} component(s) have more than {MAX_BODIES_PER_PART} 3D bodies; the rest of \
+                 each were left out: {}",
+                over_part.len(),
+                named(&over_part)
+            ),
+        }));
+    }
+    // Bodies that belong to no part sit in board coordinates, z up from the board's top face.
+    let free_frame = translation(0.0, 0.0, thickness);
+    let mut free_over = 0usize;
+    for (k, model) in free.iter().enumerate() {
+        if k >= MAX_FREE_BODIES || bodies_placed >= max_bodies {
+            free_over = free.len().saturating_sub(MAX_FREE_BODIES);
+            total_over =
+                total_over.saturating_add(free.len().min(MAX_FREE_BODIES).saturating_sub(k));
+            break;
+        }
+        bodies_placed = bodies_placed.saturating_add(1);
+        let body_name = unique_name(&mut used, &format!("Free body {}", k.saturating_add(1)));
+        let outcome = body_model(&mut ctx, model, embedded, &mut placed).and_then(|id| {
+            body_part(
+                model,
+                &body_name,
+                &id,
+                &free_frame,
+                GROUP_FREE,
+                &mut placed.notes,
+            )
         });
-        // An extruded body the file colors; an embedded STEP model keeps its own colors.
-        if let Some(color) = &model.color {
-            if color.opacity <= 0.0 {
-                placed.notes.push(json!({
-                    "severity": "Info",
-                    "message": format!(
-                        "{name}'s 3D body is fully transparent, as the board file says"
-                    ),
-                }));
-            }
+        match outcome {
+            Ok(part) => placed.parts.push(part),
+            Err(Lost::Missing) => missing.push(body_name),
+            Err(Lost::External(file)) => external.push(format!("{body_name} ({file})")),
+            Err(Lost::Failed(why)) => failed.push(format!("{body_name}: {why}")),
         }
-        if let (Some(color), Some(map)) = (&model.color, part.as_object_mut()) {
-            map.insert("color".into(), json!(hex(color)));
-            map.insert("opacity".into(), json!(color.opacity));
-            map.insert("metallic".into(), json!(BODY_FINISH.metallic));
-            map.insert("roughness".into(), json!(BODY_FINISH.roughness));
-        }
-        placed.parts.push(part);
+    }
+    if free_over > 0 {
+        placed.notes.push(json!({
+            "severity": "Dropped",
+            "message": format!(
+                "{free_over} free 3D bod(ies) were left out: the package holds at most \
+                 {MAX_FREE_BODIES} free bodies and {max_bodies} bodies in all"
+            ),
+        }));
+    }
+    if total_over > 0 {
+        placed.notes.push(json!({
+            "severity": "Dropped",
+            "message": format!(
+                "{total_over} bodies left out: the package holds at most {max_bodies} bodies"
+            ),
+        }));
     }
     for (package, parts) in &recognized {
         placed.notes.push(json!({
@@ -1415,7 +1582,7 @@ mod tests {
             at: Point { x, y },
             rotation_deg,
             side,
-            model: Some(ModelRef {
+            models: vec![ModelRef {
                 name: String::new(),
                 source: ModelSource::Extruded {
                     outline: rect(-0.8, -0.4, 0.8, 0.4),
@@ -1425,7 +1592,7 @@ mod tests {
                 offset: [0.0; 3],
                 rotation_deg: [0.0; 3],
                 color: None,
-            }),
+            }],
             comment: String::new(),
         }
     }
@@ -1493,7 +1660,7 @@ mod tests {
     #[test]
     fn a_models_own_offset_and_turn_come_before_the_part() {
         let mut r1 = part("R1", 10.0, 0.0, 90.0, Side::Top);
-        if let Some(m) = &mut r1.model {
+        if let Some(m) = r1.models.first_mut() {
             m.offset = [1.0, 0.0, 0.2];
             m.rotation_deg = [0.0, 0.0, 90.0];
         }
@@ -1527,13 +1694,15 @@ mod tests {
     #[test]
     fn parts_without_a_buildable_model_are_named_in_a_note() {
         let mut none = part("R1", 0.0, 0.0, 0.0, Side::Top);
-        none.model = None;
+        none.models.clear();
         let mut embedded = part("U1", 0.0, 0.0, 0.0, Side::Top);
         let mut external = part("U2", 0.0, 0.0, 0.0, Side::Top);
         let mut flat = part("U3", 0.0, 0.0, 0.0, Side::Top);
-        if let (Some(e), Some(x), Some(f)) =
-            (&mut embedded.model, &mut external.model, &mut flat.model)
-        {
+        if let (Some(e), Some(x), Some(f)) = (
+            embedded.models.first_mut(),
+            external.models.first_mut(),
+            flat.models.first_mut(),
+        ) {
             e.source = ModelSource::Embedded { id: "{M}".into() };
             x.source = ModelSource::External {
                 file: "soic8.step".into(),
@@ -1571,7 +1740,7 @@ mod tests {
         let mut r2 = part("R2", 20.0, 0.0, 0.0, Side::Top);
         let mut r3 = part("R3", 30.0, 0.0, 0.0, Side::Top);
         for (p, id) in [(&mut r1, "A"), (&mut r2, "A"), (&mut r3, "B")] {
-            if let Some(m) = &mut p.model {
+            if let Some(m) = p.models.first_mut() {
                 m.source = ModelSource::Embedded { id: id.into() };
             }
         }
@@ -2316,7 +2485,7 @@ mod tests {
             part("R2", 20.0, 10.0, 0.0, Side::Top),
         ];
         for (p, opacity) in list.iter_mut().zip([0.0, 0.5]) {
-            if let Some(m) = p.model.as_mut() {
+            if let Some(m) = p.models.first_mut() {
                 m.color = Some(board_model::Color {
                     r: 1,
                     g: 2,
@@ -3091,7 +3260,7 @@ mod tests {
     }
 
     fn without_model(mut p: Placement) -> Placement {
-        p.model = None;
+        p.models.clear();
         p
     }
 
@@ -3127,8 +3296,15 @@ mod tests {
             ..Board::default()
         };
         let recognizer = Recognizer::new(&board);
-        let all =
-            |bodies| components_with(&board.components, &[], 1.6, Some((&recognizer, bodies)));
+        let all = |bodies| {
+            components_with(
+                &board.components,
+                &[],
+                1.6,
+                &[],
+                Some((&recognizer, bodies)),
+            )
+        };
 
         // `file`: R1 and C1 get a body; R2 keeps its extruded one; U1 is dropped as before.
         let placed = all(Bodies::File);
@@ -3222,13 +3398,13 @@ mod tests {
         // A part with an embedded model keeps it in either mode; two parts named R1 cannot be
         // told apart by their pads, so neither gets a body.
         let mut embedded = part("R1", 0.0, 0.0, 0.0, Side::Top);
-        embedded.model = Some(ModelRef {
+        embedded.models = vec![ModelRef {
             name: "m".into(),
             source: ModelSource::Embedded { id: "m".into() },
             offset: [0.0; 3],
             rotation_deg: [0.0; 3],
             color: None,
-        });
+        }];
         let board = Board {
             components: vec![
                 embedded,
@@ -3253,10 +3429,293 @@ mod tests {
             &board.components,
             &[step],
             1.6,
+            &[],
             Some((&recognizer, Bodies::Standard)),
         );
         assert_eq!(names(&placed), ["R1"]);
         assert_eq!(placed.models.len(), 1);
         assert!(placed.notes.iter().any(|n| n["severity"] == "Dropped"));
+    }
+
+    fn ball(cx: f64, cy: f64, z: f64, radius: f64) -> ModelRef {
+        ModelRef {
+            name: String::new(),
+            source: ModelSource::Sphere {
+                center: Point { x: cx, y: cy },
+                z,
+                radius,
+            },
+            offset: [0.0; 3],
+            rotation_deg: [0.0; 3],
+            color: None,
+        }
+    }
+
+    fn color(r: u8, opacity: f64) -> board_model::Color {
+        board_model::Color {
+            r,
+            g: 0,
+            b: 0,
+            opacity,
+        }
+    }
+
+    fn dropped(placed: &Placed) -> Vec<&str> {
+        placed
+            .notes
+            .iter()
+            .filter(|n| n["severity"] == "Dropped")
+            .map(|n| n["message"].as_str().unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn every_body_of_a_part_is_its_own_part_with_its_own_color() {
+        // R1 at (25, 15) on the top face (z 1.6), three bodies: the extruded one (red, opaque),
+        // the same outline moved up by 0.5 (blue, half see-through), and a sphere.
+        let mut r1 = part("R1", 25.0, 15.0, 0.0, Side::Top);
+        let mut first = r1.models[0].clone();
+        first.color = Some(color(255, 1.0));
+        let mut second = first.clone();
+        second.offset = [0.0, 0.0, 0.5];
+        second.color = Some(color(0, 0.5));
+        r1.models = vec![first, second, ball(0.5, -0.25, 0.75, 0.3)];
+        let placed = components(&[r1], &[], 1.6);
+        assert_eq!(names(&placed), ["R1", "R1 body 2", "R1 body 3"]);
+        for p in &placed.parts {
+            assert_eq!(p["group"], GROUP_TOP);
+        }
+        assert_eq!(placed.parts[0]["color"], "#ff0000");
+        assert_eq!(placed.parts[0]["opacity"], 1.0);
+        assert_eq!(placed.parts[1]["color"], "#000000");
+        assert_eq!(placed.parts[1]["opacity"], 0.5);
+        // Equal outlines share one model file; the sphere is a second one.
+        assert_eq!(placed.parts[0]["model"], placed.parts[1]["model"]);
+        assert_ne!(placed.parts[0]["model"], placed.parts[2]["model"]);
+        assert_eq!(placed.models.len(), 2);
+        // The second body is the first, 0.5 higher: (25, 15, 1.6 + 0.5) for its origin.
+        assert!(close(
+            apply(&placed.parts[1]["transform"], [0.0, 0.0, 0.0]),
+            [25.0, 15.0, 2.1]
+        ));
+        // The sphere's center is in the part's frame: x 25 + 0.5, y 15 - 0.25, z 1.6 + 0.75.
+        assert!(close(
+            apply(&placed.parts[2]["transform"], [0.0, 0.0, 0.0]),
+            [25.5, 14.75, 2.35]
+        ));
+        assert!(placed.notes.is_empty(), "{:?}", placed.notes);
+    }
+
+    #[test]
+    fn a_spheres_center_turns_about_the_part_origin_before_its_offset() {
+        let mut r1 = part("R1", 10.0, 20.0, 90.0, Side::Top);
+        let mut sphere = ball(1.0, 2.0, 3.0, 0.5);
+        sphere.rotation_deg = [90.0, 0.0, 90.0];
+        sphere.offset = [4.0, 5.0, 6.0];
+        r1.models = vec![sphere];
+        let placed = components(&[r1], &[], 1.6);
+        assert_eq!(names(&placed), ["R1"]);
+        // We turn (1, 2, 3) about X by 90 degrees to (1, -3, 2), then about Z
+        // to (3, 1, 2). The offset makes (7, 6, 8). The part's 90-degree Z turn
+        // makes (-6, 7, 8); its board position (10, 20, 1.6) makes (4, 27, 9.6).
+        assert!(close(
+            apply(&placed.parts[0]["transform"], [0.0, 0.0, 0.0]),
+            [4.0, 27.0, 9.6]
+        ));
+        assert!(placed.notes.is_empty());
+    }
+
+    #[test]
+    fn an_overflowing_body_placement_is_failed_without_a_null_transform() {
+        let mut r1 = part("R1", f64::MAX, 0.0, 0.0, Side::Top);
+        let mut huge = ball(0.0, 0.0, 0.0, 1.0);
+        huge.offset = [f64::MAX, 0.0, 0.0];
+        r1.models = vec![huge, ball(0.0, 0.0, 0.0, 1.0)];
+        let placed = components(&[r1], &[], 1.6);
+        // We add two finite MAX offsets for the main body, which overflows.
+        // Its sibling still has a finite placement and remains in the package.
+        assert_eq!(names(&placed), ["R1 body 2"]);
+        assert!(placed.parts[0]["transform"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|row| row.as_array().unwrap())
+            .all(|number| number.as_f64().is_some_and(f64::is_finite)));
+        let notes = dropped(&placed);
+        assert_eq!(notes.len(), 1);
+        assert!(notes[0].contains("R1: the body's placement is not finite"));
+    }
+
+    #[test]
+    fn a_spheres_file_holds_a_ball_of_its_radius_and_equal_ones_share_it() {
+        let mut r1 = part("R1", 0.0, 0.0, 0.0, Side::Top);
+        r1.models = vec![
+            ball(0.0, 0.0, 0.3, 0.3),
+            ball(1.0, 0.0, 0.3, 0.3),
+            ball(2.0, 0.0, 0.3, 0.5),
+        ];
+        let placed = components(&[r1], &[], 1.6);
+        assert_eq!(placed.parts.len(), 3);
+        assert_eq!(placed.models.len(), 2, "radius 0.3 once, radius 0.5 once");
+        let text = |i: usize| String::from_utf8(placed.models[i].2.clone()).unwrap();
+        assert!(text(0).contains("SPHERICAL_SURFACE('',#") && text(0).contains(",0.3);"));
+        assert!(text(1).contains(",0.5);"));
+        assert_eq!(placed.parts[0]["model"], placed.parts[1]["model"]);
+        assert_ne!(placed.parts[0]["model"], placed.parts[2]["model"]);
+    }
+
+    #[test]
+    fn a_bottom_side_part_carries_its_extra_bodies_with_it() {
+        // On the bottom face (z 0) the part's frame is flipped: a body 0.5 up in the part's
+        // frame is 0.5 below the board.
+        let mut r1 = part("R1", 5.0, 5.0, 0.0, Side::Bottom);
+        let mut second = r1.models[0].clone();
+        second.offset = [0.0, 0.0, 0.5];
+        r1.models.push(second);
+        let placed = components(&[r1], &[], 1.6);
+        assert_eq!(names(&placed), ["R1", "R1 body 2"]);
+        assert_eq!(placed.parts[1]["group"], GROUP_BOTTOM);
+        assert!(close(
+            apply(&placed.parts[1]["transform"], [0.0, 0.0, 0.0]),
+            [5.0, 5.0, -0.5]
+        ));
+    }
+
+    #[test]
+    fn body_names_stay_unique() {
+        // A part really named "R1 body 2" is taken first; R1's second body gets "(2)".
+        let mut r1 = part("R1", 0.0, 0.0, 0.0, Side::Top);
+        r1.models.push(r1.models[0].clone());
+        let mut clash = part("R1 body 2", 5.0, 0.0, 0.0, Side::Top);
+        clash.models.clear();
+        let placed = components(&[clash, r1], &[], 1.6);
+        // The clash part has no model, but its name is reserved before R1's bodies are named.
+        assert_eq!(names(&placed), ["R1", "R1 body 2 (2)"]);
+    }
+
+    #[test]
+    fn free_bodies_are_parts_of_their_own_in_their_own_group() {
+        // Board coordinates, z up from the top face (1.6): a sphere at (5, 6) 1.0 above the top
+        // face, and a raised box.
+        let mut raised = part("X", 0.0, 0.0, 0.0, Side::Top).models.remove(0);
+        raised.offset = [10.0, 20.0, 0.25];
+        raised.rotation_deg = [0.0, 0.0, 90.0];
+        let free = [ball(5.0, 6.0, 1.0, 0.4), raised];
+        let placed = components_with(&[], &[], 1.6, &free, None);
+        assert_eq!(names(&placed), ["Free body 1", "Free body 2"]);
+        for p in &placed.parts {
+            assert_eq!(p["group"], GROUP_FREE);
+        }
+        assert!(close(
+            apply(&placed.parts[0]["transform"], [0.0, 0.0, 0.0]),
+            [5.0, 6.0, 2.6]
+        ));
+        // The box's corner (0.8, 0.4, 0.45), turned a quarter about Z, is at (-0.4, 0.8), then
+        // moved by (10, 20, 0.25) and up by the top face.
+        assert!(close(
+            apply(&placed.parts[1]["transform"], [0.8, 0.4, 0.45]),
+            [9.6, 20.8, 2.3]
+        ));
+    }
+
+    #[test]
+    fn a_designator_called_free_body_does_not_clash() {
+        let mut p = part("Free body 1", 0.0, 0.0, 0.0, Side::Top);
+        p.models.truncate(1);
+        let placed = components_with(&[p], &[], 1.6, &[ball(0.0, 0.0, 0.0, 1.0)], None);
+        assert_eq!(names(&placed), ["Free body 1", "Free body 1 (2)"]);
+    }
+
+    #[test]
+    fn spheres_that_are_not_balls_are_dropped_with_a_note() {
+        let mut r1 = part("R1", 0.0, 0.0, 0.0, Side::Top);
+        r1.models = vec![
+            ball(0.0, 0.0, 0.0, f64::NAN),
+            ball(0.0, 0.0, 0.0, -1.0),
+            ball(0.0, 0.0, 0.0, 0.0),
+            ball(f64::NAN, 0.0, 0.0, 1.0),
+            ball(0.0, 0.0, f64::INFINITY, 1.0),
+            ball(0.0, 0.0, 0.0, 1e12),
+        ];
+        let placed = components_with(&[r1], &[], 1.6, &[ball(0.0, 0.0, 0.0, -2.0)], None);
+        assert!(placed.parts.is_empty());
+        assert!(placed.models.is_empty());
+        let notes = dropped(&placed);
+        assert_eq!(notes.len(), 1, "{notes:?}");
+        assert!(notes[0].starts_with("7 component(s) have a 3D model that could not be used"));
+        assert!(notes[0].contains("R1 body 6") && notes[0].contains("Free body 1"));
+    }
+
+    #[test]
+    fn a_huge_number_of_bodies_is_bounded_and_noted() {
+        let mut r1 = part("R1", 0.0, 0.0, 0.0, Side::Top);
+        r1.models = vec![ball(0.0, 0.0, 0.0, 1.0); MAX_BODIES_PER_PART + 44];
+        let free = vec![ball(0.0, 0.0, 0.0, 1.0); MAX_FREE_BODIES + 3];
+        let placed = components_with(&[r1], &[], 1.6, &free, None);
+        let free_parts = placed
+            .parts
+            .iter()
+            .filter(|p| p["group"] == GROUP_FREE)
+            .count();
+        assert_eq!(free_parts, MAX_FREE_BODIES);
+        assert_eq!(placed.parts.len(), MAX_BODIES_PER_PART + MAX_FREE_BODIES);
+        // One shared file for all of them.
+        assert_eq!(placed.models.len(), 1);
+        let notes = dropped(&placed);
+        assert_eq!(notes.len(), 2, "{notes:?}");
+        assert!(notes.iter().any(|m| m.contains("R1 (300)")));
+        assert!(notes.iter().any(|m| m.starts_with("3 free 3D bod")));
+    }
+
+    #[test]
+    fn the_total_body_limit_counts_later_parts_and_free_bodies() {
+        let mut r1 = part("R1", 0.0, 0.0, 0.0, Side::Top);
+        r1.models = vec![ball(0.0, 0.0, 0.0, 1.0); 3];
+        let mut r2 = part("R2", 0.0, 0.0, 0.0, Side::Top);
+        r2.models = vec![ball(0.0, 0.0, 0.0, 1.0); 2];
+        let free = vec![ball(0.0, 0.0, 0.0, 1.0); 2];
+        let placed = components_with_limit(&[r1, r2], &[], 1.6, &free, None, 2);
+        assert_eq!(names(&placed), ["R1", "R1 body 2"]);
+        let notes = dropped(&placed);
+        // Of seven bodies, two fit: R1 loses one, R2 two, and the free bodies two.
+        assert_eq!(
+            notes
+                .iter()
+                .filter(|m| m.contains("bodies left out:"))
+                .count(),
+            1
+        );
+        assert!(notes.contains(&"5 bodies left out: the package holds at most 2 bodies"));
+        // We still account for R2 when even its main body cannot fit.
+        assert!(notes
+            .iter()
+            .any(|m| m.contains("R2 (main body left out by the package body limit)")));
+    }
+
+    #[test]
+    fn standard_bodies_only_come_to_a_part_with_no_usable_model() {
+        // Two parts with 0603 pads: R1 has a sphere (a usable model), R2 has none. Even with
+        // `--bodies standard`, only R2 gets the standard body and leads.
+        let mut r1 = part("R1", 0.0, 0.0, 0.0, Side::Top);
+        r1.models = vec![ball(0.0, 0.0, 0.5, 0.5)];
+        let board = Board {
+            components: vec![r1, without_model(part("R2", 5.0, 0.0, 0.0, Side::Top))],
+            copper: vec![
+                smd_pad("R1", -0.8, 0.0),
+                smd_pad("R1", 0.8, 0.0),
+                smd_pad("R2", 4.2, 0.0),
+                smd_pad("R2", 5.8, 0.0),
+            ],
+            ..Board::default()
+        };
+        let recognizer = Recognizer::new(&board);
+        let placed = components_with(
+            &board.components,
+            &[],
+            1.6,
+            &[],
+            Some((&recognizer, Bodies::Standard)),
+        );
+        assert_eq!(names(&placed), ["R1", "R2", "R2 leads"]);
     }
 }

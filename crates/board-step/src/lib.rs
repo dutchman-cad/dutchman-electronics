@@ -1358,6 +1358,61 @@ pub fn tubes(list: &[Tube], z0: f64, z1: f64, name: &str) -> Result<BoardStep, S
     })
 }
 
+/// The largest sphere radius [`sphere`] writes, in mm.
+pub const MAX_SPHERE_RADIUS: f64 = 1.0e6;
+
+/// Writes a ball as a STEP file: one `MANIFOLD_SOLID_BREP` centered on the origin, bounded by
+/// an exact `SPHERICAL_SURFACE` of the given `radius` (mm). It is a closed shell of two
+/// hemispherical faces (north and south, about the Z axis) that share the equator, which is
+/// two half circles, so no face wraps round the sphere and no seam or degenerate pole edge is
+/// needed: 2 vertices, 2 edges and 2 faces. `name` becomes the product name. An error when
+/// the radius is not a finite number above [`TOLERANCE`] and at most [`MAX_SPHERE_RADIUS`].
+pub fn sphere(radius: f64, name: &str) -> Result<BoardStep, StepError> {
+    if !(radius.is_finite() && radius > TOLERANCE && radius <= MAX_SPHERE_RADIUS) {
+        return Err(StepError::Size(format!(
+            "a sphere's radius must be above {TOLERANCE} mm and at most {MAX_SPHERE_RADIUS} mm \
+             (got {radius})"
+        )));
+    }
+    let mut w = Writer::default();
+    let mut stats = Stats::default();
+    let origin = Point { x: 0.0, y: 0.0 };
+    let a = w.point(radius, 0.0, 0.0);
+    let va = w.add(format!("VERTEX_POINT('',#{a})"));
+    let b = w.point(-radius, 0.0, 0.0);
+    let vb = w.add(format!("VERTEX_POINT('',#{b})"));
+    let mut equator = Vec::new();
+    for (from, to) in [(va, vb), (vb, va)] {
+        let curve = w.circle(origin, 0.0, radius);
+        let id = w.add(format!("EDGE_CURVE('',#{from},#{to},#{curve},.T.)"));
+        equator.push(Edge3 { id });
+    }
+    // The equator runs counter-clockwise seen from above, so the northern cap (normal out of
+    // the sphere, up at the pole) is on its left; the southern face walks it the other way.
+    let north_edges: Vec<(Edge3, bool)> = equator.iter().map(|e| (*e, true)).collect();
+    let south_edges: Vec<(Edge3, bool)> = equator.iter().rev().map(|e| (*e, false)).collect();
+    let frame = w.placement([0.0; 3], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]);
+    let surface = w.add(format!("SPHERICAL_SURFACE('',#{frame},{})", real(radius)));
+    let mut faces = Vec::new();
+    for edges in [north_edges, south_edges] {
+        let lp = edge_loop(&mut w, &edges);
+        let bound = w.add(format!("FACE_OUTER_BOUND('',#{lp},.T.)"));
+        faces.push(w.add(format!("ADVANCED_FACE('',(#{bound}),#{surface},.T.)")));
+    }
+    stats.vertices = 2;
+    stats.edges = 2;
+    stats.faces = 2;
+    let shell = w.add(format!("CLOSED_SHELL('',({}))", id_list(&faces)));
+    let brep = w.add(format!("MANIFOLD_SOLID_BREP({},#{shell})", text(name)));
+    Ok(BoardStep {
+        text: finish(w, &[brep], name, "Sphere"),
+        notes: Vec::new(),
+        stats,
+        thickness: 2.0 * radius,
+        holes: Vec::new(),
+    })
+}
+
 /// The axis a [`Solid`] is extruded along. Its outline is sketched in the other two, in the
 /// order that keeps a right-handed frame: for `Z` (x, y), for `X` (y, z), for `Y` (z, x).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

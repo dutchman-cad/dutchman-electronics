@@ -1081,3 +1081,54 @@ fn solids_refuse_what_cannot_be_a_solid() {
     empty.outline = Contour::default();
     assert!(solids(&[empty], "x", "y").is_err());
 }
+
+#[test]
+fn a_sphere_is_one_closed_shell_of_two_hemispheres() {
+    // Two vertices (the ends of the equator on the X axis), two edges (the equator as two half
+    // circles) and two faces (north and south): V - E + F = 2, and each edge is used once each
+    // way. The one spherical surface has the radius we asked for.
+    let out = sphere(1.25, "ball").unwrap();
+    assert_eq!(
+        (out.stats.vertices, out.stats.edges, out.stats.faces),
+        (2, 2, 2)
+    );
+    assert_eq!(out.thickness, 2.5);
+    assert_eq!(out.text.matches("MANIFOLD_SOLID_BREP(").count(), 1);
+    assert_eq!(out.text.matches("CLOSED_SHELL(").count(), 1);
+    assert_eq!(out.text.matches("ADVANCED_FACE(").count(), 2);
+    assert_eq!(out.text.matches("SPHERICAL_SURFACE('',#").count(), 1);
+    assert!(out
+        .text
+        .lines()
+        .any(|l| l.contains("SPHERICAL_SURFACE(") && l.ends_with(",1.25);")));
+    // The poles are not vertices; the equator's ends are (+r, 0, 0) and (-r, 0, 0).
+    assert!(out.text.contains("CARTESIAN_POINT('',(1.25,0.,0.))"));
+    assert!(out.text.contains("CARTESIAN_POINT('',(-1.25,0.,0.))"));
+    check_topology(&out.text);
+}
+
+#[test]
+fn a_sphere_refuses_a_radius_that_is_not_a_size() {
+    for radius in [
+        f64::NAN,
+        f64::INFINITY,
+        -1.0,
+        0.0,
+        1e-9,
+        MAX_SPHERE_RADIUS * 2.0,
+    ] {
+        assert!(
+            matches!(sphere(radius, "ball"), Err(StepError::Size(_))),
+            "{radius}"
+        );
+    }
+    assert!(sphere(MAX_SPHERE_RADIUS, "ball").is_ok());
+}
+
+#[test]
+fn the_same_sphere_gives_the_same_file() {
+    assert_eq!(
+        sphere(0.5, "b").unwrap().text,
+        sphere(0.5, "b").unwrap().text
+    );
+}

@@ -66,7 +66,7 @@ fn axis_angle(a: [f64; 3], t: f64) -> M {
 /// flipped about its own X axis; the model is turned about X, then Y, then Z, then moved by its
 /// offset.
 fn model_in_board(p: &Placement) -> (M, [f64; 3]) {
-    let m = p.model.as_ref().unwrap();
+    let m = p.models.first().unwrap();
     let flip: M = match p.side {
         Side::Top => turn(0, 0.0),
         Side::Bottom => turn(0, 180.0),

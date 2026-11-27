@@ -82,9 +82,14 @@ pub fn resolve(
 ) -> Vec<Note> {
     // Each linked (file, checksum) once, with how many parts use it.
     let mut linked: BTreeMap<(String, Option<u32>), usize> = BTreeMap::new();
-    for p in &outcome.board.components {
-        if let Some(ModelSource::External { file, checksum }) = p.model.as_ref().map(|m| &m.source)
-        {
+    let all = outcome
+        .board
+        .components
+        .iter()
+        .flat_map(|p| p.models.iter())
+        .chain(outcome.board.free_models.iter());
+    for m in all {
+        if let ModelSource::External { file, checksum } = &m.source {
             *linked.entry((file.clone(), *checksum)).or_default() += 1;
         }
     }
@@ -134,32 +139,42 @@ pub fn resolve(
     let pads = pad_sizes(&outcome.board);
     let mut too_large: Vec<(String, String, [f64; 2], [f64; 2])> = Vec::new();
     for p in &mut outcome.board.components {
-        let Some(model) = p.model.as_mut() else {
-            continue;
-        };
+        for model in &mut p.models {
+            let ModelSource::External { file, checksum } = &model.source else {
+                continue;
+            };
+            let Some(r) = found.get(&(file.clone(), *checksum)) else {
+                continue;
+            };
+            if r.by_name {
+                if let (Some(size), Some(pad)) = (r.size, pads.get(&p.designator)) {
+                    if far_larger(size, *pad) {
+                        too_large.push((p.designator.clone(), file.clone(), size, *pad));
+                        continue;
+                    }
+                }
+            }
+            model.source = ModelSource::Embedded { id: r.id.clone() };
+        }
+    }
+    // We skip the size check for free bodies because they have no pads to compare against.
+    for model in &mut outcome.board.free_models {
         let ModelSource::External { file, checksum } = &model.source else {
             continue;
         };
-        let Some(r) = found.get(&(file.clone(), *checksum)) else {
-            continue;
-        };
-        if r.by_name {
-            if let (Some(size), Some(pad)) = (r.size, pads.get(&p.designator)) {
-                if far_larger(size, *pad) {
-                    too_large.push((p.designator.clone(), file.clone(), size, *pad));
-                    continue;
-                }
-            }
+        if let Some(r) = found.get(&(file.clone(), *checksum)) {
+            model.source = ModelSource::Embedded { id: r.id.clone() };
         }
-        model.source = ModelSource::Embedded { id: r.id.clone() };
     }
     // A model no part uses after all is not handed on.
     let used: BTreeSet<&str> = outcome
         .board
         .components
         .iter()
-        .filter_map(|p| match p.model.as_ref().map(|m| &m.source) {
-            Some(ModelSource::Embedded { id }) => Some(id.as_str()),
+        .flat_map(|p| p.models.iter())
+        .chain(outcome.board.free_models.iter())
+        .filter_map(|m| match &m.source {
+            ModelSource::Embedded { id } => Some(id.as_str()),
             _ => None,
         })
         .collect();
@@ -636,7 +651,7 @@ mod tests {
             at: Point::default(),
             rotation_deg: 0.0,
             side: Side::Top,
-            model: Some(ModelRef {
+            models: vec![ModelRef {
                 name: file.into(),
                 source: ModelSource::External {
                     file: file.into(),
@@ -645,7 +660,7 @@ mod tests {
                 offset: [0.0; 3],
                 rotation_deg: [0.0; 3],
                 color: None,
-            }),
+            }],
             comment: String::new(),
         }
     }
@@ -673,8 +688,8 @@ mod tests {
         out.board
             .components
             .get(i)?
-            .model
-            .as_ref()
+            .models
+            .first()
             .map(|m| &m.source)
     }
 

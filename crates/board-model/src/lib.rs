@@ -441,6 +441,13 @@ pub enum ModelSource {
         standoff: f64,
         height: f64,
     },
+    /// No file: an exact ball. `center` is its center's X and Y and `z` the height of the
+    /// center above the part's seating plane (the same frame as an [`ModelSource::Extruded`]
+    /// body, whose `standoff` and `height` are measured from that plane), all in the part's
+    /// frame in mm; `radius` is in mm. The [`ModelRef`] offset and rotation apply to the center
+    /// just as they do to an extruded outline: the center turns about the part origin, then
+    /// moves by the offset. A radius that is not positive and finite is not a ball.
+    Sphere { center: Point, z: f64, radius: f64 },
 }
 
 /// A reference to a component's 3D model, with the model's own placement on the component.
@@ -480,7 +487,10 @@ pub struct Placement {
     pub at: Point,
     pub rotation_deg: f64,
     pub side: Side,
-    pub model: Option<ModelRef>,
+    /// Every 3D body of the part, in the part's frame: the first is the part's main body, the
+    /// rest are further bodies of the same part (each with its own color). Empty when the file
+    /// gives none.
+    pub models: Vec<ModelRef>,
     /// The component's comment, often its value ("10k"); empty when the file gives none.
     pub comment: String,
 }
@@ -498,6 +508,10 @@ pub struct Board {
     pub graphics: Vec<Graphic>,
     pub texts: Vec<Text>,
     pub components: Vec<Placement>,
+    /// 3D bodies that belong to no part, in board coordinates: X and Y as on the board seen
+    /// from the top, Z from the top face of the board (up is positive; a body below the board
+    /// has a negative Z). A [`ModelRef`]'s `offset`, `rotation_deg` and shape are in that frame.
+    pub free_models: Vec<ModelRef>,
     /// Solder mask and silkscreen colors.
     pub appearance: Appearance,
     /// How far the solder mask opens past the edge of each bare pad, in mm, when the file says.

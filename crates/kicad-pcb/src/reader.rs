@@ -921,7 +921,7 @@ impl Reader {
             at: pos,
             rotation_deg: angle,
             side: if bottom { Side::Bottom } else { Side::Top },
-            model,
+            models: model.into_iter().collect(),
             comment: String::new(),
         });
     }
@@ -1671,6 +1671,7 @@ pub fn read(mut root: Node, variables: &Variables) -> ReadOutcome {
             texts: r.texts,
             components: r.components,
             appearance: Default::default(),
+            free_models: Vec::new(),
             solder_mask_expansion: mask_expansion,
         },
         notes,

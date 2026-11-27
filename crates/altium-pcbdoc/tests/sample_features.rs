@@ -134,7 +134,7 @@ fn a_solid_3d_mask_reads_opacity_one() -> Result<(), Box<dyn std::error::Error>>
 fn a_cylinder_body_is_an_extruded_circle() -> Result<(), Box<dyn std::error::Error>> {
     let out = read("body-cylinder.PcbDoc")?;
     let r1 = out.board.components.first().ok_or("no R1")?;
-    let m = r1.model.as_ref().ok_or("R1 has no model")?;
+    let m = r1.models.first().ok_or("R1 has no model")?;
     let ModelSource::Extruded {
         outline,
         standoff,
@@ -176,7 +176,7 @@ fn a_cylinder_body_is_an_extruded_circle() -> Result<(), Box<dyn std::error::Err
 fn a_sphere_body_is_left_out_with_a_note() -> Result<(), Box<dyn std::error::Error>> {
     let out = read("body-sphere.PcbDoc")?;
     let r1 = out.board.components.first().ok_or("no R1")?;
-    assert!(r1.model.is_none(), "{:?}", r1.model);
+    assert!(r1.models.is_empty(), "{:?}", r1.models);
     assert!(
         out.notes.iter().any(|n| {
             n.severity == Severity::Dropped
@@ -263,7 +263,7 @@ fn a_region_keeps_its_half_circles() -> Result<(), Box<dyn std::error::Error>> {
 fn a_component_body_keeps_its_half_circles() -> Result<(), Box<dyn std::error::Error>> {
     let out = read("body-arc-outline.PcbDoc")?;
     let r1 = out.board.components.first().ok_or("no R1")?;
-    let m = r1.model.as_ref().ok_or("R1 has no body")?;
+    let m = r1.models.first().ok_or("R1 has no body")?;
     let ModelSource::Extruded {
         outline,
         standoff,

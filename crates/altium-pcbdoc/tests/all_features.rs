@@ -326,7 +326,7 @@ fn j1_is_the_through_hole_header_step_model() -> Result<(), Box<dyn std::error::
         .iter()
         .find(|p| p.designator == "J1")
         .ok_or("no J1")?;
-    let model = j1.model.as_ref().ok_or("J1 has no model")?;
+    let model = j1.models.first().ok_or("J1 has no model")?;
     assert_eq!(model.name, "header-1x4.step");
     let board_model::ModelSource::Embedded { id } = &model.source else {
         return Err(format!("{:?}", model.source).into());

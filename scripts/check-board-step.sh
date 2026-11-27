@@ -196,4 +196,35 @@ if not leads or missing:
 print(f"standard bodies: {len(leads)} parts with leads")
 PY
 check_models "altium-dense-board-standard" "$dir"
+# A sphere (an exact SPHERICAL_SURFACE, two hemispherical faces on one closed shell): of radius 1.25 mm it
+# must open as one closed body with volume 4/3 pi r^3 = 8.18123 mm3 and a box of 2.5 mm each way
+# (to 0.5 percent and 0.001 mm), in SolidCraft on import and on reopening, and pass cadmpeg check.
+echo "== generated sphere"
+dir="$work/generated-sphere"
+mkdir -p "$dir"
+cargo run --quiet --release -p board-step --example sphere -- "$dir/model-sphere.step" 1.25
+check_models "generated-sphere" "$dir"
+for report in "$work/generated-sphere.model-sphere.solidcraft.json" "$work/generated-sphere.model-sphere.reopened.json"; do
+  python3 - "$report" <<'PY' || failed=1
+import json, math, sys
+report = json.load(open(sys.argv[1]))
+problems = []
+bodies = report.get("bodies", [])
+if len(bodies) != 1:
+    problems.append(f"{len(bodies)} bodies, expected 1")
+else:
+    body = bodies[0]
+    want = 4 / 3 * math.pi * 1.25 ** 3
+    if abs(body.get("volume_mm3", 0) - want) > want * 0.005:
+        problems.append(f"volume {body.get('volume_mm3')} mm3, expected {want:.5f}")
+    lo, hi = body["bbox"]["min"], body["bbox"]["max"]
+    for i, axis in enumerate("xyz"):
+        if abs(hi[i] - lo[i] - 2.5) > 0.001:
+            problems.append(f"{axis} size {hi[i] - lo[i]:.4f} mm, expected 2.5")
+if problems:
+    print("::error::SolidCraft on the generated sphere: " + "; ".join(problems))
+    sys.exit(1)
+print(f"sphere {sys.argv[1].rsplit('.', 2)[-2]}: volume and box as expected")
+PY
+done
 exit $failed
