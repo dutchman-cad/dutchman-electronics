@@ -532,7 +532,7 @@ fn r1_and_r2_on_both_sides_with_models_and_shown_fields() {
     assert!(at(r2.at, 35.0, 58.0) && near(r2.rotation_deg, 90.0) && r2.side == Side::Bottom);
     assert_eq!(o.board.components.len(), 4, "U1, J1, R1, R2");
     for r in [r1, r2] {
-        let m = r.model.as_ref().unwrap();
+        let m = r.models.first().unwrap();
         assert!(matches!(&m.source, ModelSource::External { file, .. } if file == "R_0603.step"));
         assert!(near(m.offset[0], 0.1) && near(m.offset[1], 0.2) && near(m.offset[2], 0.0));
         // KiCad's rotation (0, 0, 90) turns the model the other way about each axis (see the
