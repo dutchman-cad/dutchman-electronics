@@ -1066,8 +1066,9 @@ fn a_huge_or_broken_project_beside_the_board_is_skipped_with_a_note(
         "{notes:?}"
     );
     assert!(
-        notes.iter().any(|m| m
-            .starts_with("the project broken.PrjPcb next to the board was not used")),
+        notes
+            .iter()
+            .any(|m| m.starts_with("the project broken.PrjPcb next to the board was not used")),
         "{notes:?}"
     );
     assert!(

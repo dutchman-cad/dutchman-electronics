@@ -311,7 +311,9 @@ fn links_to(link: &str, file: &str) -> bool {
     if altium_pcbdoc::project::link_problem(link).is_some() {
         return false;
     }
-    let mut parts = link.split(['\\', '/']).filter(|p| !p.is_empty() && *p != ".");
+    let mut parts = link
+        .split(['\\', '/'])
+        .filter(|p| !p.is_empty() && *p != ".");
     matches!((parts.next(), parts.next()), (Some(only), None) if only.eq_ignore_ascii_case(file))
 }
 
