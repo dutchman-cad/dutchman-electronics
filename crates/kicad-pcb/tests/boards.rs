@@ -248,6 +248,7 @@ fn tracks_arcs_and_vias_with_their_nets() {
                 at: p,
                 diameter,
                 drill,
+                ..
             } => {
                 assert!(at(*p, 40.0, 20.0));
                 assert!(near(*diameter, 0.8) && near(*drill, 0.4));

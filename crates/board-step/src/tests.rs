@@ -279,6 +279,9 @@ fn vias_are_drilled_too() {
         at: p(5.0, 5.0),
         diameter: 0.6,
         drill: 0.3,
+        tented: [None, None],
+        mask_expansion: None,
+        layers: None,
     };
     let out = write(&board(rect(0.0, 0.0, 50.0, 30.0), vec![], vec![via]), "via").unwrap();
     assert_eq!(out.stats.openings, 1);
@@ -681,12 +684,18 @@ fn the_board_says_which_holes_it_cut() {
                 at: p(5.0, 5.0),
                 diameter: 1.0,
                 drill: 0.5,
+                tented: [None, None],
+                mask_expansion: None,
+                layers: None,
             },
             hole(10.0, 5.0, 1.0),
             CopperItem::Via {
                 at: p(0.1, 5.0),
                 diameter: 1.0,
                 drill: 0.5,
+                tented: [None, None],
+                mask_expansion: None,
+                layers: None,
             },
         ],
     );

@@ -633,6 +633,9 @@ impl Reader {
             at: Frame::IDENTITY.point(at.0, at.1),
             diameter: size,
             drill,
+            tented: [None, None],
+            mask_expansion: None,
+            layers: None,
         });
     }
 
