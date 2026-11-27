@@ -878,6 +878,10 @@ fn union_outline(circles: &[(Point, f64)]) -> Option<Vec<(Edge2, usize)>> {
                 return None;
             }
             let h = h2.sqrt();
+            // Two crossings closer than a short arc leave a neck no lining can follow.
+            if 2.0 * h < MIN_UNION_ARC {
+                return None;
+            }
             let (ux, uy) = ((cj.x - ci.x) / d, (cj.y - ci.y) / d);
             let (mx, my) = (ci.x + along * ux, ci.y + along * uy);
             for p in [

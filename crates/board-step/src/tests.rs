@@ -1486,7 +1486,8 @@ fn a_group_too_large_or_tangled_to_merge_falls_back_with_a_warning() {
         && n.message
             .starts_with("2 drilled hole(s) in groups of overlapping holes")));
     check_topology(&out.text);
-    // Circles that barely cross leave a sliver of an arc: no outline either.
+    // Circles that barely cross (their crossings 0.0063 apart) leave a neck too thin for any
+    // lining: no outline either.
     assert!(union_outline(&[(p(0.0, 0.0), 0.5), (p(0.999_99, 0.0), 0.5)]).is_none());
     assert!(union_outline(&[(p(0.0, 0.0), 0.5)]).is_none());
 }
