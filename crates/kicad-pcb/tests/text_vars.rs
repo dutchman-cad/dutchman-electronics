@@ -121,10 +121,11 @@ fn names_that_nothing_defines_get_one_warning_each() {
              project defines; drawn as written",
         ]
     );
-    // Rows 1 to 6, 8 to 16 and 18 to 20, and the 12 footprint texts that hold a variable.
+    // Rows 1 to 6, 8 to 16 and 18 to 20, the 12 footprint texts that hold a variable and the two
+    // BUILD fields (rows 37 and 41).
     assert!(o.notes.iter().any(|n| n.severity == Severity::Info
         && n.message
-            == "30 text(s) use KiCad text variables and show their values, as KiCad does"));
+            == "32 text(s) use KiCad text variables and show their values, as KiCad does"));
 }
 
 #[test]
@@ -143,18 +144,19 @@ fn without_its_project_and_file_name_the_board_alone_fills_in_what_it_holds() {
         };
         assert_eq!(text_at(&o, layer, *x, *y), expected, "README row {row}");
     }
-    for name in [
-        "BOARD_ID",
-        "FILENAME",
-        "NOSUCHVAR",
-        "PCB_NUMBER",
-        "PROJECTNAME",
-        "revision",
+    // PCB_NUMBER is also in the two BUILD fields (rows 37 and 41).
+    for (name, n) in [
+        ("BOARD_ID", 1),
+        ("FILENAME", 1),
+        ("NOSUCHVAR", 1),
+        ("PCB_NUMBER", 3),
+        ("PROJECTNAME", 1),
+        ("revision", 1),
     ] {
         assert!(
-            o.notes.iter().any(|n| n.severity == Severity::Warning
-                && n.message.starts_with(&format!(
-                    "1 text(s) use the text variable ${{{name}}}, which neither"
+            o.notes.iter().any(|note| note.severity == Severity::Warning
+                && note.message.starts_with(&format!(
+                    "{n} text(s) use the text variable ${{{name}}}, which neither"
                 ))),
             "{name}"
         );
@@ -179,4 +181,113 @@ fn a_given_variable_wins_over_nothing_and_feeds_the_nested_one() {
     assert_eq!(text_at(&o, "F.SilkS", 105.0, 117.0), "X-1-B2");
     assert_eq!(text_at(&o, "F.SilkS", 105.0, 147.0), "other.kicad_pcb");
     assert_eq!(text_at(&o, "F.SilkS", 105.0, 150.0), "other");
+}
+
+/// The one text on `layer` at KiCad's (x, y) on the page.
+fn text_placed<'a>(o: &'a ReadOutcome, layer: &str, x: f64, y: f64) -> &'a board_model::Text {
+    let found: Vec<_> = o
+        .board
+        .texts
+        .iter()
+        .filter(|t| {
+            o.board.layers[t.layer].name == layer
+                && (t.at.x - x).abs() < 0.001
+                && (t.at.y + y).abs() < 0.001
+        })
+        .collect();
+    assert_eq!(found.len(), 1, "{layer} ({x}, {y})");
+    found[0]
+}
+
+#[test]
+fn shown_fields_are_texts_with_their_own_placement() {
+    use board_model::{HorizontalAnchor as H, VerticalAnchor as V};
+    // README rows 22, 30 and 37 to 44: where KiCad shows each field (page coordinates), its
+    // size, angle, justification and mirroring, read back with KiCad's scripting.
+    let o = with_project();
+    let rows = [
+        // (row, shows, layer, x, y, height, angle, horizontal, vertical, mirrored)
+        (
+            22,
+            "ABC-123",
+            "F.SilkS",
+            164.0,
+            120.0,
+            1.0,
+            90.0,
+            H::Right,
+            V::Center,
+            false,
+        ),
+        (
+            30,
+            "XYZ-9",
+            "B.SilkS",
+            176.0,
+            150.0,
+            1.0,
+            90.0,
+            H::Left,
+            V::Center,
+            true,
+        ),
+        (
+            37,
+            "DN-0042/J1",
+            "F.SilkS",
+            176.0,
+            120.0,
+            1.2,
+            0.0,
+            H::Left,
+            V::Top,
+            false,
+        ),
+        (
+            41,
+            "DN-0042/J2",
+            "B.SilkS",
+            164.0,
+            150.0,
+            1.2,
+            0.0,
+            H::Left,
+            V::Top,
+            true,
+        ),
+    ];
+    for (row, shows, layer, x, y, height, angle, h, v, mirrored) in rows {
+        let t = text_placed(&o, layer, x, y);
+        assert_eq!(t.content, shows, "row {row}");
+        assert!((t.height - height).abs() < 0.001, "row {row}");
+        assert!((t.rotation_deg - angle).abs() < 0.001, "row {row}");
+        assert_eq!(
+            (t.anchor.horizontal, t.anchor.vertical),
+            (h, v),
+            "row {row}"
+        );
+        assert_eq!(t.mirrored, mirrored, "row {row}");
+    }
+    // The Reference fields are there as before (rows 21 and 29).
+    assert_eq!(text_at(&o, "F.SilkS", 170.0, 120.0), "J1");
+    assert_eq!(text_at(&o, "B.SilkS", 170.0, 150.0), "J2");
+    // Rows 39 and 43: the hidden SECRET fields are left out, without a note.
+    assert!(!o.board.texts.iter().any(|t| t.content == "hidden"));
+    assert!(
+        !o.notes.iter().any(|n| n.message.contains("hidden")),
+        "{:?}",
+        o.notes
+    );
+    // Rows 40 and 44: the FAB_NOTE fields are on the Fab layers, which are not drawn; they are
+    // counted with the Value fields there.
+    assert!(!o.board.texts.iter().any(|t| t.content == "fab note"));
+    for layer in ["F.Fab", "B.Fab"] {
+        let note =
+            format!("2 text(s) on layer {layer} (only silkscreen and copper texts are read)");
+        assert!(
+            o.notes.iter().any(|n| n.message == note),
+            "{note}: {:?}",
+            o.notes
+        );
+    }
 }

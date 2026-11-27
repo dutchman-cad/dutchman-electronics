@@ -1159,10 +1159,11 @@ fn a_kicad_board_takes_the_text_variables_of_its_project_beside_it(
     assert_eq!(alone_notes, messages(&with_v));
     // Without the project, the two variables it defines stay as typed.
     let notes = messages(&without_v);
-    for name in ["PCB_NUMBER", "BOARD_ID"] {
+    // PCB_NUMBER is in one board text and the two BUILD fields.
+    for (name, n) in [("PCB_NUMBER", 3), ("BOARD_ID", 1)] {
         assert!(
             notes.iter().any(|m| m.starts_with(&format!(
-                "1 text(s) use the text variable ${{{name}}}, which neither"
+                "{n} text(s) use the text variable ${{{name}}}, which neither"
             ))),
             "{notes:?}"
         );

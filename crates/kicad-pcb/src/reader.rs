@@ -865,10 +865,14 @@ impl Reader {
             match head {
                 "pad" => self.pad(item, &frame, owner, footprint_margin),
                 "property" => {
-                    if let (Some(spot), Some(text)) = (Self::text_spot(item), item.str_at(1)) {
-                        if matches!(item.str_at(0), Some("Reference") | Some("Value")) {
-                            self.text(text, item, spot, &frame, Some(fields_at));
-                        }
+                    // Every field that is shown is a text, through the same path as any other;
+                    // a hidden field is left out without a note (most footprints hide their
+                    // Datasheet and Description).
+                    let hidden = item.has_flag("hide") || item.is_yes("hide");
+                    if let (Some(spot), Some(text), false) =
+                        (Self::text_spot(item), item.str_at(1), hidden)
+                    {
+                        self.text(text, item, spot, &frame, Some(fields_at));
                     }
                 }
                 "fp_text" => {
