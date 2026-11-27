@@ -418,7 +418,11 @@ impl Reader {
                     }
                     None => self.bad(kind),
                 },
-                "pcb_via" => match (xy(e), length(e, "outer_diameter"), length(e, "hole_diameter")) {
+                "pcb_via" => match (
+                    xy(e),
+                    length(e, "outer_diameter"),
+                    length(e, "hole_diameter"),
+                ) {
                     (Some(at), Some(diameter), Some(drill)) => copper.push(CopperItem::Via {
                         at,
                         diameter,
@@ -482,8 +486,12 @@ impl Reader {
                         _ => self.bad(kind),
                     }
                 }
-                "pcb_silkscreen_line" | "pcb_silkscreen_path" | "pcb_silkscreen_rect"
-                | "pcb_silkscreen_circle" | "pcb_silkscreen_oval" | "pcb_silkscreen_pill" => {
+                "pcb_silkscreen_line"
+                | "pcb_silkscreen_path"
+                | "pcb_silkscreen_rect"
+                | "pcb_silkscreen_circle"
+                | "pcb_silkscreen_oval"
+                | "pcb_silkscreen_pill" => {
                     let layer = if text(e, "layer") == Some("bottom") {
                         silk_bottom
                     } else {
@@ -503,8 +511,8 @@ impl Reader {
                     self.skip("pcb_silkscreen_graphic elements (their shape is not documented)")
                 }
                 "pcb_component" => {
-                    let designator = text(e, "source_component_id")
-                        .and_then(|s| names.get(s).copied());
+                    let designator =
+                        text(e, "source_component_id").and_then(|s| names.get(s).copied());
                     let Some(designator) = designator else {
                         // Vias and other placed items carry a pcb_component without a name.
                         continue;
@@ -529,11 +537,14 @@ impl Reader {
                         None => self.bad(kind),
                     }
                 }
-                "pcb_solder_paste" => self.skip("solder paste openings (not part of the board model)"),
-                "pcb_courtyard_rect" | "pcb_courtyard_outline" | "pcb_courtyard_circle"
-                | "pcb_courtyard_polygon" | "pcb_courtyard_pill" => {
-                    self.skip("courtyards (not part of the board model)")
+                "pcb_solder_paste" => {
+                    self.skip("solder paste openings (not part of the board model)")
                 }
+                "pcb_courtyard_rect"
+                | "pcb_courtyard_outline"
+                | "pcb_courtyard_circle"
+                | "pcb_courtyard_polygon"
+                | "pcb_courtyard_pill" => self.skip("courtyards (not part of the board model)"),
                 k if k.starts_with("pcb_fabrication_note") => {
                     self.skip("fabrication notes (not part of the board model)")
                 }
@@ -683,7 +694,9 @@ fn silk_graphics(e: &Value, kind: &str, layer: usize) -> Option<Vec<Graphic>> {
     if width <= 0.0 {
         return None;
     }
-    let turn = angle(e, "ccw_rotation").or_else(|| angle(e, "rotation")).unwrap_or(0.0);
+    let turn = angle(e, "ccw_rotation")
+        .or_else(|| angle(e, "rotation"))
+        .unwrap_or(0.0);
     let line = |from: Point, to: Point| Graphic::Line {
         layer,
         from,

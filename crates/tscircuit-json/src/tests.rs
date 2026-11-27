@@ -175,7 +175,10 @@ fn silkscreen_path_oval_pill_and_bottom_layer() {
     );
     let g = silk(&o);
     // A path of three points is two lines, on the bottom silkscreen.
-    let Graphic::Line { layer, width, to, .. } = &g[1] else {
+    let Graphic::Line {
+        layer, width, to, ..
+    } = &g[1]
+    else {
         panic!("{g:?}")
     };
     assert_eq!(o.board.layers[*layer].side, Some(Side::Bottom));
@@ -209,7 +212,13 @@ fn rounded_rectangle_and_polygon_pads() {
     };
     // 0.25 mm on a 1 mm short side.
     assert!(close(*radius_ratio, 0.25));
-    assert!(matches!(&c[1], CopperItem::Pad { shape: PadShape::Rectangle, .. }));
+    assert!(matches!(
+        &c[1],
+        CopperItem::Pad {
+            shape: PadShape::Rectangle,
+            ..
+        }
+    ));
     let CopperItem::PolygonPad { shapes, drill, .. } = &c[2] else {
         panic!("{c:?}")
     };
