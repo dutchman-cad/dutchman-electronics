@@ -7,7 +7,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use board_model::{
-    Board, Contour, CopperItem, Graphic, Layer, LayerKind, ModelRef, ModelSource, Note, PadShape,
+    Board, Contour, CopperItem, EmbeddedFont, Graphic, Layer, LayerKind, ModelRef, ModelSource, Note, PadShape,
     Placement, Point, ReadOutcome, Segment, Severity, Side, StackPosition, Text, TextFont,
 };
 
@@ -127,6 +127,10 @@ struct Reader {
     /// Which sides' vias the board covers with solder mask unless a via says otherwise
     /// (`(setup (tenting ...))`): top, bottom. `None` when the setup does not say.
     default_tenting: Option<[bool; 2]>,
+    /// The fonts the board embeds, and the ones texts use (handed over, each once).
+    embedded: Vec<crate::fonts::Embedded>,
+    fonts_used: Vec<EmbeddedFont>,
+    fonts_unused: Vec<bool>,
 }
 
 /// The sides a `(tenting ...)` list covers: top, bottom. KiCad 9 writes the sides it covers as
@@ -473,12 +477,22 @@ impl Reader {
             // Our own estimate when the text sets none: KiCad's default pen of 0.15 mm on a
             // 1.27 mm text (a board's explicit value) is 0.118 of the height.
             .unwrap_or(height * 0.12);
+        let mut text_font = TextFont::Stroke {
+            width: thickness,
+            font: board_model::StrokeFont::Default,
+        };
         if let Some(face) = font.and_then(|f| f.child("face")).and_then(|f| f.str_at(0)) {
             if face != "KiCad Font" {
-                self.tally.add(
-                    Severity::Info,
-                    "text(s) set in a named font were drawn with the stroke font",
-                );
+                let (bold, italic) = font.map_or((false, false), |f| (f.is_yes("bold"), f.is_yes("italic")));
+                match self.embedded_font(face, bold, italic) {
+                    Some(tf) => text_font = tf,
+                    None => self.tally.add(
+                        Severity::Warning,
+                        format!(
+                            "text(s) set in the font \"{face}\", which the board does not embed, were drawn with the stroke font"
+                        ),
+                    ),
+                }
             }
         }
         let justify = effects.and_then(|e| e.child("justify"));
@@ -524,12 +538,43 @@ impl Reader {
             height,
             rotation_deg,
             mirrored,
-            font: TextFont::Stroke {
-                width: thickness,
-                font: board_model::StrokeFont::Default,
-            },
+            font: text_font,
             component: None,
         });
+    }
+
+    /// The embedded font a text's `face` names, in the style the text asks for or else the
+    /// closest the board has, handed over once.
+    fn embedded_font(&mut self, face: &str, bold: bool, italic: bool) -> Option<TextFont> {
+        let exact = self
+            .embedded
+            .iter()
+            .position(|e| e.answers_to(face) && e.font.bold == bold && e.font.italic == italic);
+        let i = exact.or_else(|| self.embedded.iter().position(|e| e.answers_to(face)))?;
+        let e = self.embedded.get(i)?;
+        if exact.is_none() {
+            self.tally.add(
+                Severity::Warning,
+                format!(
+                    "text(s) set in the font \"{face}\" in a style the board does not embed were drawn in the embedded {} face",
+                    e.font.style
+                ),
+            );
+        }
+        let tf = TextFont::TrueType {
+            name: face.to_string(),
+            bold: e.font.bold,
+            italic: e.font.italic,
+        };
+        if !self.fonts_used.iter().any(|f| f.serves(&tf)) {
+            let mut font = e.font.clone();
+            font.family = face.to_string();
+            self.fonts_used.push(font);
+        }
+        if let Some(flag) = self.fonts_unused.get_mut(i) {
+            *flag = false;
+        }
+        Some(tf)
     }
 
     fn text_spot(node: &Node) -> Option<TextSpot> {
@@ -916,38 +961,53 @@ impl Reader {
                 .child("fill")
                 .and_then(|f| f.str_at(0))
                 .is_some_and(|f| f == "yes" || f == "solid");
-            let corners: Option<Vec<Point>> = match prim.head() {
-                Some("gr_poly") => prim.child("pts").map(|p| {
-                    let mut points = Vec::new();
-                    for n in p.args() {
-                        match n.head() {
-                            Some("xy") => points.extend(local(n)),
-                            Some("arc") => {
-                                // Drawn as the straight line between its ends.
-                                points.extend(n.child("start").and_then(local));
-                                points.extend(n.child("end").and_then(local));
-                                self.tally.add(
-                                    Severity::Warning,
-                                    "custom pad polygon arc(s) were drawn as straight edges",
-                                );
-                            }
-                            _ => {}
-                        }
-                    }
-                    points
-                }),
+            let shape: Option<Contour> = match prim.head() {
+                Some("gr_poly") => prim.child("pts").and_then(padshape::pts_contour),
                 Some("gr_rect") => prim
                     .child("start")
                     .and_then(local)
                     .zip(prim.child("end").and_then(local))
-                    .map(|(a, b)| vec![a, Point { x: b.x, y: a.y }, b, Point { x: a.x, y: b.y }]),
+                    .map(|(a, b)| {
+                        padshape::polygon(&[a, Point { x: b.x, y: a.y }, b, Point { x: a.x, y: b.y }])
+                    }),
+                Some("gr_circle") => {
+                    let c = prim.child("center").and_then(local);
+                    let e = prim.child("end").and_then(local);
+                    c.zip(e)
+                        .map(|(c, e)| (c, (e.x - c.x).hypot(e.y - c.y)))
+                        .filter(|(_, r)| *r > 0.0 && r.is_finite())
+                        .map(|(c, r)| padshape::circle(c, r))
+                }
+                Some("gr_arc") => {
+                    let pts = (
+                        prim.child("start").and_then(local),
+                        prim.child("mid").and_then(local),
+                        prim.child("end").and_then(local),
+                    );
+                    match pts {
+                        (Some(s), Some(m), Some(e)) => {
+                            crate::geom::arc_through(s, m, e).map(|a| Contour {
+                                segments: vec![a.segment()],
+                            })
+                        }
+                        _ => None,
+                    }
+                }
+                Some("gr_line") => {
+                    let a = prim.child("start").and_then(local);
+                    let b = prim.child("end").and_then(local);
+                    a.zip(b).map(|(a, b)| Contour {
+                        segments: vec![Segment::Line { from: a, to: b }],
+                    })
+                }
                 _ => None,
             };
+            let closed = matches!(prim.head(), Some("gr_poly" | "gr_rect" | "gr_circle"));
             let mut drawn = false;
-            if let Some(corners) = corners.filter(|c| c.len() >= 3) {
-                drawn = true;
-                if filled {
-                    out.push(padshape::polygon(&corners));
+            if let Some(shape) = shape.filter(|c| !c.segments.is_empty()) {
+                if closed && filled {
+                    out.push(shape);
+                    drawn = true;
                     if width > 0.0 {
                         self.tally.add(
                             Severity::Warning,
@@ -955,38 +1015,14 @@ impl Reader {
                         );
                     }
                 } else if width > 0.0 {
-                    for (i, a) in corners.iter().enumerate() {
-                        if let Some(b) = corners.get(i + 1).or(corners.first()) {
-                            out.push(padshape::capsule(*a, *b, width));
-                        }
-                    }
-                } else {
-                    drawn = false;
-                }
-            } else if prim.head() == Some("gr_circle") {
-                let c = prim.child("center").and_then(local);
-                let e = prim.child("end").and_then(local);
-                if let (Some(c), Some(e)) = (c, e) {
-                    let r = (e.x - c.x).hypot(e.y - c.y);
-                    if filled && r > 0.0 {
-                        out.push(padshape::circle(c, r));
-                        drawn = true;
-                    }
-                }
-            } else if prim.head() == Some("gr_line") {
-                let a = prim.child("start").and_then(local);
-                let b = prim.child("end").and_then(local);
-                if let (Some(a), Some(b)) = (a, b) {
-                    if width > 0.0 {
-                        out.push(padshape::capsule(a, b, width));
-                        drawn = true;
-                    }
+                    out.extend(padshape::stroke(&shape, width));
+                    drawn = true;
                 }
             }
             if !drawn {
                 self.tally.add(
                     Severity::Dropped,
-                    "custom pad primitive(s) that are arcs, curves, outlines without width, or unreadable (left out of the pad)",
+                    "custom pad primitive(s) that are curves, strokes without width, or unreadable (left out of the pad)",
                 );
             }
         }
@@ -1409,13 +1445,23 @@ pub fn read(mut root: Node) -> ReadOutcome {
             .and_then(|s| s.child("tenting"))
             .map(tenting_sides),
         inexact_text: false,
+        fonts_unused: Vec::new(),
+        fonts_used: Vec::new(),
+        embedded: Vec::new(),
     };
+    let mut font_notes = Vec::new();
+    r.embedded = crate::fonts::read(&root, &mut font_notes);
+    r.fonts_unused = vec![true; r.embedded.len()];
+    for n in font_notes {
+        r.tally.add(n.severity, n.message);
+    }
 
     for item in root.args() {
         let Some(head) = item.head() else { continue };
         match head {
             "version" | "generator" | "generator_version" | "general" | "paper" | "title_block"
-            | "layers" | "setup" | "net" | "embedded_fonts" | "uuid" | "property" => {}
+            | "layers" | "setup" | "net" | "embedded_fonts" | "embedded_files" | "uuid"
+            | "property" => {}
             "footprint" | "module" => r.footprint(item),
             "segment" => r.segment(item),
             "arc" => r.track_arc(item),
@@ -1480,6 +1526,14 @@ pub fn read(mut root: Node) -> ReadOutcome {
             "board(s) whose centered or right-aligned texts sit where we estimate them (KiCad aligns a text by its middle and we have no glyph widths)",
         );
     }
+    for (e, unused) in r.embedded.iter().zip(&r.fonts_unused) {
+        if *unused {
+            r.tally.add(
+                Severity::Info,
+                format!("embedded font(s) ({}) that no text uses were not handed over", e.file_name),
+            );
+        }
+    }
     r.tally.add(
         Severity::Info,
         "board(s) whose stack-up colors, materials, copper weights and finish were not read",
@@ -1505,6 +1559,6 @@ pub fn read(mut root: Node) -> ReadOutcome {
         },
         notes,
         models: Vec::new(),
-        fonts: Vec::new(),
+        fonts: r.fonts_used,
     }
 }

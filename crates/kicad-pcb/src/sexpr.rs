@@ -190,6 +190,18 @@ pub fn parse(text: &str) -> Result<Node, String> {
                 }
                 Node::Str(s)
             }
+            // KiCad writes an embedded file's data between two `|`, over several lines.
+            '|' => {
+                let mut s = String::new();
+                loop {
+                    match chars.next() {
+                        None => return Err("a | string is never closed".into()),
+                        Some('|') => break,
+                        Some(other) => s.push(other),
+                    }
+                }
+                Node::Str(s)
+            }
             first => {
                 let mut s = String::new();
                 s.push(first);
@@ -232,6 +244,13 @@ mod tests {
         assert_eq!(n.str_at(1), Some("b c"));
         assert_eq!(n.child("d").and_then(|d| d.num(0)), Some(-2.0));
         assert!(n.has_flag("yes"));
+    }
+
+    #[test]
+    fn pipe_strings_keep_their_white_space() {
+        let n = parse("(data |ab\n  cd|)").unwrap();
+        assert_eq!(n.str_at(0), Some("ab\n  cd"));
+        assert!(parse("(data |ab").is_err());
     }
 
     #[test]

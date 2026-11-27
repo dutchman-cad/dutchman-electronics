@@ -52,12 +52,21 @@ a note.
   as the single contour KiCad wrote, with a warning; a hole inside none of the pieces is left out
   with a warning.
 - Custom pads: the anchor (rectangle of the pad's size, or circle of its width) plus filled
-  `gr_poly`, `gr_rect` and `gr_circle` primitives, and `gr_line` and unfilled polygons and
-  rectangles drawn with their width as round-ended strokes. Arcs, curves, unfilled circles and
-  strokes without width are left out with a note; a stroke width on a filled primitive is not added
-  to it (a warning). A pad with a chamfer keeps the rounding of its other corners (`roundrect_rratio`),
-  as KiCad's own Gerber export shows. Corners of trapezoid, chamfered and custom pads are checked
-  against that export (`tests/gerber`) for pads turned, in turned footprints and on the bottom.
+  `gr_poly`, `gr_rect` and `gr_circle` primitives, and `gr_line`, `gr_arc` and unfilled polygons,
+  rectangles and circles drawn with their width as round-ended strokes (an unfilled circle is a ring
+  of that width). An arc inside a `gr_poly`'s points and a `gr_arc` stroke are kept as exact arcs in
+  the pad's contour, so the outline tessellates them as it does every other arc. Curves (`gr_curve`,
+  `bezier`) and strokes without width are left out with a note; a stroke width on a filled primitive
+  is not added to it (a warning). A pad with a chamfer keeps the rounding of its other corners
+  (`roundrect_rratio`), as KiCad's own Gerber export shows. Corners of trapezoid, chamfered and custom
+  pads are checked against that export (`tests/gerber`) for pads turned, in turned footprints and on
+  the bottom; the arcs of the `pad-arcs` board are checked against it too.
+- Fonts: a text set in a named font (`face`) is drawn with that font's own outlines when the board
+  embeds the font (`embedded_files`, KiCad 9 and later): the data is base64 of a zstd-packed font
+  file, unpacked within a size cap and handed over as `ReadOutcome::fonts`. The font's family, style
+  and bold and italic marks come from the font file's own tables. A text whose font the board does
+  not embed keeps the stroke font, with a warning naming the font. The checksum KiCad writes beside
+  the data is not checked. Where a text sits still uses our width estimate.
 
 ## Frames
 
@@ -89,7 +98,7 @@ layer) the behavior comes from those boards and from KiCad's own exports of them
 `tests/boards/*.kicad_pcb` are CC0 boards, one feature each, with every number in the board's
 `README.txt`; the `k10-` boards are the same boards made with KiCad 10.0.8 and must read the
 same. `model-placements` pins where a model lands on a top and a bottom part against KiCad's own
-VRML export. `fixtures/kicad/run.sh` rebuilds them (needs podman). `pad-shapes`, `zone-thermal`
+VRML export. `fixtures/kicad/run.sh` rebuilds them (needs podman). `pad-shapes`, `pad-arcs`, `embedded-font`, `zone-thermal`
 and `four-layer-stackup` cover the pad shapes, a pour with holes and the stack-up table (KiCad
 cannot be scripted to write one, so the table was pasted into a saved board and KiCad rewrote the
 file; see that board's README.txt). `tests/hand_written.rs` covers what no KiCad-made board holds

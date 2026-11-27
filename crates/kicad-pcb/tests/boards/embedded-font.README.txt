@@ -1,0 +1,11 @@
+Original test board made for Dutchman Electronics. Released under CC0 1.0 (public domain): https://creativecommons.org/publicdomain/zero/1.0/
+
+The board holds two font files made by others, under the license in LICENSE-DejaVu.txt (DejaVu Sans Mono 2.37, Bitstream Vera license): the embedded fonts are not CC0, everything else is.
+
+embedded-font: two texts on the top silkscreen in DejaVu Sans Mono, with the font files embedded in the board.
+
+Made with KiCad 9.0.9 (file version 20241229) by fixtures/kicad/build_boards.py, then fixtures/kicad/embed_fonts.py (KiCad's scripting cannot name a font, so the script sets the face in the saved text, has KiCad load the board and embed the fonts, and saves it again; the fonts are the ones in KiCad's container image, package fonts-dejavu-core 2.37-6). KiCad shows coordinates in millimeters with Y pointing down; the board's top-left corner is at page position (100, 100). The reader gives Y up: model x = 100 + X, model y = -(100 + Y).
+
+- gr_text "Regular 123" at (10,10), 2 x 2 mm, pen 0.25, left-aligned, face "DejaVu Sans Mono". The board embeds DejaVuSansMono.ttf: 343140 bytes once unpacked, family "DejaVu Sans Mono", style "Book".
+- gr_text "Bold 456" at (10,20), the same, bold, face "DejaVu Sans Mono". The board embeds DejaVuSansMono-Bold.ttf: 334268 bytes, family "DejaVu Sans Mono", style "Bold".
+- The file holds (embedded_fonts yes) and an (embedded_files) list with one (file (name ..) (type font) (data |..|) (checksum ..)) per font. The data is the font file compressed with zstd, then written in base64 over several lines between two | characters. The reader hands both fonts over (ReadOutcome::fonts) and reads each text as TextFont::TrueType, bold or not. The reader does not check the checksum.
