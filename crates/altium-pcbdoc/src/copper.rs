@@ -30,9 +30,21 @@
 //!   none), as for pads; its designator becomes the owner.
 //! - `/Vias6/Data` (`one-via`): records of type `0x03`, a `u32` length, then a body whose byte 0
 //!   is the layer (74, Multi-Layer), bytes 3..5 the net index, from byte 13 the center x and y, at
-//!   byte 21 the diameter and at byte 25 the hole diameter. Bytes 29 and 30 hold 1 and 32: the
-//!   via runs from Top Layer to Bottom Layer, as typed in. A via whose two layer bytes are not the
-//!   top and bottom copper layers is read as a through via, with a warning.
+//!   byte 21 the diameter and at byte 25 the hole diameter. Bytes 29 and 30 are the layers the
+//!   via joins, as layer bytes (see below): 1 and 32 for Top Layer to Bottom Layer on `one-via`;
+//!   on `vias-blind-buried` 1 and 2 (Top Layer to Layer 1), 3 and 32 (Layer 2 to Bottom Layer),
+//!   2 and 3 (Layer 1 to Layer 2) and 1 and 3. A via that does not join the top and bottom copper
+//!   layers keeps that span; one whose layer bytes name no copper layer is read as a through via,
+//!   with a warning.
+//!   Solder mask (`vias-tenting`, `vias-tented-rule`, compared with `vias-sizes`): byte 1 holds
+//!   flags, 0x20 when the mask covers (tents) the via on the top side and 0x40 on the bottom (12 on
+//!   an open via, 44 tented on top, 76 on the bottom, 108 on both). Altium sets them both for a
+//!   via tented by hand and for one tented by the board-wide rule (`ISTENTINGTOP=TRUE`), so they
+//!   are read as they stand. Byte 66 is 1 when the mask expansion comes from the rule and 2 when
+//!   it is given on the via (Manual); bytes 54..58 then hold it, as a length (0.200 on the `M0.2`
+//!   via, and the same again at bytes 242..246, as top and bottom were linked). With the rule,
+//!   bytes 54..58 hold the rule's value, or minus the via's diameter when the rule tents it, and
+//!   are not read.
 //! - `/Pads6/Data`: records of type `0x02` followed by six blocks, each a `u32` length and its
 //!   bytes. Block 4 holds the geometry: byte 0 the layer, bytes 3..5 the net index, from byte 13
 //!   the center x and y, then three (x, y) size pairs (top, middle, bottom), from byte 45 the hole
@@ -88,6 +100,14 @@ const PAD_RECORD: u8 = 0x02;
 const ARC_RECORD: u8 = 0x01;
 const VIA_RECORD: u8 = 0x03;
 const FILL_RECORD: u8 = 0x06;
+/// A via's flags byte; [`VIA_TENTED_TOP`] and [`VIA_TENTED_BOTTOM`] are its tenting bits.
+const VIA_FLAGS_AT: usize = 1;
+const VIA_TENTED_TOP: u8 = 0x20;
+const VIA_TENTED_BOTTOM: u8 = 0x40;
+/// Where a via's own mask expansion starts, and the byte that says whether it is used.
+const VIA_MASK_EXPANSION_AT: usize = 54;
+const VIA_MASK_MODE_AT: usize = 66;
+const VIA_MASK_MANUAL: u8 = 2;
 /// Angles beyond this many degrees (either way) are refused as not real.
 const MAX_ANGLE_DEG: f64 = 360.0;
 const PAD_BLOCKS: usize = 6;
@@ -654,17 +674,42 @@ pub(crate) fn vias(
 ) -> Result<Vec<CopperItem>, String> {
     let mut items = Vec::new();
     let mut skipped = Skipped::default();
-    let mut partial = 0usize;
+    let (mut partial, mut spans) = (0usize, 0usize);
     for body in records(data, VIA_RECORD, "/Vias6/Data", notes)? {
         let at = point(body, 13)?;
         let diameter = length(body, 21)?;
         let drill = length(body, 25)?;
         let ends = body.get(29..31).ok_or("via layers cut short")?;
+        let mut span = None;
         if let [a, b] = ends {
             if !layers.are_top_and_bottom(*a, *b) {
-                partial += 1;
+                // Only a copper layer with a place in the stack can end a via (not Multi-Layer).
+                let stacked = |n: u8| {
+                    layers
+                        .copper_index(n)
+                        .filter(|&i| layers.layers.get(i).is_some_and(|l| l.position.is_some()))
+                };
+                match (stacked(*a), stacked(*b)) {
+                    (Some(i), Some(j)) => {
+                        span = Some((i.min(j), i.max(j)));
+                        spans += 1;
+                    }
+                    _ => partial += 1,
+                }
             }
         }
+        let tented = match body.get(VIA_FLAGS_AT) {
+            Some(flags) => [
+                Some(flags & VIA_TENTED_TOP != 0),
+                Some(flags & VIA_TENTED_BOTTOM != 0),
+            ],
+            None => [None, None],
+        };
+        let mask_expansion = if body.get(VIA_MASK_MODE_AT) == Some(&VIA_MASK_MANUAL) {
+            Some(length(body, VIA_MASK_EXPANSION_AT)?)
+        } else {
+            None
+        };
         if read_u16(body, 3) != Some(NO_NET) {
             skipped.with_net += 1;
         }
@@ -677,17 +722,25 @@ pub(crate) fn vias(
             at,
             diameter,
             drill,
-            tented: [None, None],
-            mask_expansion: None,
-            layers: None,
+            tented,
+            mask_expansion,
+            layers: span,
+        });
+    }
+    if spans > 0 {
+        notes.push(Note {
+            severity: Severity::Info,
+            message: format!(
+                "{spans} blind or buried via(s) read with the copper layers they join"
+            ),
         });
     }
     if partial > 0 {
         notes.push(Note {
             severity: Severity::Warning,
             message: format!(
-                "{partial} via(s) do not run from the top to the bottom copper layer (blind or \
-                 buried?); read as running through the whole board"
+                "{partial} via(s) name a layer that is not a copper layer of the stack; read as \
+                 running through the whole board"
             ),
         });
     }
@@ -980,7 +1033,7 @@ mod tests {
     }
 
     #[test]
-    fn a_via_between_other_layers_is_read_through_with_a_warning() {
+    fn a_via_to_a_layer_outside_the_stack_is_read_through_with_a_warning() {
         let l = with_bottom();
         assert!(l.are_top_and_bottom(32, 1));
         let data = record(VIA_RECORD, 31, |b| {
