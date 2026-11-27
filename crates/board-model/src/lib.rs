@@ -444,7 +444,9 @@ pub enum ModelSource {
     /// No file: an exact ball. `center` is its center's X and Y and `z` the height of the
     /// center above the part's seating plane (the same frame as an [`ModelSource::Extruded`]
     /// body, whose `standoff` and `height` are measured from that plane), all in the part's
-    /// frame in mm; `radius` is in mm. A radius that is not positive and finite is not a ball.
+    /// frame in mm; `radius` is in mm. The [`ModelRef`] offset and rotation apply to the center
+    /// just as they do to an extruded outline: the center turns about the part origin, then
+    /// moves by the offset. A radius that is not positive and finite is not a ball.
     Sphere { center: Point, z: f64, radius: f64 },
 }
 

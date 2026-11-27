@@ -3382,6 +3382,25 @@ mod tests {
     }
 
     #[test]
+    fn a_spheres_center_turns_about_the_part_origin_before_its_offset() {
+        let mut r1 = part("R1", 10.0, 20.0, 90.0, Side::Top);
+        let mut sphere = ball(1.0, 2.0, 3.0, 0.5);
+        sphere.rotation_deg = [90.0, 0.0, 90.0];
+        sphere.offset = [4.0, 5.0, 6.0];
+        r1.models = vec![sphere];
+        let placed = components(&[r1], &[], 1.6);
+        assert_eq!(names(&placed), ["R1"]);
+        // We turn (1, 2, 3) about X by 90 degrees to (1, -3, 2), then about Z
+        // to (3, 1, 2). The offset makes (7, 6, 8). The part's 90-degree Z turn
+        // makes (-6, 7, 8); its board position (10, 20, 1.6) makes (4, 27, 9.6).
+        assert!(close(
+            apply(&placed.parts[0]["transform"], [0.0, 0.0, 0.0]),
+            [4.0, 27.0, 9.6]
+        ));
+        assert!(placed.notes.is_empty());
+    }
+
+    #[test]
     fn a_spheres_file_holds_a_ball_of_its_radius_and_equal_ones_share_it() {
         let mut r1 = part("R1", 0.0, 0.0, 0.0, Side::Top);
         r1.models = vec![

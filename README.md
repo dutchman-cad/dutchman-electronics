@@ -66,6 +66,8 @@ Dutchman runs this program as `dutchman electronics ...` and reads one JSON obje
 
 A part's `transform` is 3 rows of 4 numbers, row by row: the first three columns are the rotation, the last column the translation in mm, so a model point `p` lands at `R p + t`. A top-side component's model sits on the board's top face (z = thickness), turned by the component's rotation; a bottom-side one is turned over by half a turn about its own X axis onto the bottom face (z = 0). The frame is written out in `board_model::Placement`.
 
+A sphere's center uses the same ModelRef offset and rotation as an extruded outline: the center turns about the part origin (X, then Y, then Z), then moves by the offset, before the component's placement puts it on the board.
+
 A failure is `{"schema": ..., "ok": false, "error": "..."}` with a non-zero exit code.
 
 ## Standard bodies
