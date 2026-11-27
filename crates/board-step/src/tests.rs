@@ -1533,7 +1533,10 @@ fn holes_half_a_micrometer_apart_share_one_round_opening() {
     let b = board(
         rect(0.0, 0.0, 50.0, 30.0),
         vec![],
-        vec![plated_hole(25.0, 15.0, 1.0), plated_hole(25.0005, 15.0, 1.0)],
+        vec![
+            plated_hole(25.0, 15.0, 1.0),
+            plated_hole(25.0005, 15.0, 1.0),
+        ],
     );
     let out = write(&b, "near-duplicate").unwrap();
     assert!(out.merged.is_empty());
@@ -1547,12 +1550,24 @@ fn holes_half_a_micrometer_apart_share_one_round_opening() {
 #[test]
 fn contained_and_merged_via_notes_count_drills_instead_of_openings() {
     for spacing in [0.0, 0.3] {
-        let unknown = four_layer(vec![via_on(10.0, Some((0, 99))), via_on(10.0 + spacing, Some((0, 99)))]);
+        let unknown = four_layer(vec![
+            via_on(10.0, Some((0, 99))),
+            via_on(10.0 + spacing, Some((0, 99))),
+        ]);
         let out = write(&unknown, "unplaced").unwrap();
-        assert!(out.notes.iter().any(|n| n.message.starts_with("2 blind or buried via(s)")));
-        let buried = four_layer(vec![via_on(10.0, Some((1, 2))), via_on(10.0 + spacing, Some((1, 2)))]);
+        assert!(out
+            .notes
+            .iter()
+            .any(|n| n.message.starts_with("2 blind or buried via(s)")));
+        let buried = four_layer(vec![
+            via_on(10.0, Some((1, 2))),
+            via_on(10.0 + spacing, Some((1, 2))),
+        ]);
         let out = write(&buried, "buried").unwrap();
-        assert!(out.notes.iter().any(|n| n.message.starts_with("2 buried via(s)")));
+        assert!(out
+            .notes
+            .iter()
+            .any(|n| n.message.starts_with("2 buried via(s)")));
     }
 }
 
@@ -1583,12 +1598,19 @@ fn three_circles_through_one_point_fall_back_with_a_loss_note() {
     // Three unit circles through (0, 0), centered 120 degrees apart. Their boundary
     // meets at the origin, so chaining has multiple choices and cannot form one loop.
     let height = 3f64.sqrt() / 2.0;
-    let circles = [(p(1.0, 0.0), 1.0), (p(-0.5, height), 1.0), (p(-0.5, -height), 1.0)];
+    let circles = [
+        (p(1.0, 0.0), 1.0),
+        (p(-0.5, height), 1.0),
+        (p(-0.5, -height), 1.0),
+    ];
     assert!(union_outline(&circles).is_none());
     let b = board(
         rect(0.0, 0.0, 50.0, 30.0),
         vec![],
-        circles.iter().map(|(c, r)| hole(25.0 + c.x, 15.0 + c.y, 2.0 * r)).collect(),
+        circles
+            .iter()
+            .map(|(c, r)| hole(25.0 + c.x, 15.0 + c.y, 2.0 * r))
+            .collect(),
     );
     let out = write(&b, "triple").unwrap();
     assert_eq!(out.holes.len(), 1);
@@ -1613,11 +1635,18 @@ fn merged_blind_drills_keep_their_plating_height_after_write() {
     };
     let plating = tubes_and_unions(&[], &[tube], 0.0, 1.6, "blind").unwrap();
     let all = entities(&plating.text);
-    let heights: Vec<f64> = all.values()
+    let heights: Vec<f64> = all
+        .values()
         .filter(|(name, _)| name == "VERTEX_POINT")
         .map(|(_, args)| {
             let point = &all[&refs(args)[0]].1;
-            point.trim_end_matches(')').rsplit(',').next().unwrap().parse().unwrap()
+            point
+                .trim_end_matches(')')
+                .rsplit(',')
+                .next()
+                .unwrap()
+                .parse()
+                .unwrap()
         })
         .collect();
     assert!((heights.iter().copied().fold(f64::INFINITY, f64::min) - 1.065).abs() < 1e-9);

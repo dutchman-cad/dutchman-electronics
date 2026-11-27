@@ -2958,12 +2958,24 @@ mod tests {
             (pad "2" thru_hole circle (at 10.8 5) (size 2 2) (drill 1) (layers "*.Cu" "*.Mask"))
             (pad "3" thru_hole circle (at 0 0) (size 2 2) (drill 1) (layers "*.Cu" "*.Mask")))
           (gr_rect (start 0 0) (end 20 10) (stroke (width 0.1) (type default)) (fill no) (layer "Edge.Cuts")))"#;
-        let package = build(Path::new("notes.kicad_pcb"), bytes, &[], &[], crate::overlay::Copper::Outer).unwrap();
+        let package = build(
+            Path::new("notes.kicad_pcb"),
+            bytes,
+            &[],
+            &[],
+            crate::overlay::Copper::Outer,
+        )
+        .unwrap();
         let notes = package.manifest["notes"].as_array().unwrap();
         assert!(notes.iter().any(|n| n["severity"] == "Info"
-            && n["message"].as_str().unwrap().contains("2 overlapping drilled hole(s)")));
-        assert!(notes.iter().any(|n| n["severity"] == "Dropped"
-            && n["message"].as_str().unwrap().contains("board edge")));
+            && n["message"]
+                .as_str()
+                .unwrap()
+                .contains("2 overlapping drilled hole(s)")));
+        assert!(notes
+            .iter()
+            .any(|n| n["severity"] == "Dropped"
+                && n["message"].as_str().unwrap().contains("board edge")));
     }
 
     #[test]
@@ -3028,8 +3040,16 @@ mod tests {
 
         // A union whose outline cannot be lined leaves both usable tubes intact.
         step.merged.push(board_step::MergedHole {
-            circles: vec![(Point { x: 15.0, y: 5.0 }, 0.5),
-                (Point { x: 15.99999, y: 5.0 }, 0.5)],
+            circles: vec![
+                (Point { x: 15.0, y: 5.0 }, 0.5),
+                (
+                    Point {
+                        x: 15.99999,
+                        y: 5.0,
+                    },
+                    0.5,
+                ),
+            ],
             plated: true,
             span: None,
             also: 0,
@@ -3037,7 +3057,10 @@ mod tests {
         let p = plating(&board, &step);
         assert_eq!(p.text.unwrap().matches("MANIFOLD_SOLID_BREP(").count(), 2);
         assert!(p.notes.iter().any(|n| n["severity"] == "Dropped"
-            && n["message"].as_str().unwrap().starts_with("2 plated drilled")));
+            && n["message"]
+                .as_str()
+                .unwrap()
+                .starts_with("2 plated drilled")));
     }
 
     #[test]
@@ -3079,7 +3102,10 @@ mod tests {
         small.also = 2;
         let p = plating(&Board::default(), &solid_with(vec![small]));
         assert!(p.text.is_none());
-        assert!(p.notes[0]["message"].as_str().unwrap().starts_with("3 plated drilled"));
+        assert!(p.notes[0]["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("3 plated drilled"));
     }
 
     #[test]
