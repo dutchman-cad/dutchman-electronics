@@ -996,11 +996,11 @@ impl Reader {
                         prim.child("end").and_then(local),
                     );
                     match pts {
-                        (Some(s), Some(m), Some(e)) => {
-                            crate::geom::arc_through(s, m, e).map(|a| Contour {
-                                segments: vec![a.segment()],
-                            })
-                        }
+                        (Some(s), Some(m), Some(e)) => Some(Contour {
+                            // Points on one line are a straight stroke.
+                            segments: vec![crate::geom::arc_through(s, m, e)
+                                .map_or(Segment::Line { from: s, to: e }, |a| a.segment())],
+                        }),
                         _ => None,
                     }
                 }

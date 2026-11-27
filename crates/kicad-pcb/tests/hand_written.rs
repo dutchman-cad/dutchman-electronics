@@ -501,3 +501,56 @@ fn an_empty_tenting_side_reads_as_covered() {
         }
     )));
 }
+
+fn arc_pad_board(prim: &str) -> board_model::ReadOutcome {
+    let text = format!(
+        "{HEAD}(footprint \"t:x\" (layer \"F.Cu\") (at 5 5) (property \"Reference\" \"U1\")\n\
+         (pad \"1\" smd custom (at 0 0) (size 1 1) (layers \"F.Cu\") (options (anchor rect)) \
+         (primitives {prim})))\n)"
+    );
+    read(&text).unwrap()
+}
+
+fn pad_shapes(o: &board_model::ReadOutcome) -> Vec<board_model::Contour> {
+    o.board
+        .copper
+        .iter()
+        .find_map(|c| match c {
+            board_model::CopperItem::PolygonPad { shapes, .. } => Some(shapes.clone()),
+            _ => None,
+        })
+        .unwrap()
+}
+
+#[test]
+fn a_clockwise_arc_stroke_and_its_counter_clockwise_twin_are_the_same_band() {
+    // A quarter circle of radius 2 about the pad's center, written both ways round, and the
+    // same with a half circle and with three quarters.
+    for (a, m, b) in [
+        ("2 0", "1.4142136 -1.4142136", "0 -2"),
+        ("2 0", "0 -2", "-2 0"),
+        ("2 0", "-2 0", "0 2"),
+    ] {
+        let one = arc_pad_board(&format!(
+            "(gr_arc (start {a}) (mid {m}) (end {b}) (width 0.3))"
+        ));
+        let twin = arc_pad_board(&format!(
+            "(gr_arc (start {b}) (mid {m}) (end {a}) (width 0.3))"
+        ));
+        // Shape 0 is the anchor; the stroke is what follows.
+        let (s1, s2) = (pad_shapes(&one), pad_shapes(&twin));
+        assert!(s1.len() >= 2, "{a} {m} {b}");
+        assert_eq!(s1, s2, "{a} {m} {b}");
+        assert!(!one.notes.iter().any(|n| n.severity == Severity::Dropped));
+    }
+}
+
+#[test]
+fn a_gr_arc_through_points_on_one_line_is_a_straight_stroke() {
+    let o = arc_pad_board("(gr_arc (start 0 0) (mid 1 0) (end 2 0) (width 0.3))");
+    let shapes = pad_shapes(&o);
+    // The anchor and one capsule: two lines and two arcs, 2 + 0.3 long.
+    assert_eq!(shapes.len(), 2);
+    assert_eq!(shapes[1].segments.len(), 4);
+    assert!(!o.notes.iter().any(|n| n.severity == Severity::Dropped));
+}

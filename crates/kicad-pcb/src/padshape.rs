@@ -306,6 +306,44 @@ pub fn arc_stroke(
     let sweep = probe.sweep_deg().unwrap_or(360.0).abs();
     // Counter-clockwise from `a0` for `sweep` degrees.
     let a0 = if clockwise { end_deg } else { start_deg };
+    let h = width / 2.0;
+    if radius <= h {
+        // The stroke covers the arc's center, so it has no inner edge. A whole turn is one disk;
+        // anything less is the sector out to radius + h plus a disk at each end (the nearest
+        // point of the arc to any point outside the sector's angles is one of its ends).
+        if sweep >= 359.999 {
+            return vec![circle(center, radius + h)];
+        }
+        let on = |r: f64, a: f64| {
+            let (s, c) = a.to_radians().sin_cos();
+            pt(center.x + r * c, center.y + r * s)
+        };
+        let (p0, p1) = (on(radius + h, a0), on(radius + h, a0 + sweep));
+        let sector = Contour {
+            segments: vec![
+                Segment::Line {
+                    from: center,
+                    to: p0,
+                },
+                Segment::Arc {
+                    center,
+                    radius: radius + h,
+                    start_deg: a0,
+                    end_deg: a0 + sweep,
+                    clockwise: false,
+                },
+                Segment::Line {
+                    from: p1,
+                    to: center,
+                },
+            ],
+        };
+        return vec![
+            sector,
+            circle(on(radius, a0), h),
+            circle(on(radius, a0 + sweep), h),
+        ];
+    }
     if sweep > 180.0 {
         let half = sweep / 2.0;
         return vec![
@@ -373,4 +411,72 @@ pub fn stroke(c: &Contour, width: f64) -> Vec<Contour> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn p(x: f64, y: f64) -> Point {
+        Point { x, y }
+    }
+
+    #[test]
+    fn a_clockwise_stroke_is_its_counter_clockwise_twin() {
+        // The same arc from 20 to 100 degrees, written both ways round.
+        let c = p(1.0, 2.0);
+        let ccw = arc_stroke(c, 1.5, 20.0, 100.0, false, 0.4);
+        let cw = arc_stroke(c, 1.5, 100.0, 20.0, true, 0.4);
+        assert_eq!(ccw, cw);
+        // A turn of more than 180 degrees too.
+        assert_eq!(
+            arc_stroke(c, 1.5, 10.0, 300.0, false, 0.4),
+            arc_stroke(c, 1.5, 300.0, 10.0, true, 0.4)
+        );
+    }
+
+    #[test]
+    fn a_stroke_of_up_to_180_degrees_is_one_band_and_more_is_two() {
+        let c = p(0.0, 0.0);
+        assert_eq!(arc_stroke(c, 1.0, 0.0, 180.0, false, 0.2).len(), 1);
+        assert_eq!(arc_stroke(c, 1.0, 0.0, 90.0, false, 0.2).len(), 1);
+        assert_eq!(arc_stroke(c, 1.0, 0.0, 270.0, false, 0.2).len(), 2);
+        // A band: outer arc, cap, inner arc, cap.
+        let band = &arc_stroke(c, 1.0, 0.0, 90.0, false, 0.2)[0];
+        let arcs = band
+            .segments
+            .iter()
+            .filter(|s| matches!(s, Segment::Arc { .. }))
+            .count();
+        assert_eq!(arcs, 4);
+    }
+
+    #[test]
+    fn a_stroke_wider_than_twice_its_radius_has_no_inner_edge() {
+        let c = p(0.0, 0.0);
+        // A whole turn is one disk of radius radius + width / 2.
+        let ring = arc_stroke(c, 0.3, 0.0, 0.0, false, 1.0);
+        assert!(matches!(
+            ring[0].segments.as_slice(),
+            [Segment::Arc { radius, .. }] if ring.len() == 1 && (*radius - 0.8).abs() < 1e-12
+        ));
+        // A quarter turn is a sector and an end disk each, and no arc of radius 0.
+        let q = arc_stroke(c, 0.3, 0.0, 90.0, false, 1.0);
+        assert_eq!(q.len(), 3);
+        assert_eq!(q[0].segments.len(), 3);
+        assert!(q[0].segments.iter().all(|s| match s {
+            Segment::Arc { radius, .. } => (*radius - 0.8).abs() < 1e-12,
+            _ => true,
+        }));
+        assert_eq!(q[1], circle(p(0.3, 0.0), 0.5));
+        assert!(matches!(
+            q[2].segments.as_slice(),
+            [Segment::Arc { radius, .. }] if (*radius - 0.5).abs() < 1e-12
+        ));
+        // Exactly width = 2 * radius takes the same path.
+        assert_eq!(
+            arc_stroke(c, 0.5, 0.0, 0.0, false, 1.0),
+            vec![circle(c, 1.0)]
+        );
+    }
 }
