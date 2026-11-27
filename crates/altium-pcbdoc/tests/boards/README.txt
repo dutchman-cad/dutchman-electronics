@@ -1372,8 +1372,8 @@ mech-layer-kinds.PcbDoc  (from one-resistor)
 Saving embedded Arial in keepouts (no text uses it); it was removed as before (see "Paths inside
 the files").
 
-Feature gaps, second batch (teardrops, plane-polygon-connect, text-kinds)
---------------------------------------------------------------------------
+Feature gaps, second batch (teardrops, plane-polygon-connect, text-kinds, pad-shapes-custom)
+---------------------------------------------------------------------------------------------
 Made on 2026-11-27, one feature per board, by my own scripts and by hand where noted; every
 object was read back and logged, and each board was saved and closed. Saving embedded Arial in
 each (no text uses it); it was removed as before (see "Paths inside the files"); text-kinds keeps
@@ -1452,6 +1452,31 @@ text-kinds.PcbDoc  (from empty-outline)
     0.012 lower, from the moment the texts were made.) While a frame is
     selected, Altium's panel shows the point its justification refers to (x 23 for the centre
     column, 43 for the right one).
+
+pad-shapes-custom.PcbDoc  (from empty-outline)
+    By my own script, three free SMD pads on Top Layer (no net, simple pad stack) and an
+    L-shaped region; then by hand:
+        pad  at          made as                     by hand
+        1    (10, 15)    rectangle 2.000 x 1.000     Shape Rounded Rectangle: Altium's default
+                                                     corner radius 50% (0.25mm), all four corners
+        2    (20, 15)    rectangle 2.000 x 1.000     Shape Chamfered Rectangle, corner 50%
+                                                     (0.25mm); Lower Left and Lower Right
+                                                     unticked, so only the two upper corners are
+                                                     cut
+        3    (30.5, 14.5) rectangle 1.000 x 1.000    with the region selected too: Tools >
+                                                     Convert > Add Selected Region to Custom Pad
+    The region, KIND 0, Top Layer: (30, 14), (33, 14), (33, 15), (31, 15), (31, 17), (30, 17).
+    After the conversion pad 3's panel shows Shape Custom Shape and a size of 3mm x 3mm (the L's
+    box), center offset 0. (Tools > Convert > Create Custom Pad from Selected Outline did nothing
+    with the region selected.)
+    What the file stores: pads 2 and 3 have a size of 0.025 x 0.025 (10000 units, 1 mil) in
+    their geometry block (block 4, bytes 21..29) and a 651- or 666-byte block 5; pad 1 keeps its
+    2.000 x 1.000. /Regions6/Data holds two regions on Top Layer, KIND 0, whose text part ends in
+    PADINDEX=1 and PADINDEX=2: the copper of pads 2 and 3 (pad 2 cut at its upper corners, pad 3
+    the L); their copies are in /ShapeBasedRegions6/Data, and a new stream, /CustomShapes/Data
+    (186 bytes), appears. Our reader at origin/main c825c14 draws all three on the top copper
+    without a note: pad 1 rounded, pad 2 a six-cornered outline from (19, 14.5) to (21, 15.5),
+    pad 3 the L from (30, 14) to (33, 17).
 
 Paths inside the files
 ----------------------
