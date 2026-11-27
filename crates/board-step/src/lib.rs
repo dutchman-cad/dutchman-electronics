@@ -738,7 +738,12 @@ fn merge_overlapping(kept: Vec<Drill>, notes: &mut Vec<Note>) -> Vec<Cut> {
         i
     }
     for (i, a) in kept.iter().enumerate() {
-        for (j, b) in kept.iter().enumerate().skip(i.saturating_add(1)) {
+        for (j, b) in kept
+            .iter()
+            .enumerate()
+            .skip(i.saturating_add(1))
+            .take(MAX_MERGED_HOLES)
+        {
             if b.at.x - b.radius > a.at.x + a.radius + TOLERANCE {
                 // Later holes start further right still, so none can reach this one.
                 break;
@@ -775,6 +780,10 @@ fn merge_overlapping(kept: Vec<Drill>, notes: &mut Vec<Note>) -> Vec<Cut> {
     for group in groups {
         let [only] = group.as_slice() else {
             let total = group.len();
+            if total > MAX_MERGED_HOLES {
+                keep_clear(group, &mut out, &mut left_out);
+                continue;
+            }
             // Holes wholly inside another add nothing to the outline.
             let indexed: Vec<(usize, Drill)> = group.iter().copied().enumerate().collect();
             let mut rest: Vec<Drill> = Vec::new();
@@ -807,16 +816,7 @@ fn merge_overlapping(kept: Vec<Drill>, notes: &mut Vec<Note>) -> Vec<Cut> {
                     });
                 }
                 None => {
-                    // Keep holes in order while they stay clear of those already kept.
-                    let mut clear: Vec<Drill> = Vec::new();
-                    for hole in group {
-                        if clear.iter().all(|k| relation(*k, hole) == Relation::Clear) {
-                            clear.push(hole);
-                        } else {
-                            left_out = left_out.saturating_add(1);
-                        }
-                    }
-                    out.extend(clear.into_iter().map(|hole| Cut::Single { hole, also: 0 }));
+                    keep_clear(group, &mut out, &mut left_out);
                 }
             }
             continue;
@@ -845,6 +845,21 @@ fn merge_overlapping(kept: Vec<Drill>, notes: &mut Vec<Note>) -> Vec<Cut> {
         });
     }
     out
+}
+
+/// Keeps at most one bounded set of disjoint holes; every other drill is counted as lost.
+fn keep_clear(group: Vec<Drill>, out: &mut Vec<Cut>, left_out: &mut usize) {
+    let mut clear: Vec<Drill> = Vec::new();
+    for hole in group {
+        if clear.len() < MAX_MERGED_HOLES
+            && clear.iter().all(|k| relation(*k, hole) == Relation::Clear)
+        {
+            clear.push(hole);
+        } else {
+            *left_out = left_out.saturating_add(1);
+        }
+    }
+    out.extend(clear.into_iter().map(|hole| Cut::Single { hole, also: 0 }));
 }
 
 /// One arc of a union outline, counter-clockwise on its circle.
@@ -1141,6 +1156,7 @@ fn profile(board: &Board, thickness: f64, notes: &mut Vec<Note>) -> Result<Profi
     let widest = holes.iter().map(|h| 2.0 * h.radius).fold(0.0, f64::max);
     let mut kept: Vec<Drill> = Vec::new();
     let (mut at_edge, mut in_cutout, mut touching, mut mixed) = (0usize, 0usize, 0usize, 0usize);
+    let mut crowded = 0usize;
     for hole in holes {
         let clear_of_edge = inside(&outer_poly, hole.at)
             && outer
@@ -1163,16 +1179,25 @@ fn profile(board: &Board, thickness: f64, notes: &mut Vec<Note>) -> Result<Profi
         let left = hole.at.x - hole.radius;
         let mut meets_edge_on = false;
         let mut meets_other_kind = false;
+        let mut neighbors = 0usize;
         for k in kept
             .iter()
             .rev()
             .take_while(|k| k.at.x - k.radius >= left - widest - TOLERANCE)
         {
+            neighbors = neighbors.saturating_add(1);
+            if neighbors > MAX_MERGED_HOLES {
+                break;
+            }
             match relation(*k, hole) {
                 Relation::Clear => {}
                 Relation::Touching => meets_edge_on = true,
                 Relation::Overlapping => meets_other_kind |= !same_kind(*k, hole),
             }
+        }
+        if neighbors > MAX_MERGED_HOLES {
+            crowded = crowded.saturating_add(1);
+            continue;
         }
         if meets_edge_on {
             touching = touching.saturating_add(1);
@@ -1185,6 +1210,7 @@ fn profile(board: &Board, thickness: f64, notes: &mut Vec<Note>) -> Result<Profi
         kept.push(hole);
     }
     for (count, why) in [
+        (crowded, "exceed the bounded neighboring-hole comparison limit"),
         (at_edge, "touch or cross the board edge"),
         (in_cutout, "touch or fall inside a cutout"),
         (touching, "touch another hole at a single point"),

@@ -1491,3 +1491,39 @@ fn a_group_too_large_or_tangled_to_merge_reports_dropped_holes() {
     assert!(union_outline(&[(p(0.0, 0.0), 0.5), (p(0.999_99, 0.0), 0.5)]).is_none());
     assert!(union_outline(&[(p(0.0, 0.0), 0.5)]).is_none());
 }
+
+#[test]
+fn hostile_dense_and_chained_drills_have_bounded_work() {
+    for spacing in [0.0, 0.8] {
+        let holes = (0..5000)
+            .map(|i| hole(5.0 + f64::from(i) * spacing, 15.0, 1.0))
+            .collect();
+        let b = board(rect(0.0, 0.0, 4010.0, 30.0), vec![], holes);
+        let start = std::time::Instant::now();
+        let out = write(&b, "bounded").unwrap();
+        assert!(start.elapsed() < std::time::Duration::from_secs(10));
+        assert!(out.holes.len() <= MAX_MERGED_HOLES);
+        assert!(out.notes.iter().any(|n| n.severity == Severity::Dropped));
+        assert_eq!(out.holes.len(), if spacing == 0.0 { 1 } else { 64 });
+    }
+}
+
+#[test]
+fn merged_group_limit_includes_64_but_excludes_65() {
+    for count in [64, 65] {
+        let holes = (0..count)
+            .map(|i| hole(5.0 + 0.8 * f64::from(i), 15.0, 1.0))
+            .collect();
+        let b = board(rect(0.0, 0.0, 100.0, 30.0), vec![], holes);
+        let out = write(&b, "cap").unwrap();
+        if count == 64 {
+            assert_eq!(out.merged.len(), 1);
+            assert_eq!(out.merged[0].circles.len(), 64);
+            assert!(out.notes.iter().all(|n| n.severity == Severity::Info));
+        } else {
+            assert!(out.merged.is_empty());
+            assert_eq!(out.holes.len(), 33);
+            assert!(out.notes.iter().any(|n| n.severity == Severity::Dropped));
+        }
+    }
+}
