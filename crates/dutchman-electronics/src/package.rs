@@ -1018,6 +1018,18 @@ fn components_with(
     free: &[ModelRef],
     standard: Option<(&Recognizer<'_>, Bodies)>,
 ) -> Placed {
+    components_with_limit(list, embedded, thickness, free, standard, MAX_BODIES)
+}
+
+/// The package body limit is supplied separately so small tests can reach it.
+fn components_with_limit(
+    list: &[Placement],
+    embedded: &[EmbeddedModel],
+    thickness: f64,
+    free: &[ModelRef],
+    standard: Option<(&Recognizer<'_>, Bodies)>,
+    max_bodies: usize,
+) -> Placed {
     let mut placed = Placed::default();
     // Equal standard bodies share their two model files.
     let mut standard_models: std::collections::BTreeMap<String, String> = Default::default();
@@ -1033,6 +1045,7 @@ fn components_with(
         (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     let mut bodies_placed = 0usize;
     let mut over_part = Vec::new();
+    let mut total_over = 0usize;
     for (index, p) in list.iter().enumerate() {
         let base = match p.designator.trim() {
             "" => format!("Part {}", index.saturating_add(1)),
@@ -1101,7 +1114,14 @@ fn components_with(
             over_part.push(format!("{name} ({})", p.models.len()));
         }
         for (k, model) in p.models.iter().take(MAX_BODIES_PER_PART).enumerate() {
-            if bodies_placed >= MAX_BODIES {
+            if bodies_placed >= max_bodies {
+                total_over = total_over
+                    .saturating_add(p.models.len().min(MAX_BODIES_PER_PART).saturating_sub(k));
+                if k == 0 {
+                    no_model.push(format!(
+                        "{name} (main body left out by the package body limit)"
+                    ));
+                }
                 break;
             }
             bodies_placed = bodies_placed.saturating_add(1);
@@ -1138,8 +1158,10 @@ fn components_with(
     let free_frame = translation(0.0, 0.0, thickness);
     let mut free_over = 0usize;
     for (k, model) in free.iter().enumerate() {
-        if k >= MAX_FREE_BODIES || bodies_placed >= MAX_BODIES {
-            free_over = free.len().saturating_sub(k);
+        if k >= MAX_FREE_BODIES || bodies_placed >= max_bodies {
+            free_over = free.len().saturating_sub(MAX_FREE_BODIES);
+            total_over =
+                total_over.saturating_add(free.len().min(MAX_FREE_BODIES).saturating_sub(k));
             break;
         }
         bodies_placed = bodies_placed.saturating_add(1);
@@ -1166,7 +1188,15 @@ fn components_with(
             "severity": "Dropped",
             "message": format!(
                 "{free_over} free 3D bod(ies) were left out: the package holds at most \
-                 {MAX_FREE_BODIES} free bodies and {MAX_BODIES} bodies in all"
+                 {MAX_FREE_BODIES} free bodies and {max_bodies} bodies in all"
+            ),
+        }));
+    }
+    if total_over > 0 {
+        placed.notes.push(json!({
+            "severity": "Dropped",
+            "message": format!(
+                "{total_over} bodies left out: the package holds at most {max_bodies} bodies"
             ),
         }));
     }
@@ -3470,6 +3500,31 @@ mod tests {
         assert_eq!(notes.len(), 2, "{notes:?}");
         assert!(notes.iter().any(|m| m.contains("R1 (300)")));
         assert!(notes.iter().any(|m| m.starts_with("3 free 3D bod")));
+    }
+
+    #[test]
+    fn the_total_body_limit_counts_later_parts_and_free_bodies() {
+        let mut r1 = part("R1", 0.0, 0.0, 0.0, Side::Top);
+        r1.models = vec![ball(0.0, 0.0, 0.0, 1.0); 3];
+        let mut r2 = part("R2", 0.0, 0.0, 0.0, Side::Top);
+        r2.models = vec![ball(0.0, 0.0, 0.0, 1.0); 2];
+        let free = vec![ball(0.0, 0.0, 0.0, 1.0); 2];
+        let placed = components_with_limit(&[r1, r2], &[], 1.6, &free, None, 2);
+        assert_eq!(names(&placed), ["R1", "R1 body 2"]);
+        let notes = dropped(&placed);
+        // Of seven bodies, two fit: R1 loses one, R2 two, and the free bodies two.
+        assert_eq!(
+            notes
+                .iter()
+                .filter(|m| m.contains("bodies left out:"))
+                .count(),
+            1
+        );
+        assert!(notes.contains(&"5 bodies left out: the package holds at most 2 bodies"));
+        // We still account for R2 when even its main body cannot fit.
+        assert!(notes
+            .iter()
+            .any(|m| m.contains("R2 (main body left out by the package body limit)")));
     }
 
     #[test]
