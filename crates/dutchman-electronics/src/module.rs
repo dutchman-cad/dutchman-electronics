@@ -151,7 +151,10 @@ mod tests {
     #[test]
     fn info_lists_altium_and_kicad() {
         let v = info();
-        assert_eq!(v["extensions"], json!(["circuit.json", "kicad_pcb", "pcbdoc", "prjpcb", "tsx"]));
+        assert_eq!(
+            v["extensions"],
+            json!(["circuit.json", "kicad_pcb", "pcbdoc", "prjpcb", "tsx"])
+        );
         assert_eq!(v["formats"][1]["id"], "kicad_pcb");
         assert_eq!(v["formats"][1]["extension"], "kicad_pcb");
         assert_eq!(v["formats"][1]["name"], "KiCad PCB (.kicad_pcb)");

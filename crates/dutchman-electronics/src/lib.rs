@@ -48,7 +48,10 @@ fn tscircuit() -> Option<Box<dyn InputFormat>> {
 
 /// Every input format compiled into this build.
 pub fn formats() -> Vec<Box<dyn InputFormat>> {
-    [altium(), kicad(), tscircuit()].into_iter().flatten().collect()
+    [altium(), kicad(), tscircuit()]
+        .into_iter()
+        .flatten()
+        .collect()
 }
 
 /// A file's extension as the formats see it, lower case: the last suffix, except for the
@@ -105,7 +108,10 @@ mod tests {
     #[test]
     fn both_formats_are_listed_and_picked_by_name() {
         let ids: Vec<&str> = formats().iter().map(|f| f.id()).collect();
-        assert_eq!(ids, vec!["altium_pcbdoc", "kicad_pcb", "tscircuit_circuit_json"]);
+        assert_eq!(
+            ids,
+            vec!["altium_pcbdoc", "kicad_pcb", "tscircuit_circuit_json"]
+        );
         let picked = detect(b"not ole", Some("PcbDoc")).map(|f| f.id());
         assert_eq!(picked, Some("altium_pcbdoc"));
         let picked = detect(b"anything", Some("kicad_pcb")).map(|f| f.id());

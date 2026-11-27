@@ -14,8 +14,9 @@
 use std::collections::BTreeMap;
 
 use board_model::{
-    Appearance, Board, Contour, CopperItem, Detection, InputFormat, Layer, LayerKind, Note, Outline, PadShape,
-    Placement, Point, ReadError, ReadOutcome, Segment, Severity, Side, Text, TextFont, MAX_INPUT_BYTES,
+    Appearance, Board, Contour, CopperItem, Detection, Graphic, InputFormat, Layer, LayerKind,
+    Note, Outline, PadShape, Placement, Point, ReadError, ReadOutcome, Segment, Severity, Side,
+    StrokeFont, Text, TextFont, MAX_INPUT_BYTES,
 };
 use serde_json::Value;
 
@@ -380,6 +381,7 @@ impl Reader {
         let mut cutouts = Vec::new();
         let mut copper = Vec::new();
         let mut texts = Vec::new();
+        let mut graphics = Vec::new();
         let mut components = Vec::new();
 
         // Names of components, by source id.
@@ -470,7 +472,10 @@ impl Reader {
                                     || e.get("is_mirrored").and_then(Value::as_bool) == Some(true),
                                 // tscircuit names no font for silkscreen text; its pen width
                                 // is not in Circuit JSON either, so a default stroke is used.
-                                font: TextFont::Stroke { width: height / 8.0 },
+                                font: TextFont::Stroke {
+                                    width: height / 8.0,
+                                    font: StrokeFont::Default,
+                                },
                                 component: None,
                             });
                         }
@@ -478,9 +483,24 @@ impl Reader {
                     }
                 }
                 "pcb_silkscreen_line" | "pcb_silkscreen_path" | "pcb_silkscreen_rect"
-                | "pcb_silkscreen_circle" | "pcb_silkscreen_oval" | "pcb_silkscreen_pill"
-                | "pcb_silkscreen_graphic" => {
-                    self.skip("silkscreen graphics (lines, paths, rectangles, circles): not read yet, though the board model has silkscreen lines and arcs now")
+                | "pcb_silkscreen_circle" | "pcb_silkscreen_oval" | "pcb_silkscreen_pill" => {
+                    let layer = if text(e, "layer") == Some("bottom") {
+                        silk_bottom
+                    } else {
+                        silk_top
+                    };
+                    match silk_graphics(e, kind, layer) {
+                        Some(g) => {
+                            if e.get("is_filled").and_then(Value::as_bool) == Some(true) {
+                                self.skip("filled silkscreen shapes (drawn as outlines)");
+                            }
+                            graphics.extend(g);
+                        }
+                        None => self.bad(kind),
+                    }
+                }
+                "pcb_silkscreen_graphic" => {
+                    self.skip("pcb_silkscreen_graphic elements (their shape is not documented)")
                 }
                 "pcb_component" => {
                     let designator = text(e, "source_component_id")
@@ -570,7 +590,7 @@ impl Reader {
                 layers,
                 outline: Outline { outer, cutouts },
                 copper,
-                graphics: Vec::new(),
+                graphics,
                 texts,
                 components,
                 appearance: Appearance::default(),
@@ -622,6 +642,107 @@ fn cutout_contour(e: &Value) -> Option<Contour> {
             let p = points(e, "points")?;
             (p.len() >= 3).then(|| polygon(&p))
         }
+        _ => None,
+    }
+}
+
+/// A closed contour as silkscreen lines and arcs.
+fn contour_graphics(c: &Contour, layer: usize, width: f64) -> Vec<Graphic> {
+    c.segments
+        .iter()
+        .map(|s| match *s {
+            Segment::Line { from, to } => Graphic::Line {
+                layer,
+                from,
+                to,
+                width,
+                owner: None,
+            },
+            Segment::Arc {
+                center,
+                radius,
+                start_deg,
+                end_deg,
+                ..
+            } => Graphic::Arc {
+                layer,
+                center,
+                radius,
+                start_deg,
+                end_deg,
+                width,
+                owner: None,
+            },
+        })
+        .collect()
+}
+
+/// The silkscreen lines and arcs one Circuit JSON silkscreen element draws.
+fn silk_graphics(e: &Value, kind: &str, layer: usize) -> Option<Vec<Graphic>> {
+    let width = length(e, "stroke_width").unwrap_or(0.1);
+    if width <= 0.0 {
+        return None;
+    }
+    let turn = angle(e, "ccw_rotation").or_else(|| angle(e, "rotation")).unwrap_or(0.0);
+    let line = |from: Point, to: Point| Graphic::Line {
+        layer,
+        from,
+        to,
+        width,
+        owner: None,
+    };
+    match kind {
+        "pcb_silkscreen_line" => Some(vec![line(
+            Point {
+                x: length(e, "x1")?,
+                y: length(e, "y1")?,
+            },
+            Point {
+                x: length(e, "x2")?,
+                y: length(e, "y2")?,
+            },
+        )]),
+        "pcb_silkscreen_path" => {
+            let route = points(e, "route")?;
+            (route.len() >= 2).then(|| route.windows(2).map(|w| line(w[0], w[1])).collect())
+        }
+        "pcb_silkscreen_circle" => Some(contour_graphics(
+            &circle(point(e, "center")?, length(e, "radius")?),
+            layer,
+            width,
+        )),
+        "pcb_silkscreen_rect" => Some(contour_graphics(
+            &rect(
+                point(e, "center")?,
+                length(e, "width")?,
+                length(e, "height")?,
+                turn,
+                length(e, "corner_radius").unwrap_or(0.0),
+            ),
+            layer,
+            width,
+        )),
+        // An oval gives its two radii; a pill its width and height.
+        "pcb_silkscreen_oval" => Some(contour_graphics(
+            &pill(
+                point(e, "center")?,
+                length(e, "radius_x")? * 2.0,
+                length(e, "radius_y")? * 2.0,
+                turn,
+            ),
+            layer,
+            width,
+        )),
+        "pcb_silkscreen_pill" => Some(contour_graphics(
+            &pill(
+                point(e, "center")?,
+                length(e, "width")?,
+                length(e, "height")?,
+                turn,
+            ),
+            layer,
+            width,
+        )),
         _ => None,
     }
 }
@@ -688,7 +809,11 @@ fn plated_hole(e: &Value, multi: usize) -> Option<(CopperItem, Option<Contour>)>
             let drill = length(e, "hole_diameter")?;
             let rotation = angle(e, "rect_ccw_rotation").unwrap_or(0.0);
             let item = pad(
-                PadShape::Rectangle,
+                rect_shape(
+                    e,
+                    length(e, "rect_pad_width")?,
+                    length(e, "rect_pad_height")?,
+                ),
                 length(e, "rect_pad_width")?,
                 length(e, "rect_pad_height")?,
                 rotation,
@@ -702,7 +827,11 @@ fn plated_hole(e: &Value, multi: usize) -> Option<(CopperItem, Option<Contour>)>
             let rotation = angle(e, "rect_ccw_rotation").unwrap_or(0.0);
             let hole_rotation = angle(e, "hole_ccw_rotation").unwrap_or(0.0);
             let item = pad(
-                PadShape::Rectangle,
+                rect_shape(
+                    e,
+                    length(e, "rect_pad_width")?,
+                    length(e, "rect_pad_height")?,
+                ),
                 length(e, "rect_pad_width")?,
                 length(e, "rect_pad_height")?,
                 rotation,
@@ -720,22 +849,49 @@ fn plated_hole(e: &Value, multi: usize) -> Option<(CopperItem, Option<Contour>)>
     }
 }
 
+/// A rectangular pad's shape: plain, or with rounded corners when the element gives a corner
+/// radius (`rect_border_radius`, or `corner_radius`).
+fn rect_shape(e: &Value, width: f64, height: f64) -> PadShape {
+    let radius = length(e, "rect_border_radius")
+        .or_else(|| length(e, "corner_radius"))
+        .unwrap_or(0.0);
+    let shorter = width.min(height);
+    if radius > 0.0 && shorter > 0.0 {
+        PadShape::RoundedRectangle {
+            radius_ratio: (radius / shorter).clamp(0.0, 0.5),
+        }
+    } else {
+        PadShape::Rectangle
+    }
+}
+
 fn smt_pad(e: &Value, layer: Option<usize>) -> Option<CopperItem> {
     let layer = layer?;
     let at = xy(e)?;
     let (shape, size_x, size_y, rotation) = match text(e, "shape")? {
-        "rect" => (
-            PadShape::Rectangle,
-            length(e, "width")?,
-            length(e, "height")?,
-            0.0,
-        ),
-        "rotated_rect" => (
-            PadShape::Rectangle,
-            length(e, "width")?,
-            length(e, "height")?,
-            angle(e, "ccw_rotation").unwrap_or(0.0),
-        ),
+        "rect" | "rotated_rect" => {
+            let (w, h) = (length(e, "width")?, length(e, "height")?);
+            (
+                rect_shape(e, w, h),
+                w,
+                h,
+                angle(e, "ccw_rotation").unwrap_or(0.0),
+            )
+        }
+        "polygon" => {
+            let p = points(e, "points")?;
+            if p.len() < 3 {
+                return None;
+            }
+            return Some(CopperItem::PolygonPad {
+                layer,
+                at: xy(e).unwrap_or(p[0]),
+                shapes: vec![polygon(&p)],
+                drill: None,
+                plated: false,
+                owner: None,
+            });
+        }
         "circle" => {
             let d = length(e, "radius")? * 2.0;
             (PadShape::Round, d, d, 0.0)

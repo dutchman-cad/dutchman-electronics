@@ -126,14 +126,111 @@ fn a_trace_a_via_and_pads() {
 }
 
 #[test]
-fn silkscreen_text_is_read_and_graphics_are_counted() {
+fn silkscreen_text_and_graphics_are_read() {
     let o = board("silkscreen");
     assert_eq!(o.board.texts.len(), 1);
     let t = &o.board.texts[0];
     assert_eq!(t.content, "DUTCHMAN");
     assert!(close(t.at.x, 0.0) && close(t.at.y, 8.0) && close(t.height, 2.0));
     assert_eq!(o.board.layers[t.layer].kind, LayerKind::Silkscreen);
-    assert!(has_note(&o, "3 silkscreen graphics"), "{:?}", o.notes);
+    // A line, a rectangle (four lines) and a circle (one whole arc).
+    let lines = o
+        .board
+        .graphics
+        .iter()
+        .filter(|g| matches!(g, Graphic::Line { .. }))
+        .count();
+    let arcs = o
+        .board
+        .graphics
+        .iter()
+        .filter(|g| matches!(g, Graphic::Arc { .. }))
+        .count();
+    assert_eq!((lines, arcs), (5, 1));
+    assert!(!has_note(&o, "silkscreen graphics"), "{:?}", o.notes);
+}
+
+/// Reads a hand-written list of elements.
+fn read_json(json: &str) -> ReadOutcome {
+    CircuitJson.read(json.as_bytes()).unwrap()
+}
+
+fn silk(o: &ReadOutcome) -> &[Graphic] {
+    &o.board.graphics
+}
+
+#[test]
+fn silkscreen_path_oval_pill_and_bottom_layer() {
+    let o = read_json(
+        r#"[
+        {"type":"pcb_board","width":10,"height":10,"center":{"x":0,"y":0},"num_layers":2},
+        {"type":"pcb_silkscreen_path","layer":"bottom","stroke_width":0.2,
+         "route":[{"x":0,"y":0},{"x":1,"y":0},{"x":1,"y":1}]},
+        {"type":"pcb_silkscreen_oval","layer":"top","center":{"x":0,"y":0},
+         "radius_x":2,"radius_y":1,"stroke_width":0.1},
+        {"type":"pcb_silkscreen_pill","layer":"top","center":{"x":0,"y":0},
+         "width":4,"height":2,"stroke_width":0.1},
+        {"type":"pcb_silkscreen_line","layer":"top","x1":0,"y1":0,"stroke_width":0.1}
+    ]"#,
+    );
+    let g = silk(&o);
+    // A path of three points is two lines, on the bottom silkscreen.
+    let Graphic::Line { layer, width, to, .. } = &g[1] else {
+        panic!("{g:?}")
+    };
+    assert_eq!(o.board.layers[*layer].side, Some(Side::Bottom));
+    assert!(close(*width, 0.2) && close(to.x, 1.0) && close(to.y, 1.0));
+    // An oval and a pill are each two lines and two arcs.
+    assert_eq!(g.len(), 2 + 4 + 4);
+    // The line with no end is unusable and counted.
+    assert!(has_note(&o, "pcb_silkscreen_line"), "{:?}", o.notes);
+}
+
+#[test]
+fn rounded_rectangle_and_polygon_pads() {
+    let o = read_json(
+        r#"[
+        {"type":"pcb_board","width":10,"height":10,"center":{"x":0,"y":0},"num_layers":2},
+        {"type":"pcb_smtpad","layer":"top","shape":"rect","x":1,"y":2,
+         "width":2,"height":1,"rect_border_radius":0.25},
+        {"type":"pcb_smtpad","layer":"top","shape":"rect","x":0,"y":0,"width":2,"height":1},
+        {"type":"pcb_smtpad","layer":"top","shape":"polygon",
+         "points":[{"x":0,"y":0},{"x":2,"y":0},{"x":1,"y":2}]},
+        {"type":"pcb_smtpad","layer":"top","shape":"polygon","points":[{"x":0,"y":0}]}
+    ]"#,
+    );
+    let c = &o.board.copper;
+    assert_eq!(c.len(), 3);
+    let CopperItem::Pad { shape, .. } = &c[0] else {
+        panic!("{c:?}")
+    };
+    let PadShape::RoundedRectangle { radius_ratio } = shape else {
+        panic!("{shape:?}")
+    };
+    // 0.25 mm on a 1 mm short side.
+    assert!(close(*radius_ratio, 0.25));
+    assert!(matches!(&c[1], CopperItem::Pad { shape: PadShape::Rectangle, .. }));
+    let CopperItem::PolygonPad { shapes, drill, .. } = &c[2] else {
+        panic!("{c:?}")
+    };
+    assert_eq!(shapes.len(), 1);
+    assert_eq!(corners(&shapes[0]).len(), 3);
+    assert!(drill.is_none());
+    assert!(has_note(&o, "pcb_smtpad"), "{:?}", o.notes);
+}
+
+#[test]
+fn a_rounded_radius_is_capped_at_half_the_short_side() {
+    let o = read_json(
+        r#"[
+        {"type":"pcb_board","width":10,"height":10,"center":{"x":0,"y":0},"num_layers":2},
+        {"type":"pcb_smtpad","layer":"top","shape":"rect","x":0,"y":0,
+         "width":2,"height":1,"rect_border_radius":5}]"#,
+    );
+    let CopperItem::Pad { shape, .. } = &o.board.copper[0] else {
+        panic!()
+    };
+    assert_eq!(*shape, PadShape::RoundedRectangle { radius_ratio: 0.5 });
 }
 
 #[test]
