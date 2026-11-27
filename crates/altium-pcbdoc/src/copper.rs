@@ -56,6 +56,21 @@
 //!   `outline-with-hole` and on every SMD pad.
 //!   Bytes 7..9 are the index of the component the pad belongs to (see `components.rs`);
 //!   its designator becomes the pad's owner.
+//! - A pad's own solder and paste mask (`pad-mask-overrides`, each pad compared with its
+//!   reference pad P1, which keeps the rule). The block lines up with the via body 36 bytes on
+//!   (pad bytes 68..86 are via bytes 32..50). Byte 1 holds the via's tenting bits: 0x20 on P4,
+//!   tented on top, 0x40 on P6, tented on the bottom. Byte 102 is the solder mask mode, 1 by the
+//!   rule and 2 Manual (P2 to P6 and P8), like the via's byte 66; byte 101 the paste mode (2 on
+//!   P7 only). Bytes 90..94 are the top mask expansion (0 on P2, 0.200 on P3 and P5), bytes
+//!   121..125 the bottom one (0.050 on P5, whose top and bottom are unlinked) and bytes 86..90
+//!   the paste expansion (0.050 on P7). With the rule they hold the rule's value (0.1 here, the
+//!   `mask-expansion-*` values on those boards; 0 for paste on every pad), and a tented pad keeps
+//!   its expansion. Byte 120 is 1 only on P5, so it is read as "bottom unlinked"; byte 1 has its
+//!   0x01 bit set there too. On a linked pad bytes 121..125 are not kept in step (0.1 on P3,
+//!   Manual 0.2), so the bottom takes the top's value. Byte 125 is 1 on P8, whose expansion is
+//!   measured from the hole's edge. Bytes 97..100 are 1 on every pad but P1 and P8 here and on
+//!   every pad of the older boards; not read. The board model has no place for any of this yet,
+//!   so the pads are counted in a note and drawn by the board-wide rule.
 //! - Pad shapes (`pad-shapes`, checked against the Gerber file Altium wrote for its top copper):
 //!   shape code 3 is an octagon, a rectangle of the pad's size with each corner cut off at 45
 //!   degrees by a quarter of the shorter side (0.25 on a 2.000 x 1.000 pad, 0.375 on 1.500 x
@@ -107,7 +122,18 @@ const VIA_TENTED_BOTTOM: u8 = 0x40;
 /// Where a via's own mask expansion starts, and the byte that says whether it is used.
 const VIA_MASK_EXPANSION_AT: usize = 54;
 const VIA_MASK_MODE_AT: usize = 66;
-const VIA_MASK_MANUAL: u8 = 2;
+/// A pad's tenting bits are in the same byte as a via's; the rest of its mask settings are in
+/// the geometry block (see the module notes).
+const PAD_FLAGS_AT: usize = 1;
+const PAD_PASTE_EXPANSION_AT: usize = 86;
+const PAD_MASK_TOP_AT: usize = 90;
+const PAD_PASTE_MODE_AT: usize = 101;
+const PAD_MASK_MODE_AT: usize = 102;
+const PAD_MASK_UNLINKED_AT: usize = 120;
+const PAD_MASK_BOTTOM_AT: usize = 121;
+const PAD_MASK_FROM_HOLE_AT: usize = 125;
+/// The mode byte of a mask expansion set on the object itself rather than by the rule.
+const MASK_MANUAL: u8 = 2;
 /// Angles beyond this many degrees (either way) are refused as not real.
 const MAX_ANGLE_DEG: f64 = 360.0;
 const PAD_BLOCKS: usize = 6;
@@ -486,6 +512,7 @@ pub(crate) fn pads(
     let mut items = Vec::new();
     let mut skipped = Skipped::default();
     let mut uneven = 0usize;
+    let mut own_masks = OwnMasks::default();
     let mut at = 0usize;
     let mut count = 0usize;
     while at < data.len() {
@@ -555,6 +582,7 @@ pub(crate) fn pads(
             continue;
         };
         let plated = hole > 0.0 && g.get(60) == Some(&1);
+        own_masks.count(&pad_mask(g));
         let [top, middle, bottom] = sizes;
         let (size_x, size_y) = top;
         if middle != top || bottom != top || shapes.iter().any(|s| Some(s) != shapes.first()) {
@@ -615,8 +643,106 @@ pub(crate) fn pads(
             ),
         });
     }
+    own_masks.into_note(notes);
     skipped.into_notes("pad(s)", notes);
     Ok(items)
+}
+
+/// A pad's own solder and paste mask settings, from its geometry block (see the module notes).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct PadMask {
+    /// The mask covers the pad: index 0 is the top side, 1 the bottom.
+    pub tented: [bool; 2],
+    /// The solder mask expansion set on the pad (Manual), top and bottom, in mm. `None` when
+    /// the pad follows the rule.
+    pub expansion: Option<[f64; 2]>,
+    /// The expansion is measured from the hole's edge rather than the pad's.
+    pub from_hole_edge: bool,
+    /// The paste mask expansion set on the pad (Manual), in mm. `None` when it follows the rule.
+    pub paste: Option<f64>,
+}
+
+/// Reads a pad's own mask settings. A block too short for a field leaves that field as if set by
+/// the rule.
+pub(crate) fn pad_mask(g: &[u8]) -> PadMask {
+    let flags = g.get(PAD_FLAGS_AT).copied().unwrap_or_default();
+    let manual = |mode_at: usize| g.get(mode_at) == Some(&MASK_MANUAL);
+    let expansion = manual(PAD_MASK_MODE_AT)
+        .then(|| {
+            let top = length(g, PAD_MASK_TOP_AT).ok()?;
+            let bottom = if g.get(PAD_MASK_UNLINKED_AT) == Some(&1) {
+                length(g, PAD_MASK_BOTTOM_AT).ok()?
+            } else {
+                top
+            };
+            Some([top, bottom])
+        })
+        .flatten();
+    PadMask {
+        tented: [flags & VIA_TENTED_TOP != 0, flags & VIA_TENTED_BOTTOM != 0],
+        expansion,
+        from_hole_edge: expansion.is_some() && g.get(PAD_MASK_FROM_HOLE_AT) == Some(&1),
+        paste: manual(PAD_PASTE_MODE_AT)
+            .then(|| length(g, PAD_PASTE_EXPANSION_AT).ok())
+            .flatten(),
+    }
+}
+
+/// How many pads have mask settings of their own, which the board model has no place for yet.
+#[derive(Default)]
+struct OwnMasks {
+    tented: usize,
+    expansion: usize,
+    from_hole_edge: usize,
+    paste: usize,
+    pads: usize,
+}
+
+impl OwnMasks {
+    fn count(&mut self, mask: &PadMask) {
+        let tented = mask.tented.contains(&true);
+        self.tented += usize::from(tented);
+        self.expansion += usize::from(mask.expansion.is_some());
+        self.from_hole_edge += usize::from(mask.from_hole_edge);
+        self.paste += usize::from(mask.paste.is_some());
+        self.pads += usize::from(tented || mask.expansion.is_some() || mask.paste.is_some());
+    }
+
+    fn into_note(self, notes: &mut Vec<Note>) {
+        if self.pads == 0 {
+            return;
+        }
+        let mut what = Vec::new();
+        if self.tented > 0 {
+            what.push(format!("{} tented", self.tented));
+        }
+        if self.expansion > 0 {
+            let edge = if self.from_hole_edge > 0 {
+                format!(", {} of them from the hole's edge", self.from_hole_edge)
+            } else {
+                String::new()
+            };
+            what.push(format!(
+                "{} with a solder mask expansion of their own{edge}",
+                self.expansion
+            ));
+        }
+        if self.paste > 0 {
+            what.push(format!(
+                "{} with a paste mask expansion of their own",
+                self.paste
+            ));
+        }
+        notes.push(Note {
+            severity: Severity::Warning,
+            message: format!(
+                "{} pad(s) have their own mask settings ({}); the board model has no place for \
+                 them yet, so these pads are drawn by the board-wide rule",
+                self.pads,
+                what.join("; ")
+            ),
+        });
+    }
 }
 
 /// Reads the arcs from `/Arcs6/Data`: those on copper layers as track arcs, those on the overlay
@@ -721,7 +847,7 @@ pub(crate) fn vias(
             ],
             None => [None, None],
         };
-        let mask_expansion = if body.get(VIA_MASK_MODE_AT) == Some(&VIA_MASK_MANUAL) {
+        let mask_expansion = if body.get(VIA_MASK_MODE_AT) == Some(&MASK_MANUAL) {
             Some(length(body, VIA_MASK_EXPANSION_AT)?)
         } else {
             None
@@ -1157,5 +1283,84 @@ mod tests {
             .unwrap()
             .is_empty());
         assert_eq!(notes.last().map(|n| n.severity), Some(Severity::Dropped));
+    }
+
+    /// The geometry block of every pad on a test board, sorted by x.
+    fn pad_blocks(board: &str) -> Result<Vec<Vec<u8>>, Box<dyn std::error::Error>> {
+        use std::io::Read;
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/boards")
+            .join(board);
+        let mut file = cfb::open(path)?;
+        let mut data = Vec::new();
+        file.open_stream("/Pads6/Data")?.read_to_end(&mut data)?;
+        let mut blocks = Vec::new();
+        let mut at = 0;
+        while at < data.len() {
+            let mut cursor = at + 1;
+            for block in 0..PAD_BLOCKS {
+                let len = read_u32(&data, cursor).ok_or("cut short")?;
+                if block == PAD_GEOMETRY_BLOCK {
+                    blocks.push(
+                        data.get(cursor + 4..cursor + 4 + len)
+                            .ok_or("cut short")?
+                            .to_vec(),
+                    );
+                }
+                cursor += 4 + len;
+            }
+            at = cursor;
+        }
+        blocks.sort_by(|a, b| {
+            let x = |g: &[u8]| length(g, 13).unwrap_or_default();
+            x(a).total_cmp(&x(b))
+        });
+        Ok(blocks)
+    }
+
+    /// tests/boards/README.txt, "Pad mask overrides": P1 to P8 at x 13 to 41, each with one
+    /// mask setting changed by hand. Numbers to 0.001 mm.
+    #[test]
+    fn reads_each_pads_own_mask_settings() -> Result<(), Box<dyn std::error::Error>> {
+        let near = |a: Option<[f64; 2]>, b: [f64; 2]| {
+            a.is_some_and(|a| (a[0] - b[0]).abs() < 0.001 && (a[1] - b[1]).abs() < 0.001)
+        };
+        let masks: Vec<PadMask> = pad_blocks("pad-mask-overrides.PcbDoc")?
+            .iter()
+            .map(|g| pad_mask(g))
+            .collect();
+        let [p1, p2, p3, p4, p5, p6, p7, p8] = masks.as_slice() else {
+            return Err(format!("{masks:?}").into());
+        };
+        assert_eq!(*p1, PadMask::default());
+        assert!(near(p2.expansion, [0.0, 0.0]), "{p2:?}");
+        assert!(near(p3.expansion, [0.2, 0.2]), "{p3:?}");
+        assert_eq!(p4.tented, [true, false]);
+        assert!(near(p4.expansion, [0.1, 0.1]), "{p4:?}");
+        assert!(near(p5.expansion, [0.2, 0.05]), "{p5:?}");
+        assert_eq!(p6.tented, [false, true]);
+        assert!(near(p6.expansion, [0.1, 0.1]), "{p6:?}");
+        assert_eq!(p7.expansion, None);
+        assert!(p7.paste.is_some_and(|p| (p - 0.05).abs() < 0.001), "{p7:?}");
+        assert!(
+            p8.from_hole_edge && near(p8.expansion, [0.1, 0.1]),
+            "{p8:?}"
+        );
+        for (i, m) in masks.iter().enumerate() {
+            assert_eq!(m.from_hole_edge, i == 7, "{m:?}");
+            assert_eq!(m.paste.is_some(), i == 6, "{m:?}");
+            assert_eq!(m.tented.contains(&true), i == 3 || i == 5, "{m:?}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_short_block_reads_as_by_the_rule() {
+        assert_eq!(pad_mask(&[]), PadMask::default());
+        let mut g = vec![0u8; PAD_MASK_MODE_AT + 1];
+        g[PAD_MASK_MODE_AT] = MASK_MANUAL;
+        assert_eq!(pad_mask(&g).expansion, Some([0.0, 0.0]));
+        g.truncate(PAD_MASK_TOP_AT + 2);
+        assert_eq!(pad_mask(&g), PadMask::default());
     }
 }

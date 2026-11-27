@@ -7,8 +7,10 @@
 //! `5.9055mil` and `7.874mil` (0, 0.05, 0.15 and 0.2 mm); the others as `3.937mil` (0.1 mm),
 //! except `one-linked-step-resistor`, which keeps `0mil`.
 //!
-//! Only the board-wide rule is read: a rule for some objects only, and an override on a single
-//! pad, are not, and the board-wide value is used for every pad.
+//! Only the board-wide rule is read here: a rule for some objects only is not, and the board-wide
+//! value is used for every pad. A pad's own settings (tented, a manual expansion) are read in
+//! `copper.rs`, but the board model has no place for them yet, so they are only counted in a
+//! note and those pads take the board-wide value too.
 use board_model::{Note, Severity};
 
 use crate::planes::rule_records;
