@@ -1571,6 +1571,7 @@ pub fn read(mut root: Node) -> ReadOutcome {
             texts: r.texts,
             components: r.components,
             appearance: Default::default(),
+            free_models: Vec::new(),
             solder_mask_expansion: mask_expansion,
         },
         notes,

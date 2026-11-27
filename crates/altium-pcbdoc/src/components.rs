@@ -158,7 +158,7 @@ fn placement(record: &Properties, designator: String) -> Result<Placement, Strin
         at: Point { x, y },
         rotation_deg,
         side,
-        model: None,
+        models: Vec::new(),
         comment: String::new(),
     })
 }
