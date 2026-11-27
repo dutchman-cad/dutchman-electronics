@@ -1267,7 +1267,7 @@ fn the_plating_of_a_merged_opening_is_one_closed_tube() {
         wall,
         span: None,
     };
-    let out = tubes_and_unions(&[], &[union.clone()], 0.0, 1.6, "plating").unwrap();
+    let out = tubes_and_unions(&[], std::slice::from_ref(&union), 0.0, 1.6, "plating").unwrap();
     assert_eq!(out.text.matches("MANIFOLD_SOLID_BREP(").count(), 1);
     // Four outer and four inner arcs, and two bends.
     assert_eq!(out.text.matches("CYLINDRICAL_SURFACE(").count(), 10);
