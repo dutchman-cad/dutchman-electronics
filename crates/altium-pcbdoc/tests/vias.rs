@@ -25,6 +25,7 @@ fn vias(out: &ReadOutcome) -> Vec<(f64, f64, f64, f64)> {
                 at,
                 diameter,
                 drill,
+                ..
             } => Some((at.x, at.y, *diameter, *drill)),
             _ => None,
         })
