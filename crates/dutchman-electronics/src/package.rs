@@ -2088,6 +2088,7 @@ mod tests {
             at: Point { x, y: 1.0 },
             radius,
             plated,
+            span: None,
         }
     }
 
