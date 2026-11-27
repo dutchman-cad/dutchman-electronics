@@ -505,3 +505,63 @@ footprint("U2", (10, 20), 30.0, False, u2)
 footprint("U3", (38, 8), 0.0, True, u3)
 footprint("U4", (38, 20), 90.0, True, u4)
 save(b, "pad-shapes-turned")
+
+# 14. via-tenting-spans: a four-layer board, 1.6 mm, with seven vias on a row at y = 15, 0.8 mm
+#     ring and 0.4 mm drill, at x = 5, 10, 15, 20, 25, 30, 35 (net SIG):
+#       x=5   through, tenting left to the board default (the default tents both sides);
+#       x=10  through, tented front and back;
+#       x=15  through, open front and back (not tented);
+#       x=20  through, tented front, open back;
+#       x=25  through, tented back only;
+#       x=30  blind, F.Cu to In1.Cu;
+#       x=35  buried, In1.Cu to In2.Cu.
+b = new_board(4, 1.6)
+outline_rect(b)
+sig = net(b, "SIG")
+T, N, R = (
+    pcbnew.TENTING_MODE_TENTED,
+    pcbnew.TENTING_MODE_NOT_TENTED,
+    # KiCad 10 renamed "from rules" to "from board".
+    getattr(pcbnew, "TENTING_MODE_FROM_RULES", getattr(pcbnew, "TENTING_MODE_FROM_BOARD", None)),
+)
+BLIND = getattr(pcbnew, "VIATYPE_BLIND_BURIED", getattr(pcbnew, "VIATYPE_BLIND", None))
+
+
+def via(x, front, back, margin=None, span=None):
+    v = pcbnew.PCB_VIA(b)
+    v.SetPosition(p(x, 15))
+    v.SetWidth(FromMM(0.8))
+    v.SetDrill(FromMM(0.4))
+    if span is None:
+        v.SetViaType(pcbnew.VIATYPE_THROUGH)
+    else:
+        v.SetViaType(BLIND)
+        v.SetLayerPair(*span)
+    v.SetFrontTentingMode(front)
+    v.SetBackTentingMode(back)
+    if margin is not None:
+        v.SetLocalSolderMaskMargin(FromMM(margin))
+    v.SetNet(sig)
+    b.Add(v)
+
+
+via(5, R, R)
+via(10, T, T)
+via(15, N, N)
+via(20, T, N)
+via(25, N, T)
+via(30, R, R, span=(pcbnew.F_Cu, pcbnew.In1_Cu))
+via(35, R, R, span=(pcbnew.In1_Cu, pcbnew.In2_Cu))
+save(b, "via-tenting-spans")
+
+# 15. via-default-open: the board default leaves the top side's vias open and tents the bottom
+#     side's (setup tenting: back only). Two vias on a row at y = 15, 0.8 mm ring, 0.4 mm drill:
+#     x=10 through, tenting left to the default; x=20 through, tented front and back.
+b = new_board(4, 1.6)
+outline_rect(b)
+sig = net(b, "SIG")
+b.GetDesignSettings().m_TentViasFront = False
+b.GetDesignSettings().m_TentViasBack = True
+via(10, R, R)
+via(20, T, T)
+save(b, "via-default-open")

@@ -10,7 +10,7 @@
 use std::f64::consts::PI;
 use std::fmt::Write as _;
 
-use board_model::{Board, Contour, CopperItem, Note, Point, Segment, Severity};
+use board_model::{Board, Contour, CopperItem, Note, Point, Segment, Severity, Side};
 
 /// Two points closer than this (mm) are the same point.
 pub const TOLERANCE: f64 = 1e-6;
@@ -73,6 +73,10 @@ pub struct CutHole {
     pub radius: f64,
     /// Lined with copper: every via, and every pad whose drill is marked plated.
     pub plated: bool,
+    /// For a blind or buried via, the heights `(low, high)` in mm the hole covers (the board's
+    /// bottom face is at 0, its top at the thickness), so the plating can follow it. `None` when
+    /// the hole runs through the whole board.
+    pub span: Option<(f64, f64)>,
 }
 
 /// Counts of the solid's topology.
@@ -487,15 +491,74 @@ struct Drill {
     at: Point,
     radius: f64,
     plated: bool,
+    /// The heights the hole covers when it is blind or buried; `None` runs through.
+    span: Option<(f64, f64)>,
+    /// A via with a layer span the board cannot place: drilled through instead.
+    unplaced: bool,
+}
+
+/// The heights `(low, high)` a via's layer span covers, when it stops short of a face of the board.
+/// `None` for a via that runs through, or whose layers the board cannot place (the caller counts
+/// those). A span that reaches an outer copper layer reaches that face of the board.
+fn via_span(
+    board: &Board,
+    layers: (usize, usize),
+    thickness: f64,
+) -> Result<Option<(f64, f64)>, ()> {
+    let (Some(a), Some(b)) = (board.layers.get(layers.0), board.layers.get(layers.1)) else {
+        return Err(());
+    };
+    if layers.0 == layers.1 {
+        return Err(());
+    }
+    let (Some(pa), Some(pb)) = (a.position, b.position) else {
+        return Err(());
+    };
+    // The upper layer first.
+    let ((top, ptop), (bottom, pbottom)) = if pa.depth <= pb.depth {
+        ((a, pa), (b, pb))
+    } else {
+        ((b, pb), (a, pa))
+    };
+    let high = if top.side == Some(Side::Top) {
+        thickness
+    } else {
+        thickness - ptop.depth
+    };
+    let low = if bottom.side == Some(Side::Bottom) {
+        0.0
+    } else {
+        thickness - (pbottom.depth + pbottom.thickness)
+    };
+    let (high, low) = (high.min(thickness), low.max(0.0));
+    if !(low.is_finite() && high.is_finite()) || high - low <= TOLERANCE {
+        return Err(());
+    }
+    if low <= TOLERANCE && high >= thickness - TOLERANCE {
+        return Ok(None);
+    }
+    Ok(Some((low, high)))
 }
 
 /// Every drilled hole on the board, from through-hole pads and vias.
-fn drills(board: &Board, notes: &mut Vec<Note>) -> Result<Vec<Drill>, StepError> {
+fn drills(board: &Board, thickness: f64, notes: &mut Vec<Note>) -> Result<Vec<Drill>, StepError> {
     let mut out = Vec::new();
     let mut unusable = 0usize;
     for item in &board.copper {
+        let mut span = None;
+        let mut unplaced = false;
         let found = match *item {
-            CopperItem::Via { at, drill, .. } => Some((at, drill, true)),
+            CopperItem::Via {
+                at, drill, layers, ..
+            } => {
+                if let Some(l) = layers {
+                    match via_span(board, l, thickness) {
+                        Ok(s) => span = s,
+                        Err(()) => unplaced = true,
+                    }
+                }
+                Some((at, drill, true))
+            }
             CopperItem::Pad {
                 at,
                 drill: Some(drill),
@@ -524,6 +587,8 @@ fn drills(board: &Board, notes: &mut Vec<Note>) -> Result<Vec<Drill>, StepError>
             at,
             radius: diameter / 2.0,
             plated,
+            span,
+            unplaced,
         });
     }
     if unusable > 0 {
@@ -552,10 +617,21 @@ fn clear_of_opening(hole: Drill, poly: &(Vec<Point>, (Point, Point)), edges: &[E
 struct Profile {
     outer: Vec<Edge2>,
     openings: Vec<Vec<Edge2>>,
+    /// Blind holes, open on one face of the board.
+    pockets: Vec<Pocket>,
     holes: Vec<CutHole>,
 }
 
-fn profile(board: &Board, notes: &mut Vec<Note>) -> Result<Profile, StepError> {
+/// A blind hole: a round pocket open on the top or bottom face. `edges` run clockwise.
+struct Pocket {
+    edges: Vec<Edge2>,
+    /// Its lowest and highest height.
+    z: (f64, f64),
+    /// Open on the top face (otherwise the bottom face).
+    from_top: bool,
+}
+
+fn profile(board: &Board, thickness: f64, notes: &mut Vec<Note>) -> Result<Profile, StepError> {
     if board.outline.outer.segments.is_empty() {
         return Err(StepError::Outline("the board has no outline".into()));
     }
@@ -608,7 +684,7 @@ fn profile(board: &Board, notes: &mut Vec<Note>) -> Result<Profile, StepError> {
     }
 
     // Then drilled holes, skipping any that would touch the edge, a cutout or another hole.
-    let mut holes = drills(board, notes)?;
+    let mut holes = drills(board, thickness, notes)?;
     holes.sort_by(|a, b| (a.at.x - a.radius).total_cmp(&(b.at.x - b.radius)));
     let widest = holes.iter().map(|h| 2.0 * h.radius).fold(0.0, f64::max);
     let mut kept: Vec<Drill> = Vec::new();
@@ -656,20 +732,65 @@ fn profile(board: &Board, notes: &mut Vec<Note>) -> Result<Profile, StepError> {
             });
         }
     }
+    let unplaced = kept.iter().filter(|h| h.unplaced).count();
+    if unplaced > 0 {
+        notes.push(Note {
+            severity: Severity::Warning,
+            message: format!(
+                "{unplaced} blind or buried via(s) have layers the board cannot place in its \
+                 stack; they are drilled through the whole board"
+            ),
+        });
+    }
     let mut cut = Vec::new();
+    let mut pockets = Vec::new();
+    let mut buried = 0usize;
     for hole in kept {
         cut.push(CutHole {
             at: hole.at,
             radius: hole.radius,
             plated: hole.plated,
+            span: hole.span,
         });
         let mut edges = circle_edges(hole.at, hole.radius);
-        reverse(&mut edges);
-        openings.push(edges);
+        match hole.span {
+            None => {
+                reverse(&mut edges);
+                openings.push(edges);
+            }
+            Some((low, high)) if high >= thickness - TOLERANCE => {
+                reverse(&mut edges);
+                pockets.push(Pocket {
+                    edges,
+                    z: (low, thickness),
+                    from_top: true,
+                });
+            }
+            Some((low, high)) if low <= TOLERANCE => {
+                reverse(&mut edges);
+                pockets.push(Pocket {
+                    edges,
+                    z: (0.0, high),
+                    from_top: false,
+                });
+            }
+            // A buried hole is invisible from outside: the body stays solid there. Its plating
+            // (a separate part) still follows the span.
+            Some(_) => buried = buried.saturating_add(1),
+        }
+    }
+    if buried > 0 {
+        notes.push(Note {
+            severity: Severity::Info,
+            message: format!(
+                "{buried} buried via(s) not drilled into the board body; they lie fully inside it"
+            ),
+        });
     }
     Ok(Profile {
         outer,
         openings,
+        pockets,
         holes: cut,
     })
 }
@@ -880,6 +1001,7 @@ fn body(
     w: &mut Writer,
     outer: Vec<Edge2>,
     openings: Vec<Vec<Edge2>>,
+    pockets: Vec<Pocket>,
     (z0, z1): (f64, f64),
     name: &str,
     stats: &mut Stats,
@@ -915,6 +1037,36 @@ fn body(
             .collect::<Vec<_>>()
             .join(",")
     };
+    // Blind holes: the pocket's walls, its end inside the board, and its rim in the board's face.
+    for pocket in pockets {
+        let (p0, p1) = pocket.z;
+        let r = ring(w, pocket.edges, (p0, p1), stats);
+        side_faces(w, &r, p0, &mut faces);
+        let forward: Vec<(Edge3, bool)> = r.top.iter().map(|e| (*e, true)).collect();
+        let backward: Vec<(Edge3, bool)> = r.bottom.iter().rev().map(|e| (*e, false)).collect();
+        // The ring runs clockwise. Open at the top: the floor faces up, so its loop is the
+        // bottom edges backwards, and the rim is the top edges forwards (an inner loop of the top
+        // face). Open at the bottom: the ceiling faces down (the top edges forwards), and the rim
+        // is the bottom edges backwards.
+        let (end_z, normal, end_loop, rim_loop) = if pocket.from_top {
+            (p0, 1.0, &backward, &forward)
+        } else {
+            (p1, -1.0, &forward, &backward)
+        };
+        let end = edge_loop(w, end_loop);
+        let bound = w.add(format!("FACE_OUTER_BOUND('',#{end},.T.)"));
+        let plane = w.placement([0.0, 0.0, end_z], [0.0, 0.0, normal], [1.0, 0.0, 0.0]);
+        let surface = w.add(format!("PLANE('',#{plane})"));
+        faces.push(w.add(format!("ADVANCED_FACE('',(#{bound}),#{surface},.T.)")));
+        let rim = edge_loop(w, rim_loop);
+        let rim_bound = w.add(format!("FACE_BOUND('',#{rim},.T.)"));
+        if pocket.from_top {
+            top_bounds.push(rim_bound);
+            stats.openings = stats.openings.saturating_add(1);
+        } else {
+            bottom_bounds.push(rim_bound);
+        }
+    }
     let top_plane = w.placement([0.0, 0.0, z1], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]);
     let top_surface = w.add(format!("PLANE('',#{top_plane})"));
     faces.push(w.add(format!(
@@ -1007,13 +1159,14 @@ fn finish(mut w: Writer, breps: &[usize], name: &str, description: &str) -> Stri
 fn solid(
     outer: Vec<Edge2>,
     openings: Vec<Vec<Edge2>>,
+    pockets: Vec<Pocket>,
     z: (f64, f64),
     name: &str,
     description: &str,
     stats: &mut Stats,
 ) -> String {
     let mut w = Writer::default();
-    let brep = body(&mut w, outer, openings, z, name, stats);
+    let brep = body(&mut w, outer, openings, pockets, z, name, stats);
     finish(w, &[brep], name, description)
 }
 
@@ -1037,7 +1190,7 @@ pub fn write(board: &Board, name: &str) -> Result<BoardStep, StepError> {
             DEFAULT_THICKNESS
         }
     };
-    let profile = profile(board, &mut notes)?;
+    let profile = profile(board, thickness, &mut notes)?;
     let mut stats = Stats {
         openings: profile.openings.len(),
         ..Stats::default()
@@ -1046,6 +1199,7 @@ pub fn write(board: &Board, name: &str) -> Result<BoardStep, StepError> {
     let text = solid(
         profile.outer,
         profile.openings,
+        profile.pockets,
         (0.0, thickness),
         name,
         "Board substrate",
@@ -1093,6 +1247,7 @@ pub fn prism(outline: &Contour, z0: f64, z1: f64, name: &str) -> Result<BoardSte
     let text = solid(
         outer,
         Vec::new(),
+        Vec::new(),
         (z0, z1),
         name,
         "Extruded body",
@@ -1115,6 +1270,9 @@ pub struct Tube {
     pub outer_radius: f64,
     /// The radius left open in the middle, in mm; above 0 and below `outer_radius`.
     pub inner_radius: f64,
+    /// The heights `(low, high)` the tube covers, for a blind or buried hole; `None` for the
+    /// whole `z0` to `z1` range given to [`tubes`].
+    pub span: Option<(f64, f64)>,
 }
 
 /// Writes tubes as one STEP file with one closed `MANIFOLD_SOLID_BREP` for each, all running from
@@ -1154,10 +1312,27 @@ pub fn tubes(list: &[Tube], z0: f64, z1: f64, name: &str) -> Result<BoardStep, S
                 t.at.x, t.at.y, t.inner_radius, t.outer_radius
             )));
         }
+        if let Some((lo, hi)) = t.span {
+            if !(lo.is_finite() && hi.is_finite() && hi - lo > TOLERANCE) {
+                return Err(StepError::Size(format!(
+                    "a tube at ({}, {}) spans {lo} to {hi}; its top must be above its bottom",
+                    t.at.x, t.at.y
+                )));
+            }
+        }
         let outer = circle_edges(t.at, t.outer_radius);
         let mut inner = circle_edges(t.at, t.inner_radius);
         reverse(&mut inner);
-        breps.push(body(&mut w, outer, vec![inner], (z0, z1), name, &mut stats));
+        let z = t.span.unwrap_or((z0, z1));
+        breps.push(body(
+            &mut w,
+            outer,
+            vec![inner],
+            Vec::new(),
+            z,
+            name,
+            &mut stats,
+        ));
     }
     stats.openings = list.len();
     Ok(BoardStep {

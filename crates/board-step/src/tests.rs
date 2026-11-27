@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 
-use board_model::{Board, Contour, CopperItem, Outline, PadShape, Point, Segment, Severity};
+use board_model::{
+    Board, Contour, CopperItem, Layer, LayerKind, Outline, PadShape, Point, Segment, Severity,
+    Side, StackPosition,
+};
 
 use super::*;
 
@@ -73,6 +76,32 @@ fn refs(args: &str) -> Vec<usize> {
 /// Checks the solid's topology from the STEP text alone: every edge is used exactly twice, in
 /// opposite directions; every loop is closed head to tail; V - E + F = 2.
 fn check_topology(text: &str) {
+    let (v, e, f) = check_edges(text);
+    // Two for each closed shell: a file may hold several solids.
+    let shells = entities(text)
+        .values()
+        .filter(|(n, _)| n == "CLOSED_SHELL")
+        .count() as i64;
+    assert_eq!(v - e + f, 2 * shells, "Euler: V={v} E={e} F={f}");
+}
+
+/// As [`check_topology`] for a solid with blind holes: V - E + F - L = 2 for each shell, where L
+/// counts the faces' inner loops (a blind pocket's rim is one; a hole right through has two).
+fn check_topology_blind(text: &str, inner_loops: i64) {
+    let (v, e, f) = check_edges(text);
+    let shells = entities(text)
+        .values()
+        .filter(|(n, _)| n == "CLOSED_SHELL")
+        .count() as i64;
+    assert_eq!(
+        v - e + f - inner_loops,
+        2 * shells,
+        "Euler: V={v} E={e} F={f} L={inner_loops}"
+    );
+}
+
+/// Checks every edge and loop, and returns the vertex, edge and face counts.
+fn check_edges(text: &str) -> (i64, i64, i64) {
     let all = entities(text);
     let of = |name: &'static str| all.iter().filter(move |(_, (n, _))| n == name);
     let vertices = of("VERTEX_POINT").count();
@@ -120,10 +149,7 @@ fn check_topology(text: &str) {
         }
     }
 
-    let (v, e, f) = (vertices as i64, edges.len() as i64, faces as i64);
-    // Two for each closed shell: a file may hold several solids.
-    let shells = of("CLOSED_SHELL").count() as i64;
-    assert_eq!(v - e + f, 2 * shells, "Euler: V={v} E={e} F={f}");
+    (vertices as i64, edges.len() as i64, faces as i64)
 }
 
 #[test]
@@ -604,6 +630,7 @@ fn tube(x: f64, y: f64, outer: f64, inner: f64) -> Tube {
         at: p(x, y),
         outer_radius: outer,
         inner_radius: inner,
+        span: None,
     }
 }
 
@@ -811,4 +838,145 @@ fn two_arcs_of_different_circles_meet_on_both_circles() {
         let prev = edges[(i + edges.len() - 1) % edges.len()];
         assert_eq!(prev.end, edges[i].start);
     }
+}
+
+/// A 1.6 mm board with four copper layers: top (index 0, depth 0), two inner ones at depths 0.5
+/// and 1.0, and bottom (index 3, depth 1.565), each 0.035 mm thick.
+fn four_layer(copper: Vec<CopperItem>) -> Board {
+    let layer = |name: &str, side: Option<Side>, depth: f64| Layer {
+        name: name.into(),
+        kind: LayerKind::Copper,
+        side,
+        position: Some(StackPosition {
+            depth,
+            thickness: 0.035,
+        }),
+    };
+    let mut b = board(rect(0.0, 0.0, 50.0, 30.0), vec![], copper);
+    b.layers = vec![
+        layer("F.Cu", Some(Side::Top), 0.0),
+        layer("In1.Cu", None, 0.5),
+        layer("In2.Cu", None, 1.0),
+        layer("B.Cu", Some(Side::Bottom), 1.565),
+    ];
+    b
+}
+
+fn via_on(x: f64, layers: Option<(usize, usize)>) -> CopperItem {
+    CopperItem::Via {
+        at: p(x, 5.0),
+        diameter: 0.8,
+        drill: 0.4,
+        tented: [None, None],
+        mask_expansion: None,
+        layers,
+    }
+}
+
+#[test]
+fn a_blind_via_is_a_pocket_open_on_one_face() {
+    // Top to In1: a pocket from the top face down to the lower face of In1 (1.6 - 0.535).
+    let out = write(&four_layer(vec![via_on(10.0, Some((0, 1)))]), "blind").unwrap();
+    assert!(out.notes.is_empty(), "{:?}", out.notes);
+    assert_eq!(out.holes.len(), 1);
+    let (low, high) = out.holes[0].span.unwrap();
+    assert!(
+        (low - 1.065).abs() < 1e-9 && (high - 1.6).abs() < 1e-9,
+        "{low} {high}"
+    );
+    // The top face has the rim as an inner loop; the pocket adds a floor and a wall (2 faces)
+    // to the 6 faces of the box.
+    assert_eq!(out.stats.openings, 1);
+    assert_eq!(out.stats.faces, 6 + 2 + 1);
+    check_topology_blind(&out.text, 1);
+
+    // The same from the bottom (In2 to bottom): a pocket open on the bottom face, up to the
+    // upper face of In2 (1.6 - 1.0 = 0.6).
+    let out = write(&four_layer(vec![via_on(10.0, Some((3, 2)))]), "blind").unwrap();
+    let (low, high) = out.holes[0].span.unwrap();
+    assert!(
+        low.abs() < 1e-9 && (high - 0.6).abs() < 1e-9,
+        "{low} {high}"
+    );
+    assert_eq!(out.stats.openings, 0);
+    check_topology_blind(&out.text, 1);
+}
+
+#[test]
+fn a_buried_via_leaves_the_body_solid_and_keeps_its_span_for_the_plating() {
+    // In1 to In2: from the lower face of In2 (1.6 - 1.035 = 0.565) up to the upper face of In1
+    // (1.6 - 0.5 = 1.1).
+    let out = write(&four_layer(vec![via_on(10.0, Some((1, 2)))]), "buried").unwrap();
+    let (low, high) = out.holes[0].span.unwrap();
+    assert!(
+        (low - 0.565).abs() < 1e-9 && (high - 1.1).abs() < 1e-9,
+        "{low} {high}"
+    );
+    // The body is the plain box: 6 faces, no opening, no void.
+    assert_eq!(out.stats.openings, 0);
+    assert_eq!(out.stats.faces, 6);
+    assert!(!out.text.contains("BREP_WITH_VOIDS"));
+    let note = "1 buried via(s) not drilled into the board body; they lie fully inside it";
+    assert!(out
+        .notes
+        .iter()
+        .any(|n| n.severity == Severity::Info && n.message == note));
+    check_topology(&out.text);
+}
+
+#[test]
+fn a_span_over_every_layer_or_one_the_board_cannot_place_is_drilled_through() {
+    let out = write(&four_layer(vec![via_on(10.0, Some((0, 3)))]), "through").unwrap();
+    assert_eq!(out.holes[0].span, None);
+    assert_eq!(out.stats.openings, 1);
+    assert!(out.notes.is_empty(), "{:?}", out.notes);
+
+    let out = write(&four_layer(vec![via_on(10.0, Some((0, 9)))]), "unknown").unwrap();
+    assert_eq!(out.holes[0].span, None);
+    assert!(out
+        .notes
+        .iter()
+        .any(|n| n.severity == Severity::Warning && n.message.contains("cannot place")));
+    check_topology(&out.text);
+}
+
+#[test]
+fn tubes_can_cover_only_a_span() {
+    let mut t = tube(5.0, 5.0, 0.2, 0.17);
+    t.span = Some((1.0, 1.6));
+    let out = tubes(&[t], 0.0, 1.6, "plating").unwrap();
+    assert!(out.text.contains("1.6") && !out.text.contains("CARTESIAN_POINT('',(5.,5.,0.))"));
+    t.span = Some((1.0, 1.0));
+    assert!(tubes(&[t], 0.0, 1.6, "plating").is_err());
+}
+
+#[test]
+fn a_span_that_names_one_layer_twice_is_drilled_through_with_a_warning() {
+    let out = write(&four_layer(vec![via_on(10.0, Some((1, 1)))]), "same").unwrap();
+    assert_eq!(out.holes[0].span, None);
+    assert_eq!(out.stats.openings, 1);
+    assert!(out
+        .notes
+        .iter()
+        .any(|n| n.severity == Severity::Warning && n.message.starts_with("1 blind or buried")));
+}
+
+#[test]
+fn only_the_vias_actually_drilled_count_as_unplaced() {
+    // One via with an unknown span is drilled; another with one sits on the board edge (x = 0,
+    // its ring crosses the edge), is dropped, and so must not be counted.
+    let out = write(
+        &four_layer(vec![via_on(10.0, Some((0, 9))), via_on(0.0, Some((0, 9)))]),
+        "count",
+    )
+    .unwrap();
+    assert_eq!(out.holes.len(), 1);
+    assert!(out
+        .notes
+        .iter()
+        .any(|n| n.message.starts_with("1 blind or buried via(s)")));
+    assert!(out
+        .notes
+        .iter()
+        .any(|n| n.message.contains("touch or cross the board edge")));
 }

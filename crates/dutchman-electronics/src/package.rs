@@ -468,6 +468,7 @@ fn plating(board: &Board, cut: &[board_step::CutHole], thickness: f64) -> Platin
             at: hole.at,
             outer_radius: hole.radius,
             inner_radius,
+            span: hole.span,
         });
     }
     let mut notes = Vec::new();
@@ -2087,6 +2088,7 @@ mod tests {
             at: Point { x, y: 1.0 },
             radius,
             plated,
+            span: None,
         }
     }
 
