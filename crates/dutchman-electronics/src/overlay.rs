@@ -108,6 +108,8 @@ const MAX_FONT_NOTES: usize = 20;
 /// The most a board's solder mask expansion may be, in mm; a larger value is taken as a mistake and
 /// the default is used.
 const MAX_MASK_EXPANSION: f64 = 2.0;
+/// How far, in mm, an inner layer may lie outside a via's span ends and still count as in it.
+const SPAN_TOLERANCE: f64 = 1e-6;
 /// The fewest sides a whole circle is drawn with, so small vias and pads stay round.
 const MIN_CIRCLE_SIDES: f64 = 32.0;
 
@@ -620,6 +622,9 @@ struct SideFaces {
     bare: Pile,
     /// The mask openings of the bare pads: each pad grown by the mask expansion.
     opening: Pile,
+    /// The drills of vias this side leaves open (not tented): cut from this side's copper, mask
+    /// and laminate only.
+    open_drill: Pile,
     silk: Pile,
 }
 
@@ -790,13 +795,16 @@ fn overlays_within(
 ) -> (Vec<Value>, Vec<Value>) {
     let top = SideFaces::default();
     let bottom = SideFaces::default();
-    // The drills of pads cut copper, mask and silkscreen. Vias are drawn tented: most boards
-    // cover their vias with mask, so a via is a solid copper disc under its mask (a small raised
-    // dot), not a black hole, and its drill cuts only the silkscreen, which is not printed over
-    // a via. The board part and the plating keep the real hole. When the board file says
-    // whether a via is tented, that flag can replace this rule.
+    // The drills of pads cut copper, mask and silkscreen. A tented via side (the file says so, or
+    // says nothing) is a solid copper disc under its mask (a small raised dot), not a black hole,
+    // and its drill cuts only the silkscreen, which is not printed over a via. A side the file
+    // says is not tented gets a mask opening and an open drill (`open_drill`). A via reaches only
+    // the faces and inner layers its span covers. The board part and the plating keep the real
+    // hole.
     let mut holes = Pile::default();
     let mut via_holes = Pile::default();
+    // Vias drawn tented because the file does not say.
+    let mut guessed_tenting = 0usize;
     let (mut inner, mut unusable, mut other_graphics) = (0usize, 0usize, 0usize);
     let mut hole_counts = HoleCounts::default();
     let mut hole_budget = hole_budget;
@@ -841,11 +849,33 @@ fn overlays_within(
         })
         .collect();
     let mut faces = (top, bottom);
-    // Real fabs open the mask a little wider than each pad. Vias are tented: no opening.
+    // Real fabs open the mask a little wider than each pad (and than each via not tented).
+    let usable = |e: &f64| e.is_finite() && (0.0..=MAX_MASK_EXPANSION).contains(e);
     let expansion = board
         .solder_mask_expansion
-        .filter(|e| e.is_finite() && (0.0..=MAX_MASK_EXPANSION).contains(e))
+        .filter(usable)
         .unwrap_or(DEFAULT_SOLDER_MASK_EXPANSION);
+    // Whether a via with this span reaches a face: one of its end layers is that face's copper.
+    let reaches = |span: Option<(usize, usize)>, side: Side| match span {
+        None => true,
+        Some((a, b)) => [a, b].iter().any(|&i| {
+            board
+                .layers
+                .get(i)
+                .is_some_and(|l| l.side == Some(side) && l.kind == LayerKind::Copper)
+        }),
+    };
+    // Whether a via with this span has copper on an inner layer: the layer lies between its ends
+    // (every layer when the span is unknown or its ends cannot be placed).
+    let in_span = |span: Option<(usize, usize)>, inner_layer: usize| {
+        let depth = |i: usize| board.layers.get(i).and_then(|l| l.position).map(|p| p.depth);
+        match span.map(|(a, b)| (depth(a), depth(b), depth(inner_layer))) {
+            Some((Some(a), Some(b), Some(d))) => {
+                d >= a.min(b) - SPAN_TOLERANCE && d <= a.max(b) + SPAN_TOLERANCE
+            }
+            _ => true,
+        }
+    };
     let shown = board.copper.len().min(MAX_ITEMS);
     let skipped = board
         .copper
@@ -903,19 +933,45 @@ fn overlays_within(
                     at,
                     diameter,
                     drill,
-                    ..
+                    tented,
+                    mask_expansion,
+                    layers: span,
                 } => {
                     match circle(*at, diameter / 2.0) {
                         Some(ring) => {
-                            for (pile, _) in inner_piles
-                                .iter_mut()
-                                .zip(&takes_pads)
-                                .filter(|(_, takes)| **takes)
+                            for ((pile, takes), &layer) in
+                                inner_piles.iter_mut().zip(&takes_pads).zip(&inner_layers)
                             {
-                                pile.polygons.push(ring.clone());
+                                if *takes && in_span(*span, layer) {
+                                    pile.polygons.push(ring.clone());
+                                }
                             }
-                            faces.0.masked.polygons.push(ring.clone());
-                            faces.1.masked.polygons.push(ring);
+                            let open_by = mask_expansion.filter(usable).unwrap_or(expansion);
+                            let mut guessed = false;
+                            let sides = [(Side::Top, tented[0]), (Side::Bottom, tented[1])];
+                            for (side, flag) in sides {
+                                if !reaches(*span, side) {
+                                    continue;
+                                }
+                                let f = match side {
+                                    Side::Top => &mut faces.0,
+                                    Side::Bottom => &mut faces.1,
+                                };
+                                f.masked.polygons.push(ring.clone());
+                                match flag {
+                                    Some(false) => {
+                                        let open = circle(*at, diameter / 2.0 + open_by);
+                                        f.opening.add(open, &mut unusable);
+                                        let drilled = circle(*at, drill / 2.0);
+                                        f.open_drill.add(drilled, &mut unusable);
+                                    }
+                                    Some(true) => {}
+                                    None => guessed = true,
+                                }
+                            }
+                            if guessed {
+                                guessed_tenting = guessed_tenting.saturating_add(1);
+                            }
                             via_holes.add(circle(*at, drill / 2.0), &mut unusable);
                         }
                         None => unusable = unusable.saturating_add(1),
@@ -1202,7 +1258,7 @@ fn overlays_within(
     }
     // A failure inside the polygon library must not take the whole package down with it.
     let built = catch_unwind(AssertUnwindSafe(|| {
-        let drilled = holes.union();
+        let all_drilled = holes.union();
         let via_drilled = via_holes.union();
         let face = outline.map(|o| o.difference(&cutouts.union()));
         let mut built = Vec::new();
@@ -1234,6 +1290,8 @@ fn overlays_within(
             let (pads, _) = pad_look(finish_file.as_ref());
             // All copper of the face is one unit; the finish is the part of it the mask opens
             // over (the opening, not the pad, so the ring round a pad is covered too).
+            // This side's drills: the pads' and those of its open vias.
+            let drilled = all_drilled.union(&f.open_drill.union());
             let copper_all = f.masked.union().union(&f.bare.union()).difference(&drilled);
             let opening_all = f.opening.union();
             let finish = copper_all.intersection(&opening_all);
@@ -1353,7 +1411,10 @@ fn overlays_within(
                 z,
                 flat_z: z + t / 2.0,
                 thickness: Some(t),
-                shape: pile.union().difference(&drilled).difference(&via_drilled),
+                shape: pile
+                    .union()
+                    .difference(&all_drilled)
+                    .difference(&via_drilled),
                 text: pile.outlined_union(),
                 color: COPPER_COLOR.to_string(),
                 finish_look: COPPER_FINISH,
@@ -1424,6 +1485,12 @@ fn overlays_within(
             "severity": "Dropped",
             "message": "the laminate, copper, finish, silkscreen and solder mask overlays could not be drawn",
         })),
+    }
+    if guessed_tenting > 0 {
+        notes.push(json!({
+            "severity": "Info",
+            "message": format!("{guessed_tenting} via(s) drawn tented; the file doesn't say"),
+        }));
     }
     for (count, what) in [
         (
