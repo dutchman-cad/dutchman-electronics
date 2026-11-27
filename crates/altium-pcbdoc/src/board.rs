@@ -408,6 +408,8 @@ pub(crate) struct OtherRegion {
     /// The holes inside `contour` (clearances, thermal-relief gaps); empty when there are none or
     /// when they could not be read.
     pub holes: Vec<Contour>,
+    /// Altium's Keepout box is ticked (body byte 2 is 2, see `copper.rs`).
+    pub keepout: bool,
 }
 
 /// The regions of `/Regions6/Data`: board cutouts, and every other region for `copper.rs`.
@@ -493,6 +495,7 @@ pub(crate) fn regions(
             }
             match corners {
                 Ok(points) => found.others.push(OtherRegion {
+                    keepout: body.get(crate::copper::KEEPOUT_AT) == Some(&crate::copper::KEEPOUT),
                     layer: body.first().copied().unwrap_or(0),
                     kind: props.get("KIND").map(str::to_string),
                     poured: props
