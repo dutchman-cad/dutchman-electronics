@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use board_model::{
-    Board, Contour, CopperItem, Layer, LayerKind, Outline, PadShape, Point, Segment, Severity, Side,
-    StackPosition,
+    Board, Contour, CopperItem, Layer, LayerKind, Outline, PadShape, Point, Segment, Severity,
+    Side, StackPosition,
 };
 
 use super::*;

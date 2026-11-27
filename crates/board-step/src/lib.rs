@@ -638,11 +638,7 @@ struct Pocket {
     from_top: bool,
 }
 
-fn profile(
-    board: &Board,
-    thickness: f64,
-    notes: &mut Vec<Note>,
-) -> Result<Profile, StepError> {
+fn profile(board: &Board, thickness: f64, notes: &mut Vec<Note>) -> Result<Profile, StepError> {
     if board.outline.outer.segments.is_empty() {
         return Err(StepError::Outline("the board has no outline".into()));
     }
