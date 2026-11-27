@@ -67,6 +67,15 @@ pub struct Package {
     pub files: Vec<(String, Vec<u8>)>,
 }
 
+impl Package {
+    /// Adds notes (manifest notes: `{severity, message}`) to the manifest's.
+    pub fn add_notes(&mut self, more: Vec<Value>) {
+        if let Some(notes) = self.manifest.get_mut("notes").and_then(Value::as_array_mut) {
+            notes.extend(more);
+        }
+    }
+}
+
 /// A note as the manifest carries it.
 fn note(n: &Note) -> Value {
     let severity = match n.severity {
@@ -100,6 +109,8 @@ pub struct Input {
     pub bytes: Vec<u8>,
     /// (name, value), each name once in any case.
     pub parameters: Vec<(String, String)>,
+    /// Notes on how the input was opened (manifest notes), to add to the package's.
+    pub notes: Vec<Value>,
 }
 
 /// What `read` was asked to open besides the file itself.
@@ -131,14 +142,15 @@ pub fn open(path: &Path, with: &Open<'_>) -> Result<Input, String> {
             path.display()
         ));
     } else {
-        let parameters = match with.project {
-            Some(project) => project_parameters(project)?,
-            None => Vec::new(),
+        let (parameters, notes) = match with.project {
+            Some(project) => (project_parameters(project)?, Vec::new()),
+            None => parameters_next_to(path),
         };
         Input {
             path: path.to_path_buf(),
             bytes,
             parameters,
+            notes,
         }
     };
     for (name, value) in with.parameters {
@@ -169,6 +181,142 @@ fn project_parameters(project: &Path) -> Result<Vec<(String, String)>, String> {
         "{}: this build does not read Altium projects",
         project.display()
     ))
+}
+
+/// The most `.PrjPcb` files looked at in a board's folder.
+#[cfg(feature = "altium")]
+const MAX_PROJECTS_NEXT_TO_BOARD: usize = 64;
+
+/// The parameters of the project that sits in the board's own folder and links the board, for a
+/// board passed without `--project`, and the notes on that. The folder is looked at once, not
+/// below: at most [`MAX_PROJECTS_NEXT_TO_BOARD`] `.PrjPcb` files, each at most `MAX_INPUT_BYTES`
+/// long and read like any project. One project that links the board gives its parameters; several
+/// give none (a warning names them); none gives none, silently. A project that is a symbolic
+/// link leading out of the folder is not read.
+#[cfg(feature = "altium")]
+fn parameters_next_to(board: &Path) -> (Vec<(String, String)>, Vec<Value>) {
+    let is_board = board
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("pcbdoc"));
+    let (Some(file), true) = (board.file_name().and_then(|f| f.to_str()), is_board) else {
+        return (Vec::new(), Vec::new());
+    };
+    let folder = match board.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p,
+        _ => Path::new("."),
+    };
+    let Ok(real_folder) = folder.canonicalize() else {
+        return (Vec::new(), Vec::new());
+    };
+    let Ok(entries) = std::fs::read_dir(folder) else {
+        return (Vec::new(), Vec::new());
+    };
+    let mut found: Vec<PathBuf> = Vec::new();
+    let mut too_many = false;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let is_prj = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case("prjpcb"));
+        if !is_prj {
+            continue;
+        }
+        if found.len() >= MAX_PROJECTS_NEXT_TO_BOARD {
+            too_many = true;
+            break;
+        }
+        found.push(path);
+    }
+    found.sort();
+    let warn = |message: String| json!({ "severity": "Degraded", "message": message });
+    let mut notes = Vec::new();
+    if too_many {
+        notes.push(warn(format!(
+            "more than {MAX_PROJECTS_NEXT_TO_BOARD} project files (.PrjPcb) next to the board; \
+             only {MAX_PROJECTS_NEXT_TO_BOARD} were looked at. Use --project to name the project"
+        )));
+    }
+    let mut linking: Vec<(String, Vec<(String, String)>)> = Vec::new();
+    for path in &found {
+        let name = path
+            .file_name()
+            .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+        let skipped = |why: &str| {
+            warn(format!(
+                "the project {name} next to the board was not used: {why}"
+            ))
+        };
+        let inside = path
+            .canonicalize()
+            .is_ok_and(|real| real.starts_with(&real_folder));
+        if !inside {
+            notes.push(skipped(
+                "it leads out of the board's folder through a symbolic link",
+            ));
+            continue;
+        }
+        let too_big = std::fs::metadata(path)
+            .map(|m| m.len() > u64::try_from(MAX_INPUT_BYTES).unwrap_or(u64::MAX))
+            .unwrap_or(false);
+        if too_big {
+            notes.push(skipped(&format!(
+                "it is larger than {MAX_INPUT_BYTES} bytes"
+            )));
+            continue;
+        }
+        let project = match read_input(path)
+            .and_then(|bytes| altium_pcbdoc::project::read(&bytes).map_err(|e| e.to_string()))
+        {
+            Ok(project) => project,
+            Err(e) => {
+                notes.push(skipped(&e));
+                continue;
+            }
+        };
+        if project.boards.iter().any(|link| links_to(link, file)) {
+            linking.push((name, project.parameters));
+        }
+    }
+    match linking.len() {
+        0 => (Vec::new(), notes),
+        1 => {
+            let (name, parameters) = linking.remove(0);
+            notes.push(json!({
+                "severity": "Info",
+                "message": format!("parameters taken from {name} next to the board"),
+            }));
+            (parameters, notes)
+        }
+        n => {
+            let names: Vec<String> = linking.into_iter().map(|(name, _)| name).collect();
+            notes.push(warn(format!(
+                "{n} projects next to the board link it ({}); none of their parameters are \
+             used. Use --project to name the one to take them from",
+                names.join(", ")
+            )));
+            (Vec::new(), notes)
+        }
+    }
+}
+
+#[cfg(not(feature = "altium"))]
+fn parameters_next_to(_: &Path) -> (Vec<(String, String)>, Vec<Value>) {
+    (Vec::new(), Vec::new())
+}
+
+/// True when a project's link (`\` or `/`, any case, a leading `.\` allowed) names the file
+/// `file` in the project's own folder.
+#[cfg(feature = "altium")]
+fn links_to(link: &str, file: &str) -> bool {
+    if altium_pcbdoc::project::link_problem(link).is_some() {
+        return false;
+    }
+    let mut parts = link
+        .split(['\\', '/'])
+        .filter(|p| !p.is_empty() && *p != ".");
+    matches!((parts.next(), parts.next()), (Some(only), None) if only.eq_ignore_ascii_case(file))
 }
 
 /// True for an Altium project file (`.PrjPcb`, in any case), when this build reads Altium.
@@ -256,6 +404,7 @@ fn project_board(path: &Path, bytes: &[u8], choice: Option<&str>) -> Result<Inpu
         path: board_path,
         bytes,
         parameters: project.parameters,
+        notes: Vec::new(),
     })
 }
 

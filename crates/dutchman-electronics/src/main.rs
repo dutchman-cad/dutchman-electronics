@@ -282,7 +282,8 @@ fn read(args: &ReadArgs) -> ExitCode {
         parameters: &args.parameters,
     };
     let built = package::open(path, &with).and_then(|input| {
-        package::build_accepting(
+        let opened = input.notes.clone();
+        let mut built = package::build_accepting(
             &input.path,
             &input.bytes,
             &input.parameters,
@@ -290,7 +291,9 @@ fn read(args: &ReadArgs) -> ExitCode {
             args.copper,
             args.bodies,
             args.accept,
-        )
+        )?;
+        built.add_notes(opened);
+        Ok(built)
     });
     let written = built.and_then(|p| package::write(std::path::Path::new(out), &p).map(|()| p));
     match (written, json) {

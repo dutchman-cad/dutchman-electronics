@@ -117,7 +117,10 @@ component or layer the text belongs to; they are shown with their value, as Alti
 reads its board and uses the project's parameters; `--board` picks the board when a project holds several, by its
 name or, when two share a name, by the link the project lists (`a\Main.PcbDoc`). Only boards inside the project's
 folder are read, also when a symbolic link would lead elsewhere. A `.PcbDoc` on its own can take a project's
-parameters with `--project file.PrjPcb`, and `--param NAME=VALUE` gives one by hand, winning over the project's. A
+parameters with `--project file.PrjPcb`; without it we look in the board's own folder (not below it, at most 64
+`.PrjPcb` files, each up to the size limit) for projects that link the board: exactly one gives its parameters (an Info
+note names it), several give none (a warning names them and suggests `--project`), none changes nothing. A text whose
+parameter is not found stays as written, as Altium shows it. `--param NAME=VALUE` gives one by hand, winning over the project's. A
 parameter value may be up to 64 KiB long.
 
 New here? Read [CONTRIBUTING.md](CONTRIBUTING.md). Working with an AI? Point it at [AGENTS.md](AGENTS.md) first.
