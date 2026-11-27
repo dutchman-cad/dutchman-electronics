@@ -2200,19 +2200,24 @@ mod tests {
             assert!(degraded, "{board}: {}", m["notes"]);
             overlay_bounds(&o)
         };
-        // "TEST" at (10, 10): runs right from x 10. The T's bar starts one font unit (0.095)
-        // into its cell, less the pen's radius: x 9.995.
+        // The Default stroke font keeps Altium's character advance, so a text's width follows
+        // Altium's bounding rectangle (README.txt: one-text x 9.800 to 17.531, one-rotated-text
+        // y 14.800 to 20.532, one-bottom-text x 34.468 to 40.200). Altium's rectangle reaches a
+        // pen width beyond the strokes and its letters are narrower than Hershey's, so ours may
+        // differ by a few tenths of a millimeter; the old proportional spacing was 0.5 off.
+        let wide = |a: f64, b: f64| (a - b).abs() < 0.4;
+        // "TEST" at (10, 10): runs right from x 10.
         let (x0, y0, x1, y1) = silk("one-text", "Silkscreen top");
         assert!(near(y0, 9.9) && near(y1, 12.1), "{y0} {y1}");
-        assert!(near(x0, 9.995) && x1 > 14.0 && x1 < 18.0, "{x0} {x1}");
+        assert!(wide(x0, 10.0) && wide(x1, 17.531), "{x0} {x1}");
         // "ROT" at (25, 15), turned 90 degrees: runs up from y 15, capitals left of x 25.
         let (x0, y0, x1, y1) = silk("one-rotated-text", "Silkscreen top");
         assert!(near(x0, 22.9) && near(x1, 25.1), "{x0} {x1}");
-        assert!(y0 > 15.0 && y1 > 18.0, "{y0} {y1}");
+        assert!(y0 > 15.0 && wide(y1, 20.532), "{y0} {y1}");
         // "BOT" at (40, 10), mirrored on the bottom: runs left from x 40.
         let (x0, y0, x1, y1) = silk("one-bottom-text", "Silkscreen bottom");
         assert!(near(y0, 9.9) && near(y1, 12.1), "{y0} {y1}");
-        assert!(x1 < 40.0 && x0 < 37.0, "{x0} {x1}");
+        assert!(x1 < 40.0 && wide(x0, 34.468), "{x0} {x1}");
     }
 
     #[cfg(feature = "altium")]

@@ -1442,7 +1442,7 @@ fn overlays_within(
         notes.push(json!({
             "severity": "Degraded",
             "message": format!(
-                "{} text(s) are drawn in Hershey stroke fonts at their height and pen width, not \
+                "{} text(s) are drawn in the Hershey stroke fonts at their height and pen width, not \
                  in the board's own fonts, so letter shapes differ a little (and, except in the \
                  Default stroke font, so does the spacing)",
                 texts.drawn

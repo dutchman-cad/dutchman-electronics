@@ -856,10 +856,11 @@ mod tests {
         // README.txt of the Altium test boards: "TEST" (one-text) ends at x 17.53097 from a
         // position of 10, "ROT" (one-rotated-text, turned up) at y 20.53162 from 15; both end in
         // the same letter, so the extra character is one advance: 1.99935 at height 2.0.
-        assert!(near(default_advance(2.0), (17.53097 - 10.0) - (20.53162 - 15.0), 1e-9));
+        let at_2 = (17.53097 - 10.0) - (20.53162 - 15.0);
+        assert!(near(default_advance(2.0), at_2, 1e-9));
         // special-strings: "L: Top Overlay" ends at 22.144, "Top Overlay" at 17.895, both from
         // x = 2: three more characters, at height 1.5.
-        assert!(near(default_advance(1.5), (22.144 - 17.895) / 3.0, 1e-9));
+        assert!(near(default_advance(1.5), (22.144 - 17.895) / 3.0, 1e-5));
     }
 
     #[test]

@@ -153,6 +153,7 @@ fn grown(r: Rect, by: f64) -> Rect {
 /// The areas of `shape` thinned at `tolerance`, and how many areas under [`MIN_AREA`] were left
 /// out; each area that would turn invalid, or would touch or overlap another area, keeps its
 /// original outline.
+#[cfg(test)]
 pub fn thin(shape: &MultiPolygon, tolerance: f64) -> (MultiPolygon, usize) {
     thin_keeping(shape, tolerance, &MultiPolygon::new(Vec::new()))
 }
