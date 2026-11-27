@@ -1079,6 +1079,27 @@ stays. With no closing quote ("Rev '.BoardRevision") Altium drops the reference 
 opening quote. Unquoted, a reference followed by more text ("Rev .BoardRevision end") is replaced
 too here, although ".PCBNumber rev" on param-board stays as typed.
 
+Quoted component strings (quoted-component-strings, issue 146)
+--------------------------------------------------------------
+Made on 2026-11-27 from a file copy of one-resistor.PcbDoc (R1 at 25, 15, comment "10k") by my
+own script, with no project open; each text read back with the string Altium shows. Stroke font
+(Default), height 1.000, stroke 0.120, rotation 0. "Owner" R1: the text was added to R1.
+    Stored text                  Owner Layer           At       Mir. Altium shows
+    '.Designator'                R1    Top Overlay     28, 27   no   R1
+    R: '.Designator'             R1    Top Overlay     28, 24.8 no   R: R1
+    '.Comment' ohm               R1    Top Overlay     28, 22.6 no   10k ohm
+    '.Designator' '.Comment'     R1    Top Overlay     28, 20.4 no   R1 10k
+    '.designator'                R1    Top Overlay     28, 18.2 no   R1
+    L: '.Layer_Name'             R1    Top Overlay     30, 11   no   L: Top Overlay
+    B: '.Designator'             R1    Bottom Overlay  48, 7    yes  B: R1
+    '.Designator'                -     Top Overlay     2, 27    no   '.Designator'
+    '.Comment'                   -     Top Overlay     2, 24.8  no   '.Comment'
+    R: '.Designator' x           -     Top Overlay     2, 22.6  no   R: '.Designator' x
+    '.Layer_Name' x              -     Bottom Overlay  48, 3    yes  Bottom Overlay x
+So the component's special strings resolve inside quotes as the project parameters do, on either
+side; on a free text '.Designator' and '.Comment' stay as typed, quotes included.
+
+
 Paths inside the files
 ----------------------
 Altium writes a few paths from the PC that saved a board into the file. After the last save, I
