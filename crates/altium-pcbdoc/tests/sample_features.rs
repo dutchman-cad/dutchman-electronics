@@ -3,7 +3,7 @@
 //! origin and a solid 3D mask. Numbers to 0.001 mm, as AGENTS.md asks.
 
 use altium_pcbdoc::Altium;
-use board_model::{CopperItem, InputFormat, ReadOutcome, Segment, Severity};
+use board_model::{CopperItem, InputFormat, ModelSource, ReadOutcome, Segment, Severity};
 
 const TOLERANCE: f64 = 0.001;
 
@@ -125,5 +125,66 @@ fn a_solid_3d_mask_reads_opacity_one() -> Result<(), Box<dyn std::error::Error>>
         assert_eq!((m.r, m.g, m.b), (36, 120, 50));
         assert!((m.opacity - 1.0).abs() < 1e-9, "{m:?}");
     }
+    Ok(())
+}
+
+/// body-cylinder: R1's body as an upright cylinder, radius 0.5, height 1, standoff 0, its axis
+/// at R1's center. Read as an extruded whole circle in R1's own frame, in R1's gray.
+#[test]
+fn a_cylinder_body_is_an_extruded_circle() -> Result<(), Box<dyn std::error::Error>> {
+    let out = read("body-cylinder.PcbDoc")?;
+    let r1 = out.board.components.first().ok_or("no R1")?;
+    let m = r1.model.as_ref().ok_or("R1 has no model")?;
+    let ModelSource::Extruded {
+        outline,
+        standoff,
+        height,
+    } = &m.source
+    else {
+        return Err(format!("{m:?}").into());
+    };
+    let [Segment::Arc {
+        center,
+        radius,
+        start_deg,
+        end_deg,
+        ..
+    }] = outline.segments.as_slice()
+    else {
+        return Err(format!("{outline:?}").into());
+    };
+    assert!(
+        center.x.abs() <= TOLERANCE && center.y.abs() <= TOLERANCE,
+        "{center:?}"
+    );
+    assert!((radius - 0.5).abs() <= TOLERANCE, "{radius}");
+    assert_eq!(start_deg, end_deg, "a whole circle");
+    assert!(standoff.abs() <= TOLERANCE && (height - 1.0).abs() <= TOLERANCE);
+    assert_eq!((m.offset, m.rotation_deg), ([0.0; 3], [0.0; 3]));
+    let c = m.color.ok_or("no color")?;
+    assert_eq!((c.r, c.g, c.b, c.opacity), (128, 128, 128, 1.0));
+    assert!(
+        out.notes.iter().all(|n| !n.message.contains("3D bod")),
+        "{:?}",
+        out.notes
+    );
+    Ok(())
+}
+
+/// body-sphere: the board model has no sphere, so R1's body is left out with a note.
+#[test]
+fn a_sphere_body_is_left_out_with_a_note() -> Result<(), Box<dyn std::error::Error>> {
+    let out = read("body-sphere.PcbDoc")?;
+    let r1 = out.board.components.first().ok_or("no R1")?;
+    assert!(r1.model.is_none(), "{:?}", r1.model);
+    assert!(
+        out.notes.iter().any(|n| {
+            n.severity == Severity::Dropped
+            && n.message
+                == "1 component 3D bod(ies) not read: a sphere has no place in the board model yet"
+        }),
+        "{:?}",
+        out.notes
+    );
     Ok(())
 }
