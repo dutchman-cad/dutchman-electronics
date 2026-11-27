@@ -133,12 +133,7 @@ struct Reader {
 /// bare words (`(tenting front back)`, or `(tenting none)`); KiCad 10 writes
 /// `(tenting (front yes) (back no))`.
 fn tenting_sides(n: &Node) -> [bool; 2] {
-    let side = |name: &str| {
-        n.has_flag(name)
-            || n.child(name)
-                .is_some_and(|c| matches!(c.str_at(0), Some("yes" | "true")))
-    };
-    [side("front"), side("back")]
+    [n.is_yes("front"), n.is_yes("back")]
 }
 
 /// What a drawn shape is, in Y-up board coordinates.
@@ -649,13 +644,18 @@ impl Reader {
             let found: Vec<usize> = ends
                 .iter()
                 .filter_map(|e| e.text().and_then(|name| self.layer_index(name)))
+                .filter(|&i| {
+                    self.layers
+                        .get(i)
+                        .is_some_and(|l| l.kind == LayerKind::Copper && l.name != ALL_COPPER)
+                })
                 .collect();
             match (ends.len(), found.as_slice()) {
-                (2, [a, b]) => layers = Some(((*a).min(*b), (*a).max(*b))),
+                (2, [a, b]) if a != b => layers = Some(((*a).min(*b), (*a).max(*b))),
                 _ => self.tally.add(
                     Severity::Warning,
-                    "blind or micro via(s) with layers the board does not list were read as \
-                     through vias",
+                    "blind or micro via(s) whose layers are not two different copper layers of \
+                     the board were read as through vias",
                 ),
             }
         }

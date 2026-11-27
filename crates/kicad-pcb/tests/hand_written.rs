@@ -378,3 +378,56 @@ fn a_fill_with_arcs_is_kept_whole_with_a_note() {
         n.severity == Severity::Warning && n.message.contains("kept as the one contour")
     }));
 }
+
+fn via_layers(span: &str) -> board_model::ReadOutcome {
+    read(&format!(
+        "{HEAD}(via blind (at 1 2) (size 0.8) (drill 0.4) (layers {span}) (net 0))\n)"
+    ))
+    .unwrap()
+}
+
+#[test]
+fn a_blind_via_needs_two_different_copper_layers_or_it_reads_as_through() {
+    let warning = "blind or micro via(s) whose layers are not two different copper layers of the \
+                   board were read as through vias";
+    for span in [
+        "\"F.Cu\" \"F.Cu\"",
+        "\"F.Cu\" \"Dwgs.User\"",
+        "\"F.Cu\" \"In9.Cu\"",
+        "\"F.Cu\"",
+    ] {
+        let o = via_layers(span);
+        let layers = o.board.copper.iter().find_map(|c| match c {
+            board_model::CopperItem::Via { layers, .. } => Some(*layers),
+            _ => None,
+        });
+        assert_eq!(layers, Some(None), "{span}");
+        assert!(
+            o.notes
+                .iter()
+                .any(|n| n.severity == Severity::Warning && n.message.contains(warning)),
+            "{span}: {:?}",
+            o.notes
+        );
+    }
+    // Two different copper layers are a span (here the only two layers, so it is read as one
+    // whatever the board does with it).
+    let o = via_layers("\"F.Cu\" \"B.Cu\"");
+    assert!(o.board.copper.iter().any(|c| matches!(
+        c,
+        board_model::CopperItem::Via { layers: Some(_), .. }
+    )));
+}
+
+#[test]
+fn an_empty_tenting_side_reads_as_covered() {
+    // `(front)` with no value is read as `(front yes)`, as elsewhere in the reader.
+    let o = read(&format!(
+        "{HEAD}(via (at 1 2) (size 0.8) (drill 0.4) (layers \"F.Cu\" \"B.Cu\") (tenting (front) (back no)) (net 0))\n)"
+    ))
+    .unwrap();
+    assert!(o.board.copper.iter().any(|c| matches!(
+        c,
+        board_model::CopperItem::Via { tented: [Some(true), Some(false)], .. }
+    )));
+}

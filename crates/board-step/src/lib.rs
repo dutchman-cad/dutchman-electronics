@@ -493,6 +493,8 @@ struct Drill {
     plated: bool,
     /// The heights the hole covers when it is blind or buried; `None` runs through.
     span: Option<(f64, f64)>,
+    /// A via with a layer span the board cannot place: drilled through instead.
+    unplaced: bool,
 }
 
 /// The heights `(low, high)` a via's layer span covers, when it stops short of a face of the board.
@@ -506,6 +508,9 @@ fn via_span(
     let (Some(a), Some(b)) = (board.layers.get(layers.0), board.layers.get(layers.1)) else {
         return Err(());
     };
+    if layers.0 == layers.1 {
+        return Err(());
+    }
     let (Some(pa), Some(pb)) = (a.position, b.position) else {
         return Err(());
     };
@@ -539,9 +544,9 @@ fn via_span(
 fn drills(board: &Board, thickness: f64, notes: &mut Vec<Note>) -> Result<Vec<Drill>, StepError> {
     let mut out = Vec::new();
     let mut unusable = 0usize;
-    let mut unplaced = 0usize;
     for item in &board.copper {
         let mut span = None;
+        let mut unplaced = false;
         let found = match *item {
             CopperItem::Via {
                 at, drill, layers, ..
@@ -549,7 +554,7 @@ fn drills(board: &Board, thickness: f64, notes: &mut Vec<Note>) -> Result<Vec<Dr
                 if let Some(l) = layers {
                     match via_span(board, l, thickness) {
                         Ok(s) => span = s,
-                        Err(()) => unplaced = unplaced.saturating_add(1),
+                        Err(()) => unplaced = true,
                     }
                 }
                 Some((at, drill, true))
@@ -583,15 +588,7 @@ fn drills(board: &Board, thickness: f64, notes: &mut Vec<Note>) -> Result<Vec<Dr
             radius: diameter / 2.0,
             plated,
             span,
-        });
-    }
-    if unplaced > 0 {
-        notes.push(Note {
-            severity: Severity::Warning,
-            message: format!(
-                "{unplaced} blind or buried via(s) have layers the board cannot place in its \
-                 stack; they are drilled through the whole board"
-            ),
+            unplaced,
         });
     }
     if unusable > 0 {
@@ -734,6 +731,16 @@ fn profile(board: &Board, thickness: f64, notes: &mut Vec<Note>) -> Result<Profi
                 message: format!("{count} drilled hole(s) {why} and were not cut"),
             });
         }
+    }
+    let unplaced = kept.iter().filter(|h| h.unplaced).count();
+    if unplaced > 0 {
+        notes.push(Note {
+            severity: Severity::Warning,
+            message: format!(
+                "{unplaced} blind or buried via(s) have layers the board cannot place in its \
+                 stack; they are drilled through the whole board"
+            ),
+        });
     }
     let mut cut = Vec::new();
     let mut pockets = Vec::new();

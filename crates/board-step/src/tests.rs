@@ -949,3 +949,34 @@ fn tubes_can_cover_only_a_span() {
     t.span = Some((1.0, 1.0));
     assert!(tubes(&[t], 0.0, 1.6, "plating").is_err());
 }
+
+#[test]
+fn a_span_that_names_one_layer_twice_is_drilled_through_with_a_warning() {
+    let out = write(&four_layer(vec![via_on(10.0, Some((1, 1)))]), "same").unwrap();
+    assert_eq!(out.holes[0].span, None);
+    assert_eq!(out.stats.openings, 1);
+    assert!(out
+        .notes
+        .iter()
+        .any(|n| n.severity == Severity::Warning && n.message.starts_with("1 blind or buried")));
+}
+
+#[test]
+fn only_the_vias_actually_drilled_count_as_unplaced() {
+    // One via with an unknown span is drilled; another with one sits on the board edge (x = 0,
+    // its ring crosses the edge), is dropped, and so must not be counted.
+    let out = write(
+        &four_layer(vec![via_on(10.0, Some((0, 9))), via_on(0.0, Some((0, 9)))]),
+        "count",
+    )
+    .unwrap();
+    assert_eq!(out.holes.len(), 1);
+    assert!(out
+        .notes
+        .iter()
+        .any(|n| n.message.starts_with("1 blind or buried via(s)")));
+    assert!(out
+        .notes
+        .iter()
+        .any(|n| n.message.contains("touch or cross the board edge")));
+}
