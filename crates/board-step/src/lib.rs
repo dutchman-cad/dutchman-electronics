@@ -684,11 +684,11 @@ fn same_kind(a: Drill, b: Drill) -> bool {
     a.plated == b.plated && same_span
 }
 
-/// True when `outer` holds `inner` wholly (up to [`TOUCH_BAND`]); of two equal circles, the first.
+/// True when `outer` holds `inner` wholly (up to 0.001 mm); of two equal circles, the first.
 fn contains(outer: (usize, Drill), inner: (usize, Drill)) -> bool {
     let (i, o) = outer;
     let (j, n) = inner;
-    distance(o.at, n.at) + n.radius <= o.radius + TOUCH_BAND
+    distance(o.at, n.at) + n.radius <= o.radius + 1e-3
         && (o.radius > n.radius + TOLERANCE || i < j)
 }
 

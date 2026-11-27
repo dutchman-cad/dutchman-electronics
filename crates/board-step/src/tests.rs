@@ -1527,3 +1527,19 @@ fn merged_group_limit_includes_64_but_excludes_65() {
         }
     }
 }
+
+#[test]
+fn holes_half_a_micrometer_apart_share_one_round_opening() {
+    let b = board(
+        rect(0.0, 0.0, 50.0, 30.0),
+        vec![],
+        vec![plated_hole(25.0, 15.0, 1.0), plated_hole(25.0005, 15.0, 1.0)],
+    );
+    let out = write(&b, "near-duplicate").unwrap();
+    assert!(out.merged.is_empty());
+    assert_eq!(out.holes.len(), 1);
+    assert_eq!(out.holes[0].also, 1);
+    assert_eq!(out.plated_holes_cut(), 2);
+    assert_eq!(out.notes[0].severity, Severity::Info);
+    check_topology(&out.text);
+}
