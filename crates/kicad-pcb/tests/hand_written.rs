@@ -415,7 +415,10 @@ fn a_blind_via_needs_two_different_copper_layers_or_it_reads_as_through() {
     let o = via_layers("\"F.Cu\" \"B.Cu\"");
     assert!(o.board.copper.iter().any(|c| matches!(
         c,
-        board_model::CopperItem::Via { layers: Some(_), .. }
+        board_model::CopperItem::Via {
+            layers: Some(_),
+            ..
+        }
     )));
 }
 
@@ -428,6 +431,9 @@ fn an_empty_tenting_side_reads_as_covered() {
     .unwrap();
     assert!(o.board.copper.iter().any(|c| matches!(
         c,
-        board_model::CopperItem::Via { tented: [Some(true), Some(false)], .. }
+        board_model::CopperItem::Via {
+            tented: [Some(true), Some(false)],
+            ..
+        }
     )));
 }
