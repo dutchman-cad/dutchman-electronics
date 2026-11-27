@@ -1,5 +1,5 @@
 Original test board made for Dutchman Electronics. Released under CC0 1.0 (public domain): https://creativecommons.org/publicdomain/zero/1.0/
-Exception: the TrueType font files embedded in one-dejavu-text, one-dejavu-bold-text, one-dejavu-italic-text and all-features are not CC0; they keep the DejaVu / Bitstream Vera license (LICENSE-DejaVu.txt). Everything else in those four boards is CC0.
+Exception: the TrueType font files embedded in one-dejavu-text, one-dejavu-bold-text, one-dejavu-italic-text, all-features and text-kinds are not CC0; they keep the DejaVu / Bitstream Vera license (LICENSE-DejaVu.txt). Everything else in those five boards is CC0.
 
 (The first line covers every board in this folder: empty-outline, outline-with-hole, one-track,
 one-resistor, one-via, one-plated-pad, one-rotated-pad, one-oval-pad, one-bottom-track,
@@ -1372,11 +1372,12 @@ mech-layer-kinds.PcbDoc  (from one-resistor)
 Saving embedded Arial in keepouts (no text uses it); it was removed as before (see "Paths inside
 the files").
 
-Feature gaps, second batch (teardrops, plane-polygon-connect)
--------------------------------------------------------------
+Feature gaps, second batch (teardrops, plane-polygon-connect, text-kinds)
+--------------------------------------------------------------------------
 Made on 2026-11-27, one feature per board, by my own scripts and by hand where noted; every
 object was read back and logged, and each board was saved and closed. Saving embedded Arial in
-each (no text uses it); it was removed as before (see "Paths inside the files").
+each (no text uses it); it was removed as before (see "Paths inside the files"); text-kinds keeps
+only its DejaVu Sans Mono file, byte for byte the one of one-dejavu-text.
 
 teardrops.PcbDoc  (from empty-outline)
     By my own script, net SIG and on it, all on Top Layer unless noted:
@@ -1424,6 +1425,33 @@ plane-polygon-connect.PcbDoc  (from four-layer-planes)
     of the board rule (four air gaps), around D only the drill (the pour runs into the pad), and
     around N a round clearance 2.120 across with no spoke; on Layer 1 (GND plane) the same three
     kinds as Altium draws them (relief, direct, isolated).
+
+text-kinds.PcbDoc  (from empty-outline)
+    By my own script, twelve texts on Top Overlay, TrueType DejaVu Sans Mono (not bold, not
+    italic), height 1.000, rotation 0, no component; then by hand in each text's Properties
+    panel (String or Frame, Font Type, Justification, Inverted, Border Mode):
+        text    at (script)   setting by hand
+        INV     (3, 25)       String, Inverted, Border Mode Margin, Margin Border 0.5mm
+        OFS     (18, 25)      String, Inverted, Border Mode Offset, Text Offset 0.3mm
+        PLAIN   (33, 25)      none: a plain TrueType string for comparison
+        LT CT RT  y 17        Frame 10mm x 4mm; horizontal left / centre / right; vertical top
+        LM CM RM  y 10.5      the same, vertical middle
+        LB CB RB  y 4         the same, vertical bottom (Altium's default)
+    with x 3, 18 and 33 for the left, centre and right column (the frame's lower-left corner).
+    Altium offers Inverted only for TrueType (and barcode) texts, not for the stroke font, so
+    there is no inverted stroke text. The same three horizontal and three vertical justification
+    buttons are offered for a plain string too. Read back after the hand edits (TextKind 1, the
+    TrueType kind, on all twelve; location and box as Altium reports them):
+        INV     at (3, 25), box (2.5, 24.5) to (4.942, 26.126): the text plus the 0.5 margin
+        OFS     at (18, 25), box (17.7, 24.688) to (19.445, 25.637)
+        PLAIN   at (33, 25), box (33, 25) to (35.444, 25.626)
+        frames  location = the frame's lower-left corner, box = the frame, 10.000 x 4.000:
+                LT (3, 17), CT (18, 16.988), RT (33, 17), LM (3, 10.5), CM (18, 10.488),
+                RM (33, 10.5), LB (3, 4), CB (18, 3.988), RB (33, 4)
+    (The script placed the centre column at y 4, 10.5 and 17 like the others; Altium reports it
+    0.012 lower, from the moment the texts were made.) While a frame is
+    selected, Altium's panel shows the point its justification refers to (x 23 for the centre
+    column, 43 for the right one).
 
 Paths inside the files
 ----------------------

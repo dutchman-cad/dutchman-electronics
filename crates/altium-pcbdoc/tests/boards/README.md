@@ -3,7 +3,7 @@
 Each board here is an original test board released under CC0. Each has a README.txt that starts with the declaration in
 CONTRIBUTING.md; a test refuses a board without it.
 
-One exception: the `one-dejavu-*` boards and `all-features` embed the font files of DejaVu Sans Mono, as Altium does with every TrueType
+One exception: the `one-dejavu-*` boards, `all-features` and `text-kinds` embed the font files of DejaVu Sans Mono, as Altium does with every TrueType
 font a board uses. Those font files keep their own license (Bitstream Vera, with the DejaVu changes in the public
 domain), which allows passing them on with their notices. LICENSE-DejaVu.txt holds the license; README.txt names
 the boards in its second line and has the details. Everything else in those boards is CC0.
