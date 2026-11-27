@@ -555,26 +555,30 @@ impl Reader {
         let i = exact.or_else(|| self.embedded.iter().position(|e| e.answers_to(face)))?;
         let e = self.embedded.get(i)?;
         if exact.is_none() {
+            let face_name = if e.font.style.is_empty() {
+                "embedded".to_string()
+            } else {
+                format!("embedded {}", e.font.style)
+            };
             self.tally.add(
                 Severity::Warning,
                 format!(
-                    "text(s) set in the font \"{face}\" in a style the board does not embed were drawn in the embedded {} face",
-                    e.font.style
+                    "text(s) set in the font \"{face}\" in a style the board does not embed were drawn in the {face_name} face"
                 ),
             );
         }
+        // The font is named by its own family, not by the spelling the text used, so a font that
+        // texts call by several names is handed over once.
         let tf = TextFont::TrueType {
-            name: face.to_string(),
+            name: e.font.family.clone(),
             bold: e.font.bold,
             italic: e.font.italic,
         };
-        if !self.fonts_used.iter().any(|f| f.serves(&tf)) {
-            let mut font = e.font.clone();
-            font.family = face.to_string();
-            self.fonts_used.push(font);
-        }
-        if let Some(flag) = self.fonts_unused.get_mut(i) {
-            *flag = false;
+        if self.fonts_unused.get(i).copied().unwrap_or(false) {
+            self.fonts_used.push(e.font.clone());
+            if let Some(flag) = self.fonts_unused.get_mut(i) {
+                *flag = false;
+            }
         }
         Some(tf)
     }

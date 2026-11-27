@@ -1324,3 +1324,27 @@ fn embedded_fonts_are_handed_over_with_their_texts() {
         o.notes
     );
 }
+
+/// A font that texts call by two spellings (and its bold face by its full name) is handed over once.
+#[test]
+fn one_font_under_two_names_is_handed_over_once() {
+    let path = format!(
+        "{}/tests/boards/embedded-font.kicad_pcb",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let mut text = std::fs::read_to_string(path).unwrap();
+    let end = text.rfind(')').unwrap();
+    text.insert_str(
+        end,
+        "(gr_text \"Alias\" (at 110 110 0) (layer \"F.SilkS\") \
+         (effects (font (face \"dejavu SANS mono\") (size 2 2))))\n\
+         (gr_text \"Full\" (at 110 120 0) (layer \"F.SilkS\") \
+         (effects (font (face \"DejaVu Sans Mono Bold\") (size 2 2) (bold yes))))\n",
+    );
+    let o = KiCad.read(text.as_bytes()).unwrap();
+    assert_eq!(o.board.texts.len(), 4, "{:?}", o.notes);
+    assert_eq!(o.fonts.len(), 2, "{:?}", o.notes);
+    for t in &o.board.texts {
+        assert!(o.font(&t.font).is_some(), "{}", t.content);
+    }
+}
