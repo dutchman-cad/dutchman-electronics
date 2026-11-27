@@ -161,9 +161,15 @@ mod tests {
         assert_eq!(v["formats"][0]["id"], "altium_pcbdoc");
         assert_eq!(v["formats"][0]["extension"], "pcbdoc");
         assert_eq!(v["formats"][0]["name"], "Altium PCB document (.PcbDoc)");
-        assert_eq!(v["formats"][2]["id"], "altium_prjpcb");
-        assert_eq!(v["formats"][2]["extension"], "prjpcb");
-        assert_eq!(v["formats"][2]["name"], "Altium PCB project (.PrjPcb)");
+        assert_eq!(v["formats"][2]["id"], "tscircuit_circuit_json");
+        assert_eq!(v["formats"][2]["extension"], "circuit.json");
+        assert_eq!(
+            v["formats"][2]["name"],
+            "tscircuit Circuit JSON (.circuit.json)"
+        );
+        assert_eq!(v["formats"][3]["id"], "altium_prjpcb");
+        assert_eq!(v["formats"][3]["extension"], "prjpcb");
+        assert_eq!(v["formats"][3]["name"], "Altium PCB project (.PrjPcb)");
     }
 
     #[cfg(feature = "altium")]
