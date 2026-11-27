@@ -777,11 +777,18 @@ fn merge_overlapping(kept: Vec<Drill>, notes: &mut Vec<Note>) -> Vec<Cut> {
             let total = group.len();
             // Holes wholly inside another add nothing to the outline.
             let indexed: Vec<(usize, Drill)> = group.iter().copied().enumerate().collect();
-            let (rest, inner): (Vec<_>, Vec<_>) = indexed
-                .iter()
-                .partition(|j| !indexed.iter().any(|o| o.0 != j.0 && contains(*o, **j)));
-            let rest: Vec<Drill> = rest.into_iter().map(|(_, h)| *h).collect();
-            let also = inner.len();
+            let mut rest: Vec<Drill> = Vec::new();
+            let mut also = 0usize;
+            for &candidate in &indexed {
+                if indexed
+                    .iter()
+                    .any(|&other| other.0 != candidate.0 && contains(other, candidate))
+                {
+                    also = also.saturating_add(1);
+                } else {
+                    rest.push(candidate.1);
+                }
+            }
             let circles: Vec<(Point, f64)> = rest.iter().map(|h| (h.at, h.radius)).collect();
             if let [hole] = rest.as_slice() {
                 merged_holes = merged_holes.saturating_add(total);
