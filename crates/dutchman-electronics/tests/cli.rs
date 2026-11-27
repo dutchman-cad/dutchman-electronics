@@ -1325,3 +1325,45 @@ fn read_draws_hatched_and_outline_pours_as_altium_pours_them(
     );
     Ok(())
 }
+
+/// teardrops: the seven teardrops join their pads, vias and tracks into one area of top copper,
+/// from pad "1" (round 1.600 at (10, 15)) to the track's end at (40, 22) and its round cap.
+#[cfg(feature = "altium")]
+#[test]
+fn read_unites_teardrops_with_their_copper() -> Result<(), Box<dyn std::error::Error>> {
+    let out = std::env::temp_dir().join(format!("de-teardrops-{}", std::process::id()));
+    let board = test_board("teardrops.PcbDoc");
+    let result = run(&[
+        "read",
+        &board.to_string_lossy(),
+        "--out",
+        &out.to_string_lossy(),
+        "--json",
+    ]);
+    std::fs::remove_dir_all(&out).ok();
+    let (ok, v) = result?;
+    assert!(ok, "{v}");
+    let copper = v["overlays"]
+        .as_array()
+        .and_then(|o| o.iter().find(|o| o["name"] == "Copper top"))
+        .ok_or("no top copper")?;
+    let areas = copper["areas"].as_array().ok_or("no areas")?;
+    assert_eq!(areas.len(), 1, "one united area");
+    let outer: Vec<(f64, f64)> = areas[0]["outer"]
+        .as_array()
+        .ok_or("no outer ring")?
+        .iter()
+        .filter_map(|p| Some((p[0].as_f64()?, p[1].as_f64()?)))
+        .collect();
+    let lo = |f: fn(&(f64, f64)) -> f64| outer.iter().map(f).fold(f64::MAX, f64::min);
+    let hi = |f: fn(&(f64, f64)) -> f64| outer.iter().map(f).fold(f64::MIN, f64::max);
+    let b = [lo(|p| p.0), hi(|p| p.0), lo(|p| p.1), hi(|p| p.1)];
+    // x from the pad's left edge 9.2 to the track's right edge 40.127 (the via ring 40.3), y from
+    // the pad's bottom 14.2 to the cap at 22.127.
+    let want = [9.2, 40.3, 14.2, 22.127];
+    assert!(
+        b.iter().zip(want).all(|(g, w)| (g - w).abs() < 0.001),
+        "{b:?}"
+    );
+    Ok(())
+}

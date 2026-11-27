@@ -193,3 +193,94 @@ fn notes_for_mechanical_layers_name_their_kind() -> Result<(), Box<dyn std::erro
     );
     Ok(())
 }
+
+/// The box of a contour's line ends and arc ends, as (x0, x1, y0, y1).
+fn contour_box(contour: &board_model::Contour) -> (f64, f64, f64, f64) {
+    let mut b = (f64::MAX, f64::MIN, f64::MAX, f64::MIN);
+    let mut add = |x: f64, y: f64| {
+        b = (b.0.min(x), b.1.max(x), b.2.min(y), b.3.max(y));
+    };
+    for s in &contour.segments {
+        match s {
+            board_model::Segment::Line { from, to } => {
+                add(from.x, from.y);
+                add(to.x, to.y);
+            }
+            board_model::Segment::Arc {
+                center,
+                radius,
+                start_deg,
+                end_deg,
+                ..
+            } => {
+                for a in [start_deg, end_deg] {
+                    let (sin, cos) = a.to_radians().sin_cos();
+                    add(center.x + radius * cos, center.y + radius * sin);
+                }
+            }
+        }
+    }
+    b
+}
+
+/// teardrops: Altium's seven teardrops are ordinary copper regions on Top Layer (byte 1 of their
+/// records is 0x1C, not 0x0C; nothing else differs), so they are read as copper, each with the
+/// box Altium reports, and raise no note.
+#[test]
+fn teardrops_are_copper_regions() -> Result<(), Box<dyn std::error::Error>> {
+    let out = read("teardrops.PcbDoc")?;
+    let mut boxes: Vec<(f64, f64, f64, f64)> = out
+        .board
+        .copper
+        .iter()
+        .filter_map(|c| match c {
+            CopperItem::Region {
+                layer,
+                contour,
+                holes,
+            } => {
+                let top = out.board.layers.get(*layer).map(|l| l.name.as_str());
+                assert_eq!(top, Some("Top Layer"));
+                assert!(holes.is_empty());
+                Some(contour_box(contour))
+            }
+            _ => None,
+        })
+        .collect();
+    boxes.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.2.total_cmp(&b.2)));
+    let want = [
+        (10.571, 11.270, 14.440, 15.560),
+        (19.548, 19.786, 14.790, 15.210),
+        (20.214, 20.452, 14.790, 15.210),
+        (28.999, 29.253, 14.746, 15.254),
+        (30.747, 31.001, 14.746, 15.254),
+        (39.548, 39.786, 14.790, 15.210),
+        (39.790, 40.210, 15.214, 15.452),
+    ];
+    assert_eq!(boxes.len(), want.len(), "{boxes:?}");
+    for (b, w) in boxes.iter().zip(want) {
+        let got = [b.0, b.1, b.2, b.3];
+        let expected = [w.0, w.1, w.2, w.3];
+        assert!(
+            got.iter()
+                .zip(expected)
+                .all(|(g, e)| (g - e).abs() <= TOLERANCE),
+            "{got:?}, want {expected:?}"
+        );
+    }
+    let tracks = out
+        .board
+        .copper
+        .iter()
+        .filter(|c| matches!(c, CopperItem::Track { .. }))
+        .count();
+    assert_eq!(tracks, 4);
+    assert!(
+        out.notes
+            .iter()
+            .all(|n| !n.message.contains("region") && n.severity != Severity::Dropped),
+        "{:?}",
+        out.notes
+    );
+    Ok(())
+}
