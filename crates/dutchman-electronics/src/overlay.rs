@@ -1020,9 +1020,10 @@ fn overlays_within(
                     mask_expansion,
                     ..
                 } => {
-                    for (k, open) in opened.iter_mut().enumerate() {
-                        let by = side_expansion(mask_expansion[k]);
-                        *open = match tented[k] {
+                    let sides = opened.iter_mut().zip(tented).zip(mask_expansion);
+                    for ((open, side_tented), side_by) in sides {
+                        let by = side_expansion(*side_by);
+                        *open = match side_tented {
                             Some(true) => None,
                             _ => {
                                 if by < 0.0 {
@@ -1052,15 +1053,16 @@ fn overlays_within(
                     mask_expansion,
                     ..
                 } => {
-                    for (k, open) in opened.iter_mut().enumerate() {
-                        let by = side_expansion(mask_expansion[k]);
+                    let sides = opened.iter_mut().zip(tented).zip(mask_expansion);
+                    for ((open, side_tented), side_by) in sides {
+                        let by = side_expansion(*side_by);
                         // The opening is the pad grown by `by` on every side (shrunk when it is
                         // negative), but never smaller than the drill, and never below zero
                         // size: a pad shrunk away has no opening.
                         let hole = drill.unwrap_or(0.0).max(0.0);
                         let w = (*size_x + 2.0 * by).max(hole);
                         let h = (*size_y + 2.0 * by).max(hole);
-                        *open = if tented[k] == Some(true) || w <= 0.0 || h <= 0.0 {
+                        *open = if *side_tented == Some(true) || w <= 0.0 || h <= 0.0 {
                             None
                         } else {
                             // A rounded corner's radius grows by `by` too (not in proportion to
