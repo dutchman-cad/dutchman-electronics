@@ -1543,13 +1543,11 @@ mod tests {
         let mut embedded = part("U1", 0.0, 0.0, 0.0, Side::Top);
         let mut external = part("U2", 0.0, 0.0, 0.0, Side::Top);
         let mut flat = part("U3", 0.0, 0.0, 0.0, Side::Top);
-        if let (Some(e), Some(x), Some(f)) =
-            (
-                embedded.models.first_mut(),
-                external.models.first_mut(),
-                flat.models.first_mut(),
-            )
-        {
+        if let (Some(e), Some(x), Some(f)) = (
+            embedded.models.first_mut(),
+            external.models.first_mut(),
+            flat.models.first_mut(),
+        ) {
             e.source = ModelSource::Embedded { id: "{M}".into() };
             x.source = ModelSource::External {
                 file: "soic8.step".into(),
@@ -3143,8 +3141,15 @@ mod tests {
             ..Board::default()
         };
         let recognizer = Recognizer::new(&board);
-        let all =
-            |bodies| components_with(&board.components, &[], 1.6, &[], Some((&recognizer, bodies)));
+        let all = |bodies| {
+            components_with(
+                &board.components,
+                &[],
+                1.6,
+                &[],
+                Some((&recognizer, bodies)),
+            )
+        };
 
         // `file`: R1 and C1 get a body; R2 keeps its extruded one; U1 is dropped as before.
         let placed = all(Bodies::File);

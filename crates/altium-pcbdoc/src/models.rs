@@ -325,9 +325,8 @@ fn unpack_within(
         }
     }
     for p in placements.iter_mut() {
-        p.models.retain(
-            |m| !matches!(&m.source, ModelSource::Embedded { id } if failed.contains(id)),
-        );
+        p.models
+            .retain(|m| !matches!(&m.source, ModelSource::Embedded { id } if failed.contains(id)));
     }
     models
 }
