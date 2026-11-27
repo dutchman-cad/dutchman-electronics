@@ -1270,10 +1270,10 @@ body-arc-outline.PcbDoc  (from one-resistor)
 Saving embedded Arial in each of them (none of their texts uses it); it was removed as before
 (see "Paths inside the files").
 
-Feature gaps, first batch (pad-hole-shapes, keepouts)
------------------------------------------------------
-Made on 2026-11-27, each from a file copy of empty-outline, one feature per board, by my own
-scripts; every object was read back and logged, and each board was saved once and closed. These
+Feature gaps, first batch (pad-hole-shapes, keepouts, pour-modes, mech-layer-kinds)
+-----------------------------------------------------------------------------------
+Made on 2026-11-27, each from a file copy of empty-outline (mech-layer-kinds: of one-resistor),
+one feature per board, by my own scripts and by hand where noted; every object was read back and logged, and each board was saved once and closed. These
 are features Altium offers that no board here had before. "Units" below are the file's own
 1/10000 mil (1 mm = 393700.787 units).
 
@@ -1313,6 +1313,61 @@ keepouts.PcbDoc
     at byte 46 (0 on the plain track); the flagged region's text part has
     KEEPOUTRESTRICTIONS=31, which no other region has. So a keepout on Top Layer looks like
     copper unless byte 2 is read: it is not copper on the made board.
+
+pour-modes.PcbDoc
+    One net, GND, and four polygon pours on Top Layer with that net, "remove dead copper" off,
+    each the same 10.000 x 10.000 square, side by side at y 10 to 20:
+        x         fill mode (Altium's Polygon Properties)   track width   grid
+        2 to 12   Solid                                       (0.2032)      (0.508)
+        14 to 24  Hatched, 90 degrees                         0.300         1.000
+        26 to 36  Hatched, 45 degrees                         0.300         1.000
+        38 to 48  None (outline only)                         0.300         1.000
+    (the solid pour keeps Altium's defaults, 8 and 20 mil, which a solid pour does not use).
+    Then by hand Tools > Polygon Pours > Repour All, and the board saved.
+    /Polygons6/Data holds one record per pour, in the order None, 45, 90, Solid, with
+    HATCHSTYLE=None, 45Degree, 90Degree and Solid, TRACKWIDTH=11.811mil and GRIDSIZE=39.3701mil
+    on the three that are not solid, NET=0 (GND) and POURINDEX=3, 2, 1 and 0. What Altium poured:
+        Solid     one region on Top Layer, KIND 0, SUBPOLYINDEX=0
+        90        24 tracks, width 0.300
+        45        34 tracks, width 0.300
+        None      4 tracks, width 0.300, along the outline
+    Bytes 5..7 of each of these tracks hold the index of its pour's record in /Polygons6/Data (2
+    for the 90 degree pour, 1 for 45 degrees, 0 for None).
+    A first try, whose script gave each pour four points and no closing point, left a track from
+    the board origin (0, 0) to each hatched pour's outline; it was thrown away (Altium's pour
+    outline wants its first point repeated after the last).
+
+mech-layer-kinds.PcbDoc  (from one-resistor)
+    By hand, in the View Configuration panel: Component Layer Pairs > right-click > Add
+    Component Layer Pair, four times, each with a Layer Type from Altium's list. one-resistor
+    already had Mechanical 2/3 as its 3D Body pair (LAYER58MECHKIND=3DBodyTop,
+    LAYER59MECHKIND=3DBodyBottom, MECHPAIR0L1=MECHANICAL2, MECHPAIR0L2=MECHANICAL3).
+        pair     layer type          names Altium gave them
+        4 / 5    Courtyard           Top Courtyard / Bottom Courtyard
+        6 / 7    Assembly            Top Assembly / Bottom Assembly
+        8 / 9    Component Outline   Top Component Outline / Bottom Component Outline
+        10 / 11  Designator          Top Designator / Bottom Designator
+    Altium's list also offered Coating, Component Center, Dimensions, Glue Points, Gold Plating,
+    Value, Die and Wire Bonding. Then by my own script, each part of R1 unless noted:
+        Top Courtyard           rectangle (23.2, 14.0) to (26.8, 16.0), four tracks, width 0.050
+        Top Assembly            rectangle (24.2, 14.6) to (25.8, 15.4), four tracks, width 0.100
+        Top Component Outline   rectangle (23.6, 14.4) to (26.4, 15.6), four tracks, width 0.100
+        Bottom Courtyard        one free track (20, 10) to (30, 10), width 0.050
+        Top Designator          text ".Designator" (shows R1), stroke font, at (24.6, 14.75),
+                                height 0.500, stroke 0.080
+    Making the Designator pair, Altium put a second ".Designator" text of R1 on Top Designator
+    by itself: at (23.984, 14.238), height 1.524, stroke 0.254, rotation 0, box (23.730,
+    13.984) to (26.270, 16.016), centred on R1 (both are stored as ".Designator" in
+    /WideStrings6/Data).
+    What the file stores, in /Board6/Data, for each layer of a pair: LAYERnNAME (the name above),
+    LAYERnMECHENABLED=TRUE and LAYERnMECHKIND, with n = 60 to 67 for Mechanical 4 to 11:
+        CourtyardTop, CourtyardBottom, AssemblyTop, AssemblyBottom, ComponentOutlineTop,
+        ComponentOutlineBottom, DesignatorTop, DesignatorBottom
+    The same again in LAYER_V8_14 to LAYER_V8_21 and V9_CACHE_LAYER72 to 79 (with
+    USEDBYPRIMS=TRUE on the layers that have objects), and the pairs in MECHPAIR1L1=MECHANICAL4,
+    MECHPAIR1L2=MECHANICAL5, and so on to MECHPAIR4L1=MECHANICAL10, MECHPAIR4L2=MECHANICAL11. The
+    objects themselves are the usual track and text records with layer bytes 60, 61, 62, 64 and
+    66.
 
 Saving embedded Arial in keepouts (no text uses it); it was removed as before (see "Paths inside
 the files").
