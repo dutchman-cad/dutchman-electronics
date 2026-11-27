@@ -194,11 +194,12 @@ fn the_mask_is_the_outline_less_cutouts_openings_and_drills() {
     assert_eq!(on_laminate["kind"], "mask");
     assert_eq!(on_copper["kind"], "mask");
     // The coat is 0.010 thick. Over bare laminate it starts on the laminate's top, T + 0.005 =
-    // 1.605; over the tented via's copper on the copper's top, T + 0.035 = 1.635.
+    // 1.605. Over the tented via's copper its top is 0.010 above the copper's top (T + 0.045) and
+    // it stands from the laminate's top round the copper, so 0.045 - 0.005 = 0.040 thick.
     assert_eq!(on_laminate["z"], 1.605);
-    assert_eq!(on_copper["z"], 1.635);
+    assert_eq!(on_copper["z"], 1.605);
     assert_eq!(on_laminate["thickness"], 0.01);
-    assert_eq!(on_copper["thickness"], 0.01);
+    assert_eq!(on_copper["thickness"], 0.04);
     // The board file gives no mask opacity, so the default, the same on both parts.
     assert_eq!(on_laminate["opacity"], 0.75);
     assert_eq!(on_copper["opacity"], 0.75);
@@ -207,11 +208,11 @@ fn the_mask_is_the_outline_less_cutouts_openings_and_drills() {
     // Bottom mask over laminate: z = 0 - 0.005 = -0.005; the via's copper reaches that face too,
     // under a coat from -0.035.
     assert_eq!(named(&list, "Solder mask bottom")["z"], -0.005);
-    assert_eq!(named(&list, "Solder mask bottom over copper")["z"], -0.035);
-    // A tented via's cap covers its drill, so the part over copper is the whole 1 mm disc,
-    // pi * 0.5^2 = 0.785 mm2 (drawn as a polygon, so a little less). The two parts together are
-    // the whole mask, no area twice.
-    let ring = PI * 0.25;
+    assert_eq!(named(&list, "Solder mask bottom over copper")["z"], -0.005);
+    // A tented via's cap covers its drill, so the part over copper is the whole 1 mm disc and the
+    // 0.010 skirt of coat round it: pi * 0.51^2 = 0.817 mm2 (drawn as a polygon, so a little
+    // less). The two parts together are the whole mask, no area twice.
+    let ring = PI * 0.51 * 0.51;
     assert!((area(on_copper) - ring).abs() < 0.02, "{}", area(on_copper));
     assert!((area(top) - 194.56).abs() < 1e-3, "{}", area(top));
     assert!(
@@ -219,7 +220,8 @@ fn the_mask_is_the_outline_less_cutouts_openings_and_drills() {
         "no area counted twice"
     );
     assert!((area(bottom) - 196.0).abs() < 1e-3, "{}", area(bottom));
-    // Three holes in the mask over laminate: the cutout, the pad's opening and the via's disc.
+    // Three holes in the mask over laminate: the cutout, the pad's opening and the via's disc with
+    // its skirt.
     assert_eq!(
         on_laminate["areas"][0]["holes"].as_array().unwrap().len(),
         3
@@ -1250,7 +1252,8 @@ fn faces_of(o: &Value) -> usize {
 fn each_overlay_has_its_z_thickness_and_color() {
     // T = 1.6: laminate and copper start at the face; the finish on top of the copper
     // (T + 0.035). The mask is a coat 0.010 thick: over bare laminate from its top (T + 0.005),
-    // over copper from the copper's top (T + 0.035). The silkscreen (0.015 thick) lies on the
+    // over copper (and a 0.010 skirt round it) from the laminate's top up to 0.010 above the
+    // copper's top (0.040 thick). The silkscreen (0.015 thick) lies on the
     // coat: from T + 0.015 over laminate, from T + 0.045 over copper.
     let (list, notes) = overlays(&stacked_board(0, 3), 1.6, "Board");
     assert!(notes.is_empty(), "{notes:?}");
@@ -1262,7 +1265,7 @@ fn each_overlay_has_its_z_thickness_and_color() {
         ("Copper top", 1.6, 0.035, "#b87333"),
         ("Finish top", 1.635, 0.004, "#d4af37"),
         ("Solder mask top", 1.605, 0.01, "#1f5f3a"),
-        ("Solder mask top over copper", 1.635, 0.01, "#1f5f3a"),
+        ("Solder mask top over copper", 1.605, 0.04, "#1f5f3a"),
         ("Silkscreen top", 1.615, 0.015, "#f2f2f2"),
     ] {
         let o = named(&list, name);
@@ -1412,7 +1415,7 @@ fn the_bottom_side_mirrors_the_top() {
         ("Copper bottom", 0.0),
         ("Finish bottom", -0.035),
         ("Solder mask bottom", -0.005),
-        ("Solder mask bottom over copper", -0.035),
+        ("Solder mask bottom over copper", -0.005),
         ("Silkscreen bottom", -0.015),
     ] {
         let o = named(&bottom, name);

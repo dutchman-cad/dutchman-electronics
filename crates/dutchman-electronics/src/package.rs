@@ -1914,7 +1914,7 @@ mod tests {
                     "copper" => (0.0, 0.035),
                     // The mask coat lies on the laminate's top or the copper's top; the
                     // silkscreen on top of the coat under it.
-                    "mask" if name.ends_with(" over copper") => (0.035, 0.010),
+                    "mask" if name.ends_with(" over copper") => (0.005, 0.040),
                     "mask" => (0.005, 0.010),
                     _ if name.ends_with(" over copper") => (0.045, 0.015),
                     _ => (0.015, 0.015),

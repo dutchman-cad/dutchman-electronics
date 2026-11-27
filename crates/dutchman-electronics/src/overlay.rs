@@ -30,6 +30,7 @@ use board_model::{
     Board, Contour, CopperItem, EmbeddedFont, Graphic, LayerKind, PadShape, Point, Segment, Side,
     TextFont, DEFAULT_SOLDER_MASK_EXPANSION,
 };
+use geo::buffer::Buffer;
 use geo::orient::{Direction, Orient};
 use geo::{BooleanOps, Coord, LineString, MultiPolygon, Polygon};
 use serde_json::{json, Value};
@@ -62,21 +63,27 @@ pub const FINISH_THICKNESS: f64 = 0.004;
 /// How thick the solder mask coat is, in mm (10 um). The mask is conformal, as on a real board:
 /// the coat lies on whatever is under it, so it is this thick everywhere and copper shows through
 /// it as relief even when it is opaque. Over bare laminate it rises from the laminate's top
-/// ([`LAMINATE_THICKNESS`]; the face without a laminate overlay), over copper from the copper's top
-/// ([`COPPER_THICKNESS`]). It leaves the 0.035 step at a copper edge open, so a see-through coat
-/// shows the copper's own side faces there.
+/// ([`LAMINATE_THICKNESS`]; the face without a laminate overlay) up [`MASK_COAT`]. Over copper its
+/// top is [`MASK_COAT`] above the copper's top ([`COPPER_THICKNESS`]), and it drapes the copper's
+/// edge: the part over copper reaches [`MASK_COAT`] past the copper's outline (a wall of that
+/// thickness, which also keeps the bare copper wall from showing as a thin line) and stands from
+/// the laminate's top, so the copper lies inside it.
 pub const MASK_COAT: f64 = 0.010;
+/// How thick the mask over copper is, in mm: from the laminate's top to [`MASK_COAT`] above the
+/// copper's top.
+pub const MASK_OVER_COPPER_THICKNESS: f64 = COPPER_THICKNESS + MASK_COAT - LAMINATE_THICKNESS;
 /// How thick silkscreen ink is, in mm (15 um).
 pub const SILK_THICKNESS: f64 = 0.015;
 /// How far the mask over bare laminate starts off the board face, in mm.
 pub const MASK_LIFT_LAMINATE: f64 = LAMINATE_THICKNESS;
-/// How far the mask over copper starts off the board face, in mm.
-pub const MASK_LIFT_COPPER: f64 = COPPER_THICKNESS;
+/// How far the mask over copper starts off the board face, in mm: on the laminate's top, round
+/// the copper.
+pub const MASK_LIFT_COPPER: f64 = LAMINATE_THICKNESS;
 /// How far silkscreen over bare laminate starts off the board face, in mm: on top of the mask coat
 /// there.
 pub const SILK_LIFT_LAMINATE: f64 = MASK_LIFT_LAMINATE + MASK_COAT;
 /// How far silkscreen over copper starts off the board face, in mm: on top of the mask coat there.
-pub const SILK_LIFT_COPPER: f64 = MASK_LIFT_COPPER + MASK_COAT;
+pub const SILK_LIFT_COPPER: f64 = COPPER_THICKNESS + MASK_COAT;
 /// How far a flat laminate sheet (no `thickness`, see [`MAX_SOLID_FACES`]) is drawn off the
 /// board face, in mm, away from the board, so it does not share the face's plane. The flat
 /// sheets stack in the order of the solids: laminate, copper, finish, mask, silkscreen.
@@ -1382,8 +1389,10 @@ fn overlays_within(
                 .difference(&f.via_drill.union())
                 .difference(&opening_all);
             // It lies on the mask coat, so over copper it sits higher than over bare laminate.
-            let silk_over_copper = silk.intersection(&copper_all);
-            let silk_over_laminate = silk.difference(&copper_all);
+            // "Over copper" means over the copper and the skirt of coat round it.
+            let skirt = copper_all.buffer(MASK_COAT);
+            let silk_over_copper = silk.intersection(&skirt);
+            let silk_over_laminate = silk.difference(&skirt);
             let plain = |name: String,
                          kind,
                          finish,
@@ -1412,8 +1421,8 @@ fn overlays_within(
             let mask = face
                 .as_ref()
                 .map(|face| face.difference(&drilled.union(&opening_all)));
-            let mask_over_copper = mask.as_ref().map(|m| m.intersection(&copper_all));
-            let mask_over_laminate = mask.as_ref().map(|m| m.difference(&copper_all));
+            let mask_over_copper = mask.as_ref().map(|m| m.intersection(&skirt));
+            let mask_over_laminate = mask.as_ref().map(|m| m.difference(&skirt));
             if let Some(face) = &face {
                 built.push(plain(
                     format!("Laminate {side}"),
@@ -1477,15 +1486,17 @@ fn overlays_within(
                     )
                 });
             }
-            for (name, lift, shape) in [
+            for (name, lift, height, shape) in [
                 (
                     format!("Solder mask {side}"),
                     MASK_LIFT_LAMINATE,
+                    MASK_COAT,
                     mask_over_laminate,
                 ),
                 (
                     format!("Solder mask {side} over copper"),
                     MASK_LIFT_COPPER,
+                    MASK_OVER_COPPER_THICKNESS,
                     mask_over_copper,
                 ),
             ] {
@@ -1498,7 +1509,7 @@ fn overlays_within(
                             None,
                             lift,
                             FLAT_MASK_LIFT,
-                            MASK_COAT,
+                            height,
                             shape,
                             (mask_color.clone(), MASK_FINISH),
                         )
