@@ -427,6 +427,11 @@ impl Reader {
                         at,
                         diameter,
                         drill,
+                        // Circuit JSON says nothing of tenting or a mask opening for a via,
+                        // and its vias run through the board.
+                        tented: [None, None],
+                        mask_expansion: None,
+                        layers: None,
                     }),
                     _ => self.bad(kind),
                 },
@@ -957,6 +962,9 @@ fn traces(e: &Value, layer_of: &dyn Fn(Option<&str>) -> Option<usize>) -> Option
                     at,
                     diameter: length(p, "via_diameter").unwrap_or(0.6),
                     drill: length(p, "hole_diameter").unwrap_or(0.3),
+                    tented: [None, None],
+                    mask_expansion: None,
+                    layers: None,
                 });
                 previous = None;
             }

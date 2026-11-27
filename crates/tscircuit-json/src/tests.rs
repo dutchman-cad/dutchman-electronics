@@ -103,6 +103,7 @@ fn a_trace_a_via_and_pads() {
                 at,
                 diameter,
                 drill,
+                ..
             } => Some((*at, *diameter, *drill)),
             _ => None,
         })
