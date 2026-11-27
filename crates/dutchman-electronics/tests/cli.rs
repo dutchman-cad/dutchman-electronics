@@ -382,8 +382,8 @@ fn read_opens_a_projects_board_with_its_parameters() -> Result<(), Box<dyn std::
 #[cfg(feature = "altium")]
 #[test]
 fn a_project_with_one_board_needs_no_board_option() -> Result<(), Box<dyn std::error::Error>> {
-    // all-features.PrjPcb links only all-features.PcbDoc; its two parameter texts and U1's
-    // .Comment get their values.
+    // all-features.PrjPcb links only all-features.PcbDoc; its four parameter texts (two of
+    // them quoted), U1's .Comment and R7's '.Designator' get their values.
     let out = std::env::temp_dir().join(format!("de-read-prj1-{}", std::process::id()));
     let result = run(&[
         "read",
@@ -404,7 +404,7 @@ fn a_project_with_one_board_needs_no_board_option() -> Result<(), Box<dyn std::e
         .collect();
     assert!(
         notes.contains(
-            &"3 text(s) refer to a project parameter or to .Designator, .Comment or .Layer_Name \
+            &"6 text(s) refer to a project parameter or to .Designator, .Comment or .Layer_Name \
               and show its value, as Altium does"
         ),
         "{notes:?}"
@@ -991,7 +991,7 @@ fn a_board_alone_takes_the_parameters_of_the_project_beside_it(
     assert!(
         notes
             .iter()
-            .any(|m| m.starts_with("3 text(s) refer to a project parameter")),
+            .any(|m| m.starts_with("6 text(s) refer to a project parameter")),
         "{notes:?}"
     );
     assert!(!alone_files.is_empty());
