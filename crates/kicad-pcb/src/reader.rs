@@ -7,8 +7,9 @@
 use std::collections::{BTreeMap, HashMap};
 
 use board_model::{
-    Board, Contour, CopperItem, EmbeddedFont, Graphic, Layer, LayerKind, ModelRef, ModelSource, Note, PadShape,
-    Placement, Point, ReadOutcome, Segment, Severity, Side, StackPosition, Text, TextFont,
+    Board, Contour, CopperItem, EmbeddedFont, Graphic, Layer, LayerKind, ModelRef, ModelSource,
+    Note, PadShape, Placement, Point, ReadOutcome, Segment, Severity, Side, StackPosition, Text,
+    TextFont,
 };
 
 use crate::geom::{arc_through, circle_segment, place, pts_contour, split_fill, Frame};
@@ -483,7 +484,8 @@ impl Reader {
         };
         if let Some(face) = font.and_then(|f| f.child("face")).and_then(|f| f.str_at(0)) {
             if face != "KiCad Font" {
-                let (bold, italic) = font.map_or((false, false), |f| (f.is_yes("bold"), f.is_yes("italic")));
+                let (bold, italic) =
+                    font.map_or((false, false), |f| (f.is_yes("bold"), f.is_yes("italic")));
                 match self.embedded_font(face, bold, italic) {
                     Some(tf) => text_font = tf,
                     None => self.tally.add(
@@ -968,7 +970,12 @@ impl Reader {
                     .and_then(local)
                     .zip(prim.child("end").and_then(local))
                     .map(|(a, b)| {
-                        padshape::polygon(&[a, Point { x: b.x, y: a.y }, b, Point { x: a.x, y: b.y }])
+                        padshape::polygon(&[
+                            a,
+                            Point { x: b.x, y: a.y },
+                            b,
+                            Point { x: a.x, y: b.y },
+                        ])
                     }),
                 Some("gr_circle") => {
                     let c = prim.child("center").and_then(local);
@@ -1530,7 +1537,10 @@ pub fn read(mut root: Node) -> ReadOutcome {
         if *unused {
             r.tally.add(
                 Severity::Info,
-                format!("embedded font(s) ({}) that no text uses were not handed over", e.file_name),
+                format!(
+                    "embedded font(s) ({}) that no text uses were not handed over",
+                    e.file_name
+                ),
             );
         }
     }

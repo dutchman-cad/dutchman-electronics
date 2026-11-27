@@ -102,11 +102,9 @@ fn unpack(data: &str, limit: usize) -> Result<Vec<u8>, String> {
     }
     let packed = base64(data).ok_or("the data is not base64")?;
     check_frame(&packed, limit)?;
-    let mut decoder = ruzstd::decoding::StreamingDecoder::new_with_max_window_size(
-        packed.as_slice(),
-        MAX_WINDOW,
-    )
-    .map_err(|e| format!("not zstd data ({e})"))?;
+    let mut decoder =
+        ruzstd::decoding::StreamingDecoder::new_with_max_window_size(packed.as_slice(), MAX_WINDOW)
+            .map_err(|e| format!("not zstd data ({e})"))?;
     let mut out = Vec::new();
     let cap = limit as u64;
     let n = decoder
@@ -115,7 +113,9 @@ fn unpack(data: &str, limit: usize) -> Result<Vec<u8>, String> {
         .read_to_end(&mut out)
         .map_err(|e| format!("damaged zstd data ({e})"))?;
     if n > limit {
-        return Err(format!("it unpacks to more than the {limit} bytes left for fonts"));
+        return Err(format!(
+            "it unpacks to more than the {limit} bytes left for fonts"
+        ));
     }
     Ok(out)
 }
@@ -147,7 +147,9 @@ fn check_frame(packed: &[u8], limit: usize) -> Result<(), String> {
             v += 256;
         }
         if v > limit as u64 {
-            return Err(format!("it declares {v} bytes, more than the {limit} left for fonts"));
+            return Err(format!(
+                "it declares {v} bytes, more than the {limit} left for fonts"
+            ));
         }
     }
     Ok(())
@@ -264,7 +266,9 @@ fn describe(file_name: &str, bytes: Vec<u8>) -> Result<Embedded, String> {
     let style = name_of(names, 17)
         .or_else(|| name_of(names, 2))
         .unwrap_or_default();
-    let mac = table(&bytes, start, b"head").and_then(|h| u16_at(h, 44)).unwrap_or(0);
+    let mac = table(&bytes, start, b"head")
+        .and_then(|h| u16_at(h, 44))
+        .unwrap_or(0);
     let (bold, italic) = (mac & 1 != 0, mac & 2 != 0);
     let mut answers = vec![family.clone()];
     answers.extend(family1);
@@ -303,7 +307,9 @@ mod tests {
         assert!(unpack("KLUv/Q==", 100).is_err());
         // A frame declaring 4 GB of content (single segment, 4-byte size field).
         let frame = [0x28, 0xB5, 0x2F, 0xFD, 0xA0, 0xFF, 0xFF, 0xFF, 0xFF];
-        assert!(check_frame(&frame, 1 << 20).unwrap_err().contains("declares"));
+        assert!(check_frame(&frame, 1 << 20)
+            .unwrap_err()
+            .contains("declares"));
         assert!(describe("x.ttf", vec![0; 3]).is_err());
         assert!(describe("x.ttf", vec![0, 1, 0, 0, 0xFF, 0xFF, 0, 0, 0, 0, 0, 0]).is_err());
     }

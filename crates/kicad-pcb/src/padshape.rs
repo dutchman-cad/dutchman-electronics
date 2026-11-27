@@ -339,9 +339,17 @@ fn arc_band(center: Point, radius: f64, a0: f64, a1: f64, width: f64) -> Contour
         clockwise: false,
     };
     let pieces = [
-        (on(radius + h, a0), Some(ring(radius + h, a0, a1, false)), on(radius + h, a1)),
+        (
+            on(radius + h, a0),
+            Some(ring(radius + h, a0, a1, false)),
+            on(radius + h, a1),
+        ),
         (on(radius + h, a1), Some(cap(a1, a1)), on(inner, a1)),
-        (on(inner, a1), (inner > 1e-9).then(|| ring(inner, a1, a0, true)), on(inner, a0)),
+        (
+            on(inner, a1),
+            (inner > 1e-9).then(|| ring(inner, a1, a0, true)),
+            on(inner, a0),
+        ),
         (on(inner, a0), Some(cap(a0, a0 + 180.0)), on(radius + h, a0)),
     ];
     join(&pieces)
@@ -359,7 +367,9 @@ pub fn stroke(c: &Contour, width: f64) -> Vec<Contour> {
                 start_deg,
                 end_deg,
                 clockwise,
-            } => out.extend(arc_stroke(center, radius, start_deg, end_deg, clockwise, width)),
+            } => out.extend(arc_stroke(
+                center, radius, start_deg, end_deg, clockwise, width,
+            )),
         }
     }
     out

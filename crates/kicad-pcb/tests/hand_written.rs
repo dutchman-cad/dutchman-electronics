@@ -300,10 +300,7 @@ fn an_arc_in_a_custom_pad_polygon_stays_an_arc() {
          (width 0) (fill yes)))))\n)"
     );
     let o = read(&text).unwrap();
-    assert!(!o
-        .notes
-        .iter()
-        .any(|n| n.message.contains("straight edges")));
+    assert!(!o.notes.iter().any(|n| n.message.contains("straight edges")));
     let shapes = o
         .board
         .copper

@@ -1182,8 +1182,9 @@ fn dist_to_contours(p: Point, shapes: &[board_model::Contour]) -> f64 {
                     if along <= sweep.abs() {
                         ((p.x - center.x).hypot(p.y - center.y) - radius).abs()
                     } else {
-                        dist_to_segment(p, end(start_deg), end(start_deg))
-                            .min((p.x - end(start_deg + sweep).x).hypot(p.y - end(start_deg + sweep).y))
+                        dist_to_segment(p, end(start_deg), end(start_deg)).min(
+                            (p.x - end(start_deg + sweep).x).hypot(p.y - end(start_deg + sweep).y),
+                        )
                     }
                 }
             };
@@ -1262,7 +1263,9 @@ fn the_d_pad_keeps_its_arc() {
         .copper
         .iter()
         .find_map(|c| match c {
-            CopperItem::PolygonPad { at, shapes, .. } if near(at.x, 106.0) && near(at.y, -108.0) => {
+            CopperItem::PolygonPad { at, shapes, .. }
+                if near(at.x, 106.0) && near(at.y, -108.0) =>
+            {
                 Some(shapes)
             }
             _ => None,
@@ -1302,11 +1305,17 @@ fn embedded_fonts_are_handed_over_with_their_texts() {
                 italic: false
             }
         );
-        let f = o.font(&t.font).unwrap_or_else(|| panic!("no font for {content}"));
+        let f = o
+            .font(&t.font)
+            .unwrap_or_else(|| panic!("no font for {content}"));
         assert_eq!(f.family, "DejaVu Sans Mono");
         assert_eq!(f.style, style);
         assert_eq!(f.data.len(), size);
         assert_eq!(f.data[..4], [0, 1, 0, 0]);
     }
-    assert!(o.notes.iter().all(|n| n.severity == Severity::Info), "{:?}", o.notes);
+    assert!(
+        o.notes.iter().all(|n| n.severity == Severity::Info),
+        "{:?}",
+        o.notes
+    );
 }
