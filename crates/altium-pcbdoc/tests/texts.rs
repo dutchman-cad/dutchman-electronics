@@ -319,3 +319,51 @@ fn ink_box(file: &[u8], content: &str, x: f64, y: f64, height: f64) -> Option<[f
         y + ink[3] * scale,
     ])
 }
+
+/// tests/boards/README.txt, "Empty texts": A and B on Top Overlay, C on Bottom Overlay and D on
+/// Mechanical 1, each beside a text with no characters. The board reads; the empty texts are left
+/// out, and D gets the usual note for a text on a mechanical layer.
+#[test]
+fn empty_texts_are_left_out_and_the_board_still_reads() -> Result<(), Box<dyn std::error::Error>> {
+    let out = read("empty-texts.PcbDoc")?;
+    let mut found: Vec<(String, String, f64, f64)> = out
+        .board
+        .texts
+        .iter()
+        .map(|t| {
+            let layer = out
+                .board
+                .layers
+                .get(t.layer)
+                .map(|l| l.name.clone())
+                .unwrap_or_default();
+            (t.content.clone(), layer, t.at.x, t.at.y)
+        })
+        .collect();
+    found.sort_by(|a, b| a.0.cmp(&b.0));
+    let expected = [
+        ("A", "Top Overlay", 5.0, 25.0),
+        ("B", "Top Overlay", 5.0, 15.0),
+        ("C", "Bottom Overlay", 25.0, 15.0),
+    ];
+    assert_eq!(found.len(), expected.len(), "{found:?}");
+    for ((content, layer, x, y), (c, l, ex, ey)) in found.iter().zip(expected) {
+        assert_eq!((content.as_str(), layer.as_str()), (c, l), "{found:?}");
+        assert!(near(*x, ex) && near(*y, ey), "{found:?}");
+    }
+    assert!(
+        out.notes.iter().any(|n| n.severity == Severity::Dropped
+            && n.message
+                == "1 text(s) on Mechanical 1 (not a copper or overlay layer) not read yet"),
+        "{:?}",
+        out.notes
+    );
+    assert!(
+        out.notes
+            .iter()
+            .all(|n| !n.message.contains("could not be read")),
+        "{:?}",
+        out.notes
+    );
+    Ok(())
+}

@@ -29,7 +29,8 @@
 //! removed, see its README.txt).
 //!
 //! The content is the UTF-16 entry in `/WideStrings6/Data` that bytes 115..119 point to, or the
-//! 8-bit copy in the block after the body. A component's designator text is shown only when its
+//! 8-bit copy in the block after the body. A text with no characters (`empty-texts`) shows
+//! nothing in Altium and is left out without a note. A component's designator text is shown only when its
 //! component has `NAMEON=TRUE`, its comment text only with `COMMENTON=TRUE` (`one-resistor`
 //! shows "R1" and hides "10k").
 
@@ -131,7 +132,8 @@ pub(crate) fn read(
                 comments.push((p, c.clone()));
             }
         }
-        if !visible(body, components) {
+        // An empty text shows nothing (`empty-texts`), so it is left out, wherever it lies.
+        if !visible(body, components) || content.as_deref() == Some("") {
             continue;
         }
         let Some(&layer_number) = body.first() else {
