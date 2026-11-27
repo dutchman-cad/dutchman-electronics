@@ -1,0 +1,43 @@
+name: Fuzz
+# Coverage-guided fuzzing of the readers and the overlay code (see CONTRIBUTING.md). Not run on
+# pull requests: each target runs for a while, so it runs nightly and on request.
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: "Minutes each target runs"
+        default: "10"
+  push:
+    branches: [reader-fuzzing]
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [altium_pcbdoc, altium_project, kicad_pcb, package_build, truetype_text]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+      - run: cargo install cargo-fuzz --locked
+      - run: fuzz/seed.sh
+      - name: Fuzz ${{ matrix.target }}
+        working-directory: fuzz
+        env:
+          MINUTES: ${{ github.event.inputs.minutes || '10' }}
+        # -timeout: a run longer than 10 seconds is a hang; -rss_limit_mb: a runaway allocation.
+        run: |
+          cargo fuzz run ${{ matrix.target }} -- \
+            -max_total_time=$((MINUTES * 60)) -timeout=10 -rss_limit_mb=2048 -max_len=1000000
+      - name: Keep what the fuzzer found
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crash-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}/

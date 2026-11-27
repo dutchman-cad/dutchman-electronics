@@ -1,0 +1,56 @@
+[package]
+name = "dutchman-electronics-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+board-model = { path = "../crates/board-model" }
+altium-pcbdoc = { path = "../crates/altium-pcbdoc" }
+kicad-pcb = { path = "../crates/kicad-pcb" }
+dutchman-electronics = { path = "../crates/dutchman-electronics" }
+
+# Not part of the main workspace: it needs a nightly toolchain and cargo-fuzz.
+[workspace]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "altium_pcbdoc"
+path = "fuzz_targets/altium_pcbdoc.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "altium_project"
+path = "fuzz_targets/altium_project.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "kicad_pcb"
+path = "fuzz_targets/kicad_pcb.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "package_build"
+path = "fuzz_targets/package_build.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "truetype_text"
+path = "fuzz_targets/truetype_text.rs"
+test = false
+doc = false
+bench = false
