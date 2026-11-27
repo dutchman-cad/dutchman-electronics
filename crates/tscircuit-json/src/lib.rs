@@ -717,7 +717,13 @@ fn silk_graphics(e: &Value, kind: &str, layer: usize) -> Option<Vec<Graphic>> {
         )]),
         "pcb_silkscreen_path" => {
             let route = points(e, "route")?;
-            (route.len() >= 2).then(|| route.windows(2).map(|w| line(w[0], w[1])).collect())
+            (route.len() >= 2).then(|| {
+                route
+                    .iter()
+                    .zip(route.iter().skip(1))
+                    .map(|(a, b)| line(*a, *b))
+                    .collect()
+            })
         }
         "pcb_silkscreen_circle" => Some(contour_graphics(
             &circle(point(e, "center")?, length(e, "radius")?),
@@ -893,12 +899,13 @@ fn smt_pad(e: &Value, layer: Option<usize>) -> Option<CopperItem> {
         }
         "polygon" => {
             let p = points(e, "points")?;
+            let first = *p.first()?;
             if p.len() < 3 {
                 return None;
             }
             return Some(CopperItem::PolygonPad {
                 layer,
-                at: xy(e).unwrap_or(p[0]),
+                at: xy(e).unwrap_or(first),
                 shapes: vec![polygon(&p)],
                 drill: None,
                 plated: false,
