@@ -9,8 +9,6 @@ on:
       minutes:
         description: "Minutes each target runs"
         default: "10"
-  push:
-    branches: [reader-fuzzing]
 
 jobs:
   fuzz:
