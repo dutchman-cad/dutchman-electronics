@@ -130,7 +130,7 @@ fn usable(text: &Text) -> bool {
 /// those checks.
 pub(super) fn draw(text: &Text) -> Option<Drawn> {
     let pen = match &text.font {
-        TextFont::Stroke { width } => *width,
+        TextFont::Stroke { width, .. } => *width,
         TextFont::TrueType { .. } => text.height * TRUETYPE_PEN,
     };
     if !usable(text) || !positive(pen) {
@@ -680,7 +680,10 @@ mod tests {
             height: 2.1,
             rotation_deg,
             mirrored,
-            font: TextFont::Stroke { width: 0.2 },
+            font: TextFont::Stroke {
+                width: 0.2,
+                font: board_model::StrokeFont::Default,
+            },
             component: None,
         }
     }

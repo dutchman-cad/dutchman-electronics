@@ -284,8 +284,9 @@ pub struct Text {
 /// The letter shapes of a [`Text`].
 #[derive(Clone, Debug, PartialEq)]
 pub enum TextFont {
-    /// The CAD program's own single-line font, drawn with a pen `width` mm wide.
-    Stroke { width: f64 },
+    /// The CAD program's own single-line font, drawn with a pen `width` mm wide. `font` names
+    /// which of its stroke fonts the text uses.
+    Stroke { width: f64, font: StrokeFont },
     /// A TrueType font, by family name and style; its outlines come from the font file, which
     /// [`ReadOutcome::font`] finds when the board embeds it.
     TrueType {
@@ -293,6 +294,19 @@ pub enum TextFont {
         bold: bool,
         italic: bool,
     },
+}
+
+/// Which of a CAD program's single-line fonts a stroke [`Text`] uses. Altium has these three;
+/// a reader for a program with one stroke font uses [`StrokeFont::Default`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum StrokeFont {
+    /// The program's default stroke font.
+    #[default]
+    Default,
+    /// Its sans serif stroke font.
+    SansSerif,
+    /// Its serif stroke font.
+    Serif,
 }
 
 /// Where a 3D model for a component comes from.
@@ -565,7 +579,11 @@ mod tests {
         );
         assert_eq!(found(wants("DejaVu Sans Mono", false, true)), None);
         assert_eq!(found(wants("Arial", false, false)), None);
-        assert_eq!(found(TextFont::Stroke { width: 0.2 }), None);
+        let stroke = TextFont::Stroke {
+            width: 0.2,
+            font: StrokeFont::Default,
+        };
+        assert_eq!(found(stroke), None);
     }
 }
 

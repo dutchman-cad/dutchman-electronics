@@ -514,7 +514,10 @@ impl Reader {
             height,
             rotation_deg,
             mirrored,
-            font: TextFont::Stroke { width: thickness },
+            font: TextFont::Stroke {
+                width: thickness,
+                font: board_model::StrokeFont::Default,
+            },
             component: None,
         });
     }

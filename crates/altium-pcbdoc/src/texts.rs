@@ -33,7 +33,7 @@
 
 use std::collections::BTreeMap;
 
-use board_model::{Note, Point, Severity, Text, TextFont};
+use board_model::{Note, Point, Severity, StrokeFont, Text, TextFont};
 
 use crate::components::{
     short_string, span, Components, COMMENT_FLAG_AT, COMPONENT_AT, DESIGNATOR_FLAG_AT,
@@ -150,6 +150,7 @@ pub(crate) fn read(
                 } else {
                     TextFont::Stroke {
                         width: stroke_width,
+                        font: StrokeFont::Default,
                     }
                 };
                 texts.push(Text {

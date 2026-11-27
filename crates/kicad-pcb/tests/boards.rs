@@ -471,7 +471,7 @@ fn silkscreen_lines_arcs_circles_polygons_and_text() {
     let t = &b.texts[0];
     assert_eq!(t.content, "HELLO");
     assert!(near(t.height, 1.5) && near(t.rotation_deg, 0.0) && !t.mirrored);
-    assert!(matches!(t.font, board_model::TextFont::Stroke { width } if near(width, 0.2)));
+    assert!(matches!(t.font, board_model::TextFont::Stroke { width, .. } if near(width, 0.2)));
     assert!(
         near(t.at.x, 130.0 - 2.25) && near(t.at.y, -122.0 - 0.75),
         "{:?}",
