@@ -157,7 +157,7 @@ fn the_mask_is_the_outline_less_cutouts_openings_and_drills() {
                 at: p(15.0, 5.0),
                 diameter: 1.0,
                 drill: 0.5,
-                tented: [None, None],
+                tented: [Some(true), Some(true)],
                 mask_expansion: None,
                 layers: None,
             },
@@ -1939,4 +1939,224 @@ fn a_rounded_rectangle_opening_is_the_true_offset_of_the_pad() {
     let (list, _) = overlays(&b, 1.6, "Board");
     let mask = area(named(&list, "Solder mask top"));
     assert!((mask - (200.0 - 8.2671)).abs() < 0.02, "{mask}");
+}
+
+fn via_at(
+    tented: [Option<bool>; 2],
+    mask_expansion: Option<f64>,
+    layers: Option<(usize, usize)>,
+) -> Board {
+    let mut b = board(
+        vec![CopperItem::Via {
+            at: p(5.0, 5.0),
+            diameter: 1.0,
+            drill: 0.5,
+            tented,
+            mask_expansion,
+            layers,
+        }],
+        vec![],
+    );
+    b.outline.outer = square(0.0, 0.0, 20.0, 10.0);
+    b
+}
+
+/// The area of an overlay that may be missing when nothing is drawn on it.
+fn area_or_zero(list: &[Value], name: &str) -> f64 {
+    list.iter().find(|o| o["name"] == name).map_or(0.0, area)
+}
+
+#[test]
+fn an_open_via_side_has_a_mask_opening_a_ring_of_finish_and_an_open_drill() {
+    // A 20 x 10 board (200 mm2), a via 1 mm across with a 0.5 mm drill, open on top and tented
+    // on the bottom, with the default expansion 0.1: the top opening is a disc of radius
+    // 0.5 + 0.1 = 0.6, pi * 0.36 = 1.1310, so the mask is 200 - 1.1310 = 198.8690. The top copper
+    // is a ring, pi * (0.25 - 0.0625) = 0.5890 (the drill is open), and the finish is the copper
+    // inside the opening: the same ring. The bottom is tented as before: a whole mask (200) over
+    // a solid disc, pi * 0.25 = 0.7854.
+    let b = via_at([Some(false), Some(true)], None, None);
+    let (list, notes) = overlays(&b, 1.6, "Board");
+    assert!(notes.is_empty(), "{notes:?}");
+    let mask = named(&list, "Solder mask top");
+    assert!((area(mask) - 198.869).abs() < 0.01, "{}", area(mask));
+    assert!(!covers(mask, 5.0, 5.0));
+    let ring = PI * 0.1875;
+    let copper = named(&list, "Copper top");
+    assert!((area(copper) - ring).abs() < 0.01, "{}", area(copper));
+    assert!(!covers(copper, 5.0, 5.0), "the drill is open");
+    let finish = named(&list, "Finish top");
+    assert!((area(finish) - ring).abs() < 0.01, "{}", area(finish));
+    assert!(!covers(finish, 5.0, 5.0));
+    assert!(covers(finish, 5.0, 5.4), "the ring is finished");
+    let laminate = named(&list, "Laminate top");
+    assert!(!covers(laminate, 5.0, 5.0), "the drill cuts the laminate");
+    let bottom_mask = named(&list, "Solder mask bottom");
+    assert!(
+        (area(bottom_mask) - 200.0).abs() < 1e-5,
+        "{}",
+        area(bottom_mask)
+    );
+    let bottom = named(&list, "Copper bottom");
+    assert!((area(bottom) - PI * 0.25).abs() < 0.01, "{}", area(bottom));
+    assert!(covers(bottom, 5.0, 5.0), "the tented side keeps its disc");
+    assert!(covers(named(&list, "Laminate bottom"), 5.0, 5.0));
+    assert_eq!(area_or_zero(&list, "Finish bottom"), 0.0);
+}
+
+#[test]
+fn a_via_uses_its_own_mask_expansion_before_the_boards() {
+    // Open both sides, the via's own expansion 0.3 (the board's 0.5): each opening has radius
+    // 0.5 + 0.3 = 0.8, pi * 0.64 = 2.0106, so each mask is 200 - 2.0106 = 197.9894.
+    let mut b = via_at([Some(false), Some(false)], Some(0.3), None);
+    b.solder_mask_expansion = Some(0.5);
+    let (list, _) = overlays(&b, 1.6, "Board");
+    for side in ["top", "bottom"] {
+        let mask = area(named(&list, &format!("Solder mask {side}")));
+        assert!((mask - 197.9894).abs() < 0.02, "{side}: {mask}");
+    }
+    // Without its own, the board's: radius 0.5 + 0.5 = 1, pi, so 200 - 3.1416 = 196.8584.
+    let b = {
+        let mut b = via_at([Some(false), Some(false)], None, None);
+        b.solder_mask_expansion = Some(0.5);
+        b
+    };
+    let (list, _) = overlays(&b, 1.6, "Board");
+    let mask = area(named(&list, "Solder mask top"));
+    assert!((mask - 196.8584).abs() < 0.03, "{mask}");
+}
+
+#[test]
+fn a_via_the_file_says_nothing_about_is_tented_with_an_info_note() {
+    let (list, notes) = overlays(&via_at([None, Some(true)], None, None), 1.6, "Board");
+    let mask = area(named(&list, "Solder mask top"));
+    assert!((mask - 200.0).abs() < 1e-5, "{mask}");
+    let note = notes
+        .iter()
+        .find(|n| n["message"] == "1 via(s) drawn tented; the file doesn't say")
+        .unwrap_or_else(|| panic!("{notes:?}"));
+    assert_eq!(note["severity"], "Info");
+    // Said both ways: no note.
+    let (_, notes) = overlays(&via_at([Some(true), Some(true)], None, None), 1.6, "Board");
+    assert!(notes.is_empty(), "{notes:?}");
+}
+
+#[test]
+fn a_blind_via_is_drawn_only_on_the_face_its_span_reaches() {
+    // Span from Top Layer (index 0) to Multi-Layer (index 2, no side): it reaches the top face
+    // only. Open on both sides in the file, it opens the top mask (200 - pi * 0.36 = 198.869) and
+    // has no ring, opening or drill on the bottom: the bottom mask is whole (200) and the
+    // bottom copper is empty.
+    let b = via_at([Some(false), Some(false)], None, Some((0, 2)));
+    let (list, notes) = overlays(&b, 1.6, "Board");
+    assert!(notes.is_empty(), "{notes:?}");
+    let top = area(named(&list, "Solder mask top"));
+    assert!((top - 198.869).abs() < 0.01, "{top}");
+    let bottom = area(named(&list, "Solder mask bottom"));
+    assert!((bottom - 200.0).abs() < 1e-5, "{bottom}");
+    assert_eq!(area_or_zero(&list, "Copper bottom"), 0.0);
+    assert_eq!(area_or_zero(&list, "Finish bottom"), 0.0);
+    assert!(covers(named(&list, "Laminate bottom"), 5.0, 5.0));
+}
+
+#[test]
+fn inner_rings_are_only_on_the_layers_in_the_span() {
+    // Four copper layers, 1.6 mm: top (depth 0), In1 (0.5), In2 (1.0), bottom (1.565). A blind
+    // via from top to In1 reaches In1 (depth 0.5 is within 0 to 0.5) and not In2 (1.0): In1 has
+    // the ring (the disc, pi * 0.25 = 0.7854 less the drill pi * 0.0625 = 0.1963: 0.5890) and In2
+    // has nothing. A through via (no span) is on both.
+    let layer = |name: &str, side, depth: f64| Layer {
+        name: name.into(),
+        kind: LayerKind::Copper,
+        side,
+        position: Some(board_model::StackPosition {
+            depth,
+            thickness: 0.035,
+        }),
+    };
+    let mut b = via_at([Some(true), Some(true)], None, Some((0, 1)));
+    b.layers = vec![
+        layer("F.Cu", Some(Side::Top), 0.0),
+        layer("In1.Cu", None, 0.5),
+        layer("In2.Cu", None, 1.0),
+        layer("B.Cu", Some(Side::Bottom), 1.565),
+    ];
+    let run = |b: &Board| super::overlays(b, &[], 1.6, "Board", Copper::All).0;
+    let list = run(&b);
+    let ring = PI * 0.1875;
+    assert!((area(named(&list, "Copper In1.Cu")) - ring).abs() < 0.01);
+    assert_eq!(area_or_zero(&list, "Copper In2.Cu"), 0.0);
+    // No bottom ring either: the span does not reach it.
+    assert_eq!(area_or_zero(&list, "Copper bottom"), 0.0);
+    assert!(area(named(&list, "Copper top")) > 0.5);
+    if let CopperItem::Via { layers, .. } = &mut b.copper[0] {
+        *layers = None;
+    }
+    let list = run(&b);
+    for name in ["Copper In1.Cu", "Copper In2.Cu"] {
+        assert!((area(named(&list, name)) - ring).abs() < 0.01, "{name}");
+    }
+}
+
+#[test]
+fn a_blind_via_drill_cuts_only_the_faces_and_inner_layers_its_span_reaches() {
+    // Four copper layers (top, In1 at depth 0.5, In2 at 1.0, bottom) and a blind via from the top
+    // to In1 at (5, 5), drill 0.5. A copper pour covers In2 (a 10 x 10 square, 100 mm2) and a
+    // silkscreen line along y = 5 runs on both faces (bottom silkscreen on layer 4). The via's
+    // drill must not punch In2 (area stays 100) and must not cut the bottom silkscreen, which the
+    // via does not reach, but cuts the top silkscreen (0.5 mm of the line, 0.2 wide: 0.1 less).
+    let layer = |name: &str, kind, side, depth: Option<f64>| Layer {
+        name: name.into(),
+        kind,
+        side,
+        position: depth.map(|depth| board_model::StackPosition {
+            depth,
+            thickness: 0.035,
+        }),
+    };
+    let mut b = via_at([Some(true), Some(true)], None, Some((0, 1)));
+    b.layers = vec![
+        layer("F.Cu", LayerKind::Copper, Some(Side::Top), Some(0.0)),
+        layer("In1.Cu", LayerKind::Copper, None, Some(0.5)),
+        layer("In2.Cu", LayerKind::Copper, None, Some(1.0)),
+        layer("B.Cu", LayerKind::Copper, Some(Side::Bottom), Some(1.565)),
+        layer("F.SilkS", LayerKind::Silkscreen, Some(Side::Top), None),
+        layer("B.SilkS", LayerKind::Silkscreen, Some(Side::Bottom), None),
+    ];
+    let line = |layer| Graphic::Line {
+        layer,
+        from: p(0.0, 5.0),
+        to: p(10.0, 5.0),
+        width: 0.2,
+        owner: None,
+    };
+    b.graphics = vec![line(4), line(5)];
+    b.copper.push(CopperItem::Region {
+        layer: 2,
+        contour: square(0.0, 0.0, 10.0, 10.0),
+        holes: vec![],
+    });
+    let (list, _) = super::overlays(&b, &[], 1.6, "Board", Copper::All);
+    let in2 = area(named(&list, "Copper In2.Cu"));
+    assert!((in2 - 100.0).abs() < 1e-5, "{in2}");
+    let top = area(named(&list, "Silkscreen top"));
+    let bottom = area(named(&list, "Silkscreen bottom"));
+    // The line is 10 x 0.2 = 2 mm2 (round ends add pi * 0.01 = 0.0314 each pair); the drill, 0.5
+    // wide, takes about 0.5 * 0.2 = 0.1 from the top one only.
+    assert!((bottom - top - 0.1).abs() < 0.02, "{top} {bottom}");
+}
+
+#[test]
+fn a_negative_via_expansion_shrinks_the_opening_but_not_below_the_drill() {
+    // The via is 1 mm across with a 0.5 mm drill, open on both sides. An expansion of -0.2 gives
+    // an opening of radius 0.5 - 0.2 = 0.3: the mask is 200 - pi * 0.09 = 199.7173. An expansion
+    // of -0.4 would give 0.1, below the drill's 0.25, so the opening stays at the drill:
+    // 200 - pi * 0.0625 = 199.8036.
+    for (e, want) in [(-0.2, 199.7173), (-0.4, 199.8036)] {
+        let b = via_at([Some(false), Some(false)], Some(e), None);
+        let (list, _) = overlays(&b, 1.6, "Board");
+        for side in ["top", "bottom"] {
+            let mask = area(named(&list, &format!("Solder mask {side}")));
+            assert!((mask - want).abs() < 0.01, "{e} {side}: {mask}");
+        }
+    }
 }

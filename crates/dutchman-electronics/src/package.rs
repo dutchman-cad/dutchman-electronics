@@ -1792,10 +1792,13 @@ mod tests {
         // is 1500 - 2 * 1.2 = 1497.6; the bottom has no pads, so it stays 1500.
         assert!((mask("one-resistor", "top") - 1497.6).abs() < 1e-3);
         assert!((mask("one-resistor", "bottom") - 1500.0).abs() < 1e-3);
-        // one-via: the via is tented, so the mask has no opening and lies over its copper: the
-        // whole 1500 mm2.
-        assert!((mask("one-via", "top") - 1500.0).abs() < 1e-3);
-        assert!((mask("one-via", "bottom") - 1500.0).abs() < 1e-3);
+        // one-via: the file says the via is open on both sides (Altium's older boards do not tent
+        // them), so each face has an opening of the via's 1.0 mm diameter grown by the rule's
+        // 0.1 mm: radius 0.6, pi * 0.36 = 1.13097, so the mask is 1500 - 1.13097 = 1498.86903
+        // (less a little for the polygon, so the tolerance is 0.02).
+        let open_via = 1500.0 - std::f64::consts::PI * 0.6 * 0.6;
+        assert!((mask("one-via", "top") - open_via).abs() < 0.02);
+        assert!((mask("one-via", "bottom") - open_via).abs() < 0.02);
         // one-plated-pad: a round 2.0 mm pad on all layers with a 1.0 mm hole. Its opening is the
         // pad grown by the board's mask expansion rule of 0.1 mm to a radius of 1.1, on both
         // faces: 1500 - pi * 1.1^2 = 1496.19867, less a little for the 32-sided polygon
@@ -2148,11 +2151,12 @@ mod tests {
         // 0.25 mm; the plating is 0.025 mm thick, so the inside radius is 0.225 mm.
         let package = package_of("one-via");
         let m = &package.manifest;
-        // The overlays draw the via tented (a solid disc under the mask), but the board keeps
-        // its drill: a 0.25 mm cylinder in board.step.
+        // The file says the via is open: the overlays draw its ring with the drill open, pi * (0.5^2
+        // - 0.25^2) = 0.58905 mm2 with one hole, and the board keeps its drill: a 0.25 mm cylinder
+        // in board.step.
         let top = overlay_named(m, "one-via", "Copper top");
-        assert_eq!(top["areas"][0]["holes"].as_array().unwrap().len(), 0);
-        assert!((overlay_area(top) - 0.78).abs() < 0.01);
+        assert_eq!(top["areas"][0]["holes"].as_array().unwrap().len(), 1);
+        assert!((overlay_area(top) - 0.589).abs() < 0.01);
         let (_, board_step) = package
             .files
             .iter()
