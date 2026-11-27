@@ -1153,7 +1153,8 @@ closing 0 in its length.
 
 
 Features seen on other people's boards (mask-opacity-100, origin-moved, overlay-region-fill,
-body-two-extruded, body-cylinder, body-sphere, arc-region)
+body-two-extruded, body-cylinder, body-sphere, arc-region, pad-stack-tmb, solder-mask-region,
+overlapping-holes)
 ---------------------------------------------------------------------------------------------
 Made on 2026-11-27, each from a file copy of one of our own boards, one feature per board, so the
 reader can learn features that public sample boards use (only our converter's notes on those
@@ -1235,6 +1236,24 @@ arc-region.PcbDoc  (from empty-outline)
                  ISSHAPEBASED=TRUE
     Both are stored twice, as the other shapes are: /Regions6 and /ComponentBodies6, and the
     shape-based copies /ShapeBasedRegions6 and /ShapeBasedComponentBodies6.
+
+pad-stack-tmb.PcbDoc  (from empty-outline)
+    By my own script, one free pad "1" (no component, no net) at (25, 15), Multi-Layer, plated
+    hole 0.800, pad stack mode Top-Middle-Bottom (Altium's mode 1; simple is 0):
+        top      round      2.000 x 2.000
+        middle   round      1.400 x 1.400
+        bottom   rectangle  2.400 x 1.600
+    The board has only Top Layer and Bottom Layer, so the middle size has no layer to show on.
+
+solder-mask-region.PcbDoc  (from one-fill)
+    By my own script, a solid region on Top Solder, KIND 0, no net, corners (22, 12), (28, 12),
+    (28, 18), (22, 18): a mask opening drawn by hand, over the middle of one-fill's copper fill
+    (20, 10) to (30, 20) on Top Layer. Nothing else on Top Solder.
+
+overlapping-holes.PcbDoc  (from empty-outline)
+    By my own script, two free pads (no component, no net), simple pad stack, Multi-Layer, round
+    1.600, plated hole 1.000: "1" at (24.6, 15) and "2" at (25.4, 15). Their centers are 0.800
+    apart, so the two holes overlap by 0.200 and the two pads by 0.800.
 
 Saving embedded Arial in each of them (none of their texts uses it); it was removed as before
 (see "Paths inside the files").
