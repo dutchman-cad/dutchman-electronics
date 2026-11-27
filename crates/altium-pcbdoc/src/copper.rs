@@ -69,8 +69,9 @@
 //!   0x01 bit set there too. On a linked pad bytes 121..125 are not kept in step (0.1 on P3,
 //!   Manual 0.2), so the bottom takes the top's value. Byte 125 is 1 on P8, whose expansion is
 //!   measured from the hole's edge. Bytes 97..100 are 1 on every pad but P1 and P8 here and on
-//!   every pad of the older boards; not read. The board model has no place for any of this yet,
-//!   so the pads are counted in a note and drawn by the board-wide rule.
+//!   every pad of the older boards; not read. The tenting and the expansion go on the pad; the
+//!   hole-edge measure and the paste expansion have no place in the board model, so the pads are
+//!   counted in a note and drawn from the pad's edge, paste not drawn.
 //! - Pad shapes (`pad-shapes`, checked against the Gerber file Altium wrote for its top copper):
 //!   shape code 3 is an octagon, a rectangle of the pad's size with each corner cut off at 45
 //!   degrees by a quarter of the shorter side (0.25 on a 2.000 x 1.000 pad, 0.375 on 1.500 x
@@ -582,7 +583,13 @@ pub(crate) fn pads(
             continue;
         };
         let plated = hole > 0.0 && g.get(60) == Some(&1);
-        own_masks.count(&pad_mask(g));
+        let own = pad_mask(g);
+        own_masks.count(&own);
+        let tented = own.tented.map(|t| t.then_some(true));
+        let mask_expansion = match own.expansion {
+            Some([top, bottom]) => [Some(top), Some(bottom)],
+            None => [None, None],
+        };
         let [top, middle, bottom] = sizes;
         let (size_x, size_y) = top;
         if middle != top || bottom != top || shapes.iter().any(|s| Some(s) != shapes.first()) {
@@ -607,6 +614,8 @@ pub(crate) fn pads(
                     drill: (hole > 0.0).then_some(hole),
                     plated,
                     owner: components.owner(g),
+                    tented,
+                    mask_expansion,
                 });
                 continue;
             }
@@ -632,6 +641,8 @@ pub(crate) fn pads(
             drill: (hole > 0.0).then_some(hole),
             plated,
             owner: components.owner(g),
+            tented,
+            mask_expansion,
         });
     }
     if uneven > 0 {
@@ -688,60 +699,41 @@ pub(crate) fn pad_mask(g: &[u8]) -> PadMask {
     }
 }
 
-/// How many pads have mask settings of their own, which the board model has no place for yet.
+/// How many pads have mask settings the board model cannot hold: an expansion measured from the
+/// hole's edge (drawn from the pad's edge) and a paste mask expansion (paste is not drawn).
 #[derive(Default)]
 struct OwnMasks {
-    tented: usize,
-    expansion: usize,
     from_hole_edge: usize,
     paste: usize,
-    pads: usize,
 }
 
 impl OwnMasks {
     fn count(&mut self, mask: &PadMask) {
-        let tented = mask.tented.contains(&true);
-        self.tented += usize::from(tented);
-        self.expansion += usize::from(mask.expansion.is_some());
         self.from_hole_edge += usize::from(mask.from_hole_edge);
         self.paste += usize::from(mask.paste.is_some());
-        self.pads += usize::from(tented || mask.expansion.is_some() || mask.paste.is_some());
     }
 
     fn into_note(self, notes: &mut Vec<Note>) {
-        if self.pads == 0 {
-            return;
-        }
-        let mut what = Vec::new();
-        if self.tented > 0 {
-            what.push(format!("{} tented", self.tented));
-        }
-        if self.expansion > 0 {
-            let edge = if self.from_hole_edge > 0 {
-                format!(", {} of them from the hole's edge", self.from_hole_edge)
-            } else {
-                String::new()
-            };
-            what.push(format!(
-                "{} with a solder mask expansion of their own{edge}",
-                self.expansion
-            ));
+        if self.from_hole_edge > 0 {
+            notes.push(Note {
+                severity: Severity::Warning,
+                message: format!(
+                    "{} pad(s) measure their solder mask expansion from the hole's edge; it is \
+                     applied from the pad's edge",
+                    self.from_hole_edge
+                ),
+            });
         }
         if self.paste > 0 {
-            what.push(format!(
-                "{} with a paste mask expansion of their own",
-                self.paste
-            ));
+            notes.push(Note {
+                severity: Severity::Info,
+                message: format!(
+                    "{} pad(s) have a paste mask expansion of their own; the paste mask is not \
+                     drawn",
+                    self.paste
+                ),
+            });
         }
-        notes.push(Note {
-            severity: Severity::Warning,
-            message: format!(
-                "{} pad(s) have their own mask settings ({}); the board model has no place for \
-                 them yet, so these pads are drawn by the board-wide rule",
-                self.pads,
-                what.join("; ")
-            ),
-        });
     }
 }
 
@@ -865,7 +857,7 @@ pub(crate) fn vias(
             diameter,
             drill,
             tented,
-            mask_expansion,
+            mask_expansion: [mask_expansion, mask_expansion],
             layers: span,
         });
     }

@@ -204,9 +204,10 @@ pub enum CopperItem {
         /// bottom. `Some(true)` is covered, `Some(false)` is open, `None` means the file
         /// does not say.
         tented: [Option<bool>; 2],
-        /// How far the mask opening extends beyond the via's ring, in mm, when the file
-        /// gives a per-via value. `None` means the file does not say.
-        mask_expansion: Option<f64>,
+        /// How far the mask opening extends beyond the via's ring, in mm, per side (index 0
+        /// top, 1 bottom), when the file gives a value for that via. Negative shrinks the
+        /// opening. `None` means the file does not say: the board's rule applies.
+        mask_expansion: [Option<f64>; 2],
         /// The copper layers the via joins, as `(first, last)` indexes into [`Board::layers`].
         /// `None` means it runs through the whole board; a span that stops short of either
         /// outer layer is a blind or buried via.
@@ -225,6 +226,14 @@ pub enum CopperItem {
         plated: bool,
         /// The designator of the component this pad belongs to, if any.
         owner: Option<String>,
+        /// Whether the solder mask covers (tents) the pad's copper: index 0 is the top side,
+        /// 1 the bottom. `Some(true)` is covered (no opening, no finish), `Some(false)` is
+        /// open, `None` means the file does not say: the pad is open.
+        tented: [Option<bool>; 2],
+        /// How far the mask opening extends beyond the pad's edge, in mm, per side (index 0
+        /// top, 1 bottom). Negative shrinks the opening. `None` means the file does not say:
+        /// the board's rule applies.
+        mask_expansion: [Option<f64>; 2],
     },
     /// A pad whose shape is not a plain [`PadShape`]: a trapezoid, a rectangle with chamfered
     /// corners, or a custom shape. The copper is the union of `shapes`, closed contours in board
@@ -240,6 +249,14 @@ pub enum CopperItem {
         plated: bool,
         /// The designator of the component this pad belongs to, if any.
         owner: Option<String>,
+        /// Whether the solder mask covers (tents) the pad's copper: index 0 is the top side,
+        /// 1 the bottom. `Some(true)` is covered (no opening, no finish), `Some(false)` is
+        /// open, `None` means the file does not say: the pad is open.
+        tented: [Option<bool>; 2],
+        /// How far the mask opening extends beyond the pad's edge, in mm, per side (index 0
+        /// top, 1 bottom). Negative shrinks the opening. `None` means the file does not say:
+        /// the board's rule applies.
+        mask_expansion: [Option<f64>; 2],
     },
     /// A filled copper area (a pour or polygon). Each hole is a closed contour inside `contour`,
     /// in any winding (clearances around other copper, thermal-relief gaps); the copper is the

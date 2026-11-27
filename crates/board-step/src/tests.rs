@@ -48,6 +48,8 @@ fn hole(x: f64, y: f64, drill: f64) -> CopperItem {
         drill: Some(drill),
         plated: false,
         owner: None,
+        tented: [None, None],
+        mask_expansion: [None, None],
     }
 }
 
@@ -306,7 +308,7 @@ fn vias_are_drilled_too() {
         diameter: 0.6,
         drill: 0.3,
         tented: [None, None],
-        mask_expansion: None,
+        mask_expansion: [None, None],
         layers: None,
     };
     let out = write(&board(rect(0.0, 0.0, 50.0, 30.0), vec![], vec![via]), "via").unwrap();
@@ -712,7 +714,7 @@ fn the_board_says_which_holes_it_cut() {
                 diameter: 1.0,
                 drill: 0.5,
                 tented: [None, None],
-                mask_expansion: None,
+                mask_expansion: [None, None],
                 layers: None,
             },
             hole(10.0, 5.0, 1.0),
@@ -721,7 +723,7 @@ fn the_board_says_which_holes_it_cut() {
                 diameter: 1.0,
                 drill: 0.5,
                 tented: [None, None],
-                mask_expansion: None,
+                mask_expansion: [None, None],
                 layers: None,
             },
         ],
@@ -868,7 +870,7 @@ fn via_on(x: f64, layers: Option<(usize, usize)>) -> CopperItem {
         diameter: 0.8,
         drill: 0.4,
         tented: [None, None],
-        mask_expansion: None,
+        mask_expansion: [None, None],
         layers,
     }
 }

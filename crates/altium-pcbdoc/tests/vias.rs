@@ -53,7 +53,7 @@ fn vias(out: &ReadOutcome) -> Vec<Via> {
                 diameter: *diameter,
                 drill: *drill,
                 tented: *tented,
-                mask_expansion: *mask_expansion,
+                mask_expansion: mask_expansion[0],
                 layers: layers.map(|(a, b)| (name(a), name(b))),
             }),
             _ => None,

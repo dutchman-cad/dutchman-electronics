@@ -415,11 +415,16 @@ fn four_vias_have_their_own_solder_mask() -> Result<(), Box<dyn std::error::Erro
             Some(&(_, top, bottom, expansion)) => {
                 own += 1;
                 assert_eq!(*tented, [Some(top), Some(bottom)], "{c:?}");
-                assert!(mask_expansion.is_some_and(|e| near(e, expansion)), "{c:?}");
+                assert!(
+                    mask_expansion
+                        .iter()
+                        .all(|m| m.is_some_and(|e| near(e, expansion))),
+                    "{c:?}"
+                );
             }
             None => {
                 assert_eq!(*tented, [Some(false), Some(false)], "{c:?}");
-                assert_eq!(*mask_expansion, None, "{c:?}");
+                assert_eq!(*mask_expansion, [None, None], "{c:?}");
             }
         }
     }

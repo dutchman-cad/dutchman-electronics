@@ -807,6 +807,7 @@ fn overlays_within(
     let mut holes = Pile::default();
     // Vias drawn tented because the file does not say.
     let mut guessed_tenting = 0usize;
+    let mut unshrunk = 0usize;
     let (mut inner, mut unusable, mut other_graphics) = (0usize, 0usize, 0usize);
     let mut hole_counts = HoleCounts::default();
     let mut hole_budget = hole_budget;
@@ -860,6 +861,8 @@ fn overlays_within(
         .solder_mask_expansion
         .filter(usable)
         .unwrap_or(DEFAULT_SOLDER_MASK_EXPANSION);
+    // A pad's or via's own expansion on one side (negative allowed), else the board's.
+    let side_expansion = |own: Option<f64>| own.filter(via_usable).unwrap_or(expansion);
     // Whether a via with this span reaches a face: one of its end layers is that face's copper.
     let reaches = |span: Option<(usize, usize)>, side: Side| match span {
         None => true,
@@ -901,7 +904,9 @@ fn overlays_within(
         .saturating_add(board.texts.len().saturating_sub(MAX_ITEMS));
     for item in board.copper.iter().take(MAX_ITEMS) {
         let emptied_before = hole_counts.emptied;
-        let mut opened: Vec<Polygon> = Vec::new();
+        // The mask opening on each side (top, bottom) of a pad: `None` when that side is tented,
+        // an empty list when the opening cannot be drawn (the pad itself is opened instead).
+        let mut opened: [Option<Vec<Polygon>>; 2] = [Some(Vec::new()), Some(Vec::new())];
         let (layer, shapes, bare, drill): (usize, Vec<Polygon>, bool, Option<(Point, f64)>) =
             match item {
                 CopperItem::Track {
@@ -971,11 +976,14 @@ fn overlays_within(
                             }
                             // A via's own expansion may be negative (a smaller opening), but the
                             // opening never shrinks below the drill.
-                            let open_by = mask_expansion.filter(via_usable).unwrap_or(expansion);
-                            let open_radius = (diameter / 2.0 + open_by).max(drill / 2.0);
                             let mut guessed = false;
-                            let sides = [(Side::Top, tented[0]), (Side::Bottom, tented[1])];
-                            for (side, flag) in sides {
+                            let sides = [
+                                (Side::Top, tented[0], mask_expansion[0]),
+                                (Side::Bottom, tented[1], mask_expansion[1]),
+                            ];
+                            for (side, flag, own) in sides {
+                                let open_by = own.filter(via_usable).unwrap_or(expansion);
+                                let open_radius = (diameter / 2.0 + open_by).max(drill / 2.0);
                                 if !reaches(*span, side) {
                                     continue;
                                 }
@@ -1008,9 +1016,24 @@ fn overlays_within(
                     at,
                     shapes: outlines,
                     drill,
+                    tented,
+                    mask_expansion,
                     ..
                 } => {
-                    opened = outlines.iter().flat_map(|c| grown(c, expansion)).collect();
+                    let sides = opened.iter_mut().zip(tented).zip(mask_expansion);
+                    for ((open, side_tented), side_by) in sides {
+                        let by = side_expansion(*side_by);
+                        *open = match side_tented {
+                            Some(true) => None,
+                            _ => {
+                                if by < 0.0 {
+                                    // A polygon cannot be shrunk here: it is opened as itself.
+                                    unshrunk = unshrunk.saturating_add(1);
+                                }
+                                Some(outlines.iter().flat_map(|c| grown(c, by)).collect())
+                            }
+                        };
+                    }
                     (
                         *layer,
                         outlines.iter().filter_map(contour).collect(),
@@ -1026,30 +1049,42 @@ fn overlays_within(
                     size_y,
                     rotation_deg,
                     drill,
+                    tented,
+                    mask_expansion,
                     ..
                 } => {
-                    // The opening is the pad grown by `expansion` on every side, so a rounded
-                    // corner's radius grows by `expansion` too (not in proportion to the size).
-                    let open_shape = match *shape {
-                        PadShape::RoundedRectangle { radius_ratio } => {
-                            let short = size_x.min(*size_y);
-                            let bigger = short + 2.0 * expansion;
-                            PadShape::RoundedRectangle {
-                                radius_ratio: (radius_ratio.clamp(0.0, 0.5) * short + expansion)
-                                    / bigger,
-                            }
-                        }
-                        other => other,
-                    };
-                    opened = pad(
-                        *at,
-                        open_shape,
-                        *size_x + 2.0 * expansion,
-                        *size_y + 2.0 * expansion,
-                        *rotation_deg,
-                    )
-                    .into_iter()
-                    .collect();
+                    let sides = opened.iter_mut().zip(tented).zip(mask_expansion);
+                    for ((open, side_tented), side_by) in sides {
+                        let by = side_expansion(*side_by);
+                        // The opening is the pad grown by `by` on every side (shrunk when it is
+                        // negative), but never smaller than the drill, and never below zero
+                        // size: a pad shrunk away has no opening.
+                        let hole = drill.unwrap_or(0.0).max(0.0);
+                        let w = (*size_x + 2.0 * by).max(hole);
+                        let h = (*size_y + 2.0 * by).max(hole);
+                        *open = if *side_tented == Some(true) || w <= 0.0 || h <= 0.0 {
+                            None
+                        } else {
+                            // A rounded corner's radius grows by `by` too (not in proportion to
+                            // the size).
+                            let open_shape = match *shape {
+                                PadShape::RoundedRectangle { radius_ratio } => {
+                                    let short = size_x.min(*size_y);
+                                    PadShape::RoundedRectangle {
+                                        radius_ratio: ((radius_ratio.clamp(0.0, 0.5) * short + by)
+                                            / w.min(h))
+                                        .clamp(0.0, 0.5),
+                                    }
+                                }
+                                other => other,
+                            };
+                            Some(
+                                pad(*at, open_shape, w, h, *rotation_deg)
+                                    .into_iter()
+                                    .collect(),
+                            )
+                        };
+                    }
                     (
                         *layer,
                         pad(*at, *shape, *size_x, *size_y, *rotation_deg)
@@ -1105,11 +1140,22 @@ fn overlays_within(
                 Side::Top => &mut faces.0,
                 Side::Bottom => &mut faces.1,
             };
-            let target = if bare { &mut f.bare } else { &mut f.masked };
+            let k = usize::from(*side == Side::Bottom);
+            // A pad side with no opening is tented: its copper stays under the mask.
+            let open = if bare {
+                opened.get(k).and_then(|o| o.as_ref())
+            } else {
+                None
+            };
+            let target = if open.is_some() {
+                &mut f.bare
+            } else {
+                &mut f.masked
+            };
             target.polygons.extend(shapes.iter().cloned());
-            if bare {
+            if let Some(open) = open {
                 // A pad whose opening cannot be drawn is opened as the pad itself.
-                let opening = if opened.is_empty() { &shapes } else { &opened };
+                let opening = if open.is_empty() { &shapes } else { open };
                 f.opening.polygons.extend(opening.iter().cloned());
             }
         }
@@ -1510,6 +1556,15 @@ fn overlays_within(
             "severity": "Dropped",
             "message": "the laminate, copper, finish, silkscreen and solder mask overlays could not be drawn",
         })),
+    }
+    if unshrunk > 0 {
+        notes.push(json!({
+            "severity": "Info",
+            "message": format!(
+                "{unshrunk} polygon pad side(s) have a negative mask expansion, which is not \
+                 applied to a pad of that shape: their openings are the pad itself"
+            ),
+        }));
     }
     if guessed_tenting > 0 {
         notes.push(json!({

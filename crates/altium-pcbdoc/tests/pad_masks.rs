@@ -1,33 +1,52 @@
 //! Pads with mask settings of their own (tests/boards/README.txt, "Pad mask overrides"): the
-//! board model has no place for them yet, so the reader counts them in one note. P2 to P6 and P8
-//! have a manual solder mask expansion (P8 from the hole's edge), P4 and P6 are tented and P7 has
-//! a manual paste expansion: seven pads. No other test board has a pad like that.
+//! reader puts them on the pads. P2 to P6 and P8 have a manual solder mask expansion (P8 from the
+//! hole's edge), P4 and P6 are tented and P7 has a manual paste expansion: seven pads. No other
+//! test board has a pad like that.
 
 use altium_pcbdoc::Altium;
-use board_model::{InputFormat, Severity};
+use board_model::{CopperItem, InputFormat, Severity};
 use std::path::Path;
 
-const NOTE: &str = "pad(s) have their own mask settings";
+const NOTES: [&str; 2] = [
+    "measure their solder mask expansion",
+    "paste mask expansion of their own",
+];
 
 #[test]
-fn pads_with_their_own_mask_are_counted_in_a_note() -> Result<(), Box<dyn std::error::Error>> {
+fn pads_carry_their_own_mask_settings() -> Result<(), Box<dyn std::error::Error>> {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/boards/pad-mask-overrides.PcbDoc");
     let out = Altium.read(&std::fs::read(path)?)?;
-    let notes: Vec<_> = out
+    let mut tented = 0;
+    let mut expanded = 0;
+    for item in &out.board.copper {
+        if let CopperItem::Pad {
+            tented: t,
+            mask_expansion: e,
+            ..
+        } = item
+        {
+            tented += usize::from(t.contains(&Some(true)));
+            expanded += usize::from(e.iter().any(Option::is_some));
+        }
+    }
+    assert_eq!((tented, expanded), (2, 6), "{:?}", out.board.copper);
+    let hole_edge: Vec<_> = out
         .notes
         .iter()
-        .filter(|n| n.message.contains(NOTE))
+        .filter(|n| n.message.contains("from the hole's edge"))
         .collect();
-    let [note] = notes.as_slice() else {
+    let [hole_edge] = hole_edge.as_slice() else {
         return Err(format!("{:?}", out.notes).into());
     };
-    assert_eq!(note.severity, Severity::Warning);
+    assert_eq!(hole_edge.severity, Severity::Warning);
     assert_eq!(
-        note.message,
-        "7 pad(s) have their own mask settings (2 tented; 6 with a solder mask expansion of their \
-         own, 1 of them from the hole's edge; 1 with a paste mask expansion of their own); the \
-         board model has no place for them yet, so these pads are drawn by the board-wide rule"
+        hole_edge.message,
+        "1 pad(s) measure their solder mask expansion from the hole's edge; it is applied from \
+         the pad's edge"
     );
+    assert!(out.notes.iter().any(|n| n.severity == Severity::Info
+        && n.message
+            == "1 pad(s) have a paste mask expansion of their own; the paste mask is not drawn"));
     Ok(())
 }
 
@@ -52,7 +71,9 @@ fn no_other_board_has_a_pad_with_its_own_mask() -> Result<(), Box<dyn std::error
             }
             let out = Altium.read(&std::fs::read(&path)?)?;
             assert!(
-                out.notes.iter().all(|n| !n.message.contains(NOTE)),
+                out.notes
+                    .iter()
+                    .all(|n| NOTES.iter().all(|k| !n.message.contains(k))),
                 "{}: {:?}",
                 path.display(),
                 out.notes

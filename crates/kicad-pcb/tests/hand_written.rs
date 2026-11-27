@@ -557,3 +557,37 @@ fn a_gr_arc_through_points_on_one_line_is_a_straight_stroke() {
     assert_eq!(shapes[1].segments.len(), 4);
     assert!(!o.notes.iter().any(|n| n.severity == Severity::Dropped));
 }
+
+#[test]
+fn a_pads_solder_mask_margin_wins_over_its_footprints() {
+    let text = format!(
+        "{HEAD}(footprint \"t:x\" (layer \"F.Cu\") (at 5 5) (solder_mask_margin 0.07) \
+         (property \"Reference\" \"U1\")\n\
+         (pad \"1\" smd rect (at 0 0) (size 1 1) (layers \"F.Cu\") (solder_mask_margin -0.05))\n\
+         (pad \"2\" smd rect (at 2 0) (size 1 1) (layers \"F.Cu\")))\n\
+         (footprint \"t:y\" (layer \"F.Cu\") (at 15 5) (property \"Reference\" \"U2\")\n\
+         (pad \"1\" smd rect (at 0 0) (size 1 1) (layers \"F.Cu\")))\n)"
+    );
+    let o = read(&text).unwrap();
+    let got: Vec<_> = o
+        .board
+        .copper
+        .iter()
+        .filter_map(|c| match c {
+            board_model::CopperItem::Pad {
+                mask_expansion,
+                tented,
+                ..
+            } => Some((*mask_expansion, *tented)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        got,
+        vec![
+            ([Some(-0.05); 2], [None; 2]),
+            ([Some(0.07); 2], [None; 2]),
+            ([None; 2], [None; 2]),
+        ]
+    );
+}

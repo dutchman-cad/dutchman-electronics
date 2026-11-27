@@ -2467,7 +2467,7 @@ mod tests {
             diameter: 1.0,
             drill,
             tented: [None, None],
-            mask_expansion: None,
+            mask_expansion: [None, None],
             layers: None,
         };
         // A 0.05 mm drill has radius 0.025: nothing left inside the plating.
@@ -2497,7 +2497,7 @@ mod tests {
             diameter: 1.0,
             drill: 0.5,
             tented: [None, None],
-            mask_expansion: None,
+            mask_expansion: [None, None],
             layers: None,
         };
         // A 20 x 10 board with a 4 x 4 cutout from (8, 3). Via 1 is clear; via 2 touches the
@@ -2813,6 +2813,8 @@ mod tests {
             drill: None,
             plated: false,
             owner: Some(owner.into()),
+            tented: [None, None],
+            mask_expansion: [None, None],
         }
     }
 

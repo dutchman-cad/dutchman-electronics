@@ -973,6 +973,8 @@ mod tests {
             drill: None,
             plated: false,
             owner: Some(owner.into()),
+            tented: [None, None],
+            mask_expansion: [None, None],
         };
         let mut out = outcome(vec![
             part("R1", "big.step", None),

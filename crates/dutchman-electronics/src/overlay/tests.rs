@@ -152,13 +152,15 @@ fn the_mask_is_the_outline_less_cutouts_openings_and_drills() {
                 drill: None,
                 plated: false,
                 owner: None,
+                tented: [None, None],
+                mask_expansion: [None, None],
             },
             CopperItem::Via {
                 at: p(15.0, 5.0),
                 diameter: 1.0,
                 drill: 0.5,
                 tented: [Some(true), Some(true)],
-                mask_expansion: None,
+                mask_expansion: [None, None],
                 layers: None,
             },
         ],
@@ -200,6 +202,8 @@ fn pads_on_the_bottom_only_open_the_bottom_mask() {
             drill: None,
             plated: false,
             owner: None,
+            tented: [None, None],
+            mask_expansion: [None, None],
         }],
         vec![],
     );
@@ -293,7 +297,7 @@ fn a_via_is_a_tented_disc_on_both_faces() {
         diameter: 1.0,
         drill: 0.5,
         tented: [None, None],
-        mask_expansion: None,
+        mask_expansion: [None, None],
         layers: None,
     };
     let mut b = board(vec![via], vec![]);
@@ -324,6 +328,8 @@ fn a_plated_pad_is_bare_copper_on_both_faces_with_its_hole() {
         drill: Some(1.0),
         plated: true,
         owner: None,
+        tented: [None, None],
+        mask_expansion: [None, None],
     };
     let (list, _) = overlays(&board(vec![pad], vec![]), 1.6, "Board");
     let ring = PI * (1.0 - 0.25);
@@ -349,6 +355,8 @@ fn copper_is_one_unit_and_the_finish_follows_the_opening() {
         drill: None,
         plated: false,
         owner: Some("R1".into()),
+        tented: [None, None],
+        mask_expansion: [None, None],
     };
     let (list, _) = overlays(
         &board(vec![track(0, p(0.0, 0.0), p(10.0, 0.0), 0.5), pad], vec![]),
@@ -378,6 +386,8 @@ fn a_rotated_rectangle_pad_keeps_its_area() {
         drill: None,
         plated: false,
         owner: None,
+        tented: [None, None],
+        mask_expansion: [None, None],
     };
     let (list, _) = overlays(&board(vec![pad], vec![]), 1.6, "Board");
     let o = named(&list, "Finish top");
@@ -661,6 +671,8 @@ fn a_tall_slot_turned_a_quarter_lies_along_x() {
         drill: None,
         plated: false,
         owner: None,
+        tented: [None, None],
+        mask_expansion: [None, None],
     };
     let (list, _) = overlays(&board(vec![pad], vec![]), 1.6, "Board");
     let o = named(&list, "Finish top");
@@ -683,7 +695,7 @@ fn silkscreen_is_not_printed_over_holes_or_pads() {
         diameter: 1.0,
         drill: 0.5,
         tented: [None, None],
-        mask_expansion: None,
+        mask_expansion: [None, None],
         layers: None,
     };
     let (list, _) = overlays(&board(vec![via], vec![line]), 1.6, "Board");
@@ -704,6 +716,8 @@ fn square_pad(layer: usize) -> CopperItem {
         drill: None,
         plated: false,
         owner: None,
+        tented: [None, None],
+        mask_expansion: [None, None],
     }
 }
 
@@ -723,6 +737,8 @@ fn the_mask_opening_is_the_pad_grown_by_the_boards_expansion() {
             drill: None,
             plated: false,
             owner: None,
+            tented: [None, None],
+            mask_expansion: [None, None],
         }],
         vec![],
     );
@@ -750,7 +766,7 @@ fn a_tented_via_gets_no_mask_expansion() {
             diameter: 1.0,
             drill: 0.5,
             tented: [None, None],
-            mask_expansion: None,
+            mask_expansion: [None, None],
             layers: None,
         }],
         vec![],
@@ -1147,6 +1163,8 @@ fn stacked_board(copper: usize, silk: usize) -> Board {
         drill: None,
         plated: false,
         owner: None,
+        tented: [None, None],
+        mask_expansion: [None, None],
     };
     let line = Graphic::Line {
         layer: silk,
@@ -1855,6 +1873,8 @@ fn a_rounded_rectangle_pad_has_its_corners_cut_round() {
         drill: None,
         plated: false,
         owner: None,
+        tented: [None, None],
+        mask_expansion: [None, None],
     };
     let (list, _) = overlays(&board(vec![pad], vec![]), 1.6, "Board");
     let pads = named(&list, "Finish top");
@@ -1899,6 +1919,8 @@ fn a_polygon_pad_is_the_union_of_its_pieces_with_its_hole_and_a_grown_opening() 
         drill: Some(0.4),
         plated: true,
         owner: Some("U1".into()),
+        tented: [None, None],
+        mask_expansion: [None, None],
     };
     let mut b = board(vec![pad], vec![]);
     b.outline.outer = square(0.0, 0.0, 20.0, 10.0);
@@ -1932,6 +1954,8 @@ fn a_rounded_rectangle_opening_is_the_true_offset_of_the_pad() {
         drill: None,
         plated: false,
         owner: None,
+        tented: [None, None],
+        mask_expansion: [None, None],
     };
     let mut b = board(vec![pad], vec![]);
     b.outline.outer = square(0.0, 0.0, 20.0, 10.0);
@@ -1952,7 +1976,7 @@ fn via_at(
             diameter: 1.0,
             drill: 0.5,
             tented,
-            mask_expansion,
+            mask_expansion: [mask_expansion; 2],
             layers,
         }],
         vec![],
@@ -2159,4 +2183,143 @@ fn a_negative_via_expansion_shrinks_the_opening_but_not_below_the_drill() {
             assert!((mask - want).abs() < 0.01, "{e} {side}: {mask}");
         }
     }
+}
+
+/// A 20 x 10 board with one pad of the given shape and size at (5, 5) on the top face, the
+/// board's mask expansion 0.25.
+fn mask_pad(
+    shape: PadShape,
+    size: (f64, f64),
+    drill: Option<f64>,
+    tented: [Option<bool>; 2],
+    mask_expansion: [Option<f64>; 2],
+) -> Board {
+    let mut b = board(
+        vec![CopperItem::Pad {
+            layer: 0,
+            at: p(5.0, 5.0),
+            shape,
+            size_x: size.0,
+            size_y: size.1,
+            rotation_deg: 0.0,
+            drill,
+            plated: false,
+            owner: None,
+            tented,
+            mask_expansion,
+        }],
+        vec![],
+    );
+    b.outline.outer = square(0.0, 0.0, 20.0, 10.0);
+    b.solder_mask_expansion = Some(0.25);
+    b
+}
+
+#[test]
+fn a_tented_pad_side_has_no_opening_and_no_finish() {
+    // The 2 x 1 pad is tented on top: the mask has no opening, so it is the whole 200 mm2, and
+    // the copper stays under it with no finish.
+    let b = mask_pad(
+        PadShape::Rectangle,
+        (2.0, 1.0),
+        None,
+        [Some(true), None],
+        [None, None],
+    );
+    let (list, _) = overlays(&b, 1.6, "Board");
+    let mask = area(named(&list, "Solder mask top"));
+    assert!((mask - 200.0).abs() < 1e-5, "{mask}");
+    assert_eq!(area_or_zero(&list, "Finish top"), 0.0);
+    let copper = area(named(&list, "Copper top"));
+    assert!((copper - 2.0).abs() < 1e-5, "{copper}");
+    // Said open: the board's 0.25 applies, (2.5) * (1.5) = 3.75, so 196.25.
+    let b = mask_pad(
+        PadShape::Rectangle,
+        (2.0, 1.0),
+        None,
+        [Some(false), None],
+        [None, None],
+    );
+    let (list, _) = overlays(&b, 1.6, "Board");
+    let mask = area(named(&list, "Solder mask top"));
+    assert!((mask - 196.25).abs() < 1e-5, "{mask}");
+}
+
+#[test]
+fn a_pads_own_expansion_replaces_the_boards_and_may_shrink_the_opening() {
+    // Own 0.5: (2 + 1) * (1 + 1) = 6, so 194.
+    let b = mask_pad(
+        PadShape::Rectangle,
+        (2.0, 1.0),
+        None,
+        [None, None],
+        [Some(0.5), None],
+    );
+    let (list, _) = overlays(&b, 1.6, "Board");
+    let mask = area(named(&list, "Solder mask top"));
+    assert!((mask - 194.0).abs() < 1e-5, "{mask}");
+    // Own -0.25: (2 - 0.5) * (1 - 0.5) = 0.75, so 199.25; the finish is the copper inside the
+    // opening, the same 0.75.
+    let b = mask_pad(
+        PadShape::Rectangle,
+        (2.0, 1.0),
+        None,
+        [None, None],
+        [Some(-0.25), None],
+    );
+    let (list, _) = overlays(&b, 1.6, "Board");
+    let mask = area(named(&list, "Solder mask top"));
+    assert!((mask - 199.25).abs() < 1e-5, "{mask}");
+    let finish = area(named(&list, "Finish top"));
+    assert!((finish - 0.75).abs() < 1e-5, "{finish}");
+}
+
+#[test]
+fn an_expansion_that_shrinks_a_pad_away_leaves_it_covered() {
+    // -0.6 on a 2 x 1 pad leaves a width of 0.8 and a height of -0.2: no opening, the whole
+    // 200 mm2 of mask, no finish.
+    let b = mask_pad(
+        PadShape::Rectangle,
+        (2.0, 1.0),
+        None,
+        [None, None],
+        [Some(-0.6), None],
+    );
+    let (list, _) = overlays(&b, 1.6, "Board");
+    let mask = area(named(&list, "Solder mask top"));
+    assert!((mask - 200.0).abs() < 1e-5, "{mask}");
+    assert_eq!(area_or_zero(&list, "Finish top"), 0.0);
+}
+
+#[test]
+fn a_shrunk_opening_never_goes_below_the_drill() {
+    // A round pad 2 mm across with a 1.5 mm drill, expansion -0.5: the pad shrinks to 1 mm,
+    // but the opening stays as wide as the drill, 1.5 mm: pi * 0.75^2 = 1.7671, so the mask is
+    // 200 - 1.7671 = 198.2329.
+    let b = mask_pad(
+        PadShape::Round,
+        (2.0, 2.0),
+        Some(1.5),
+        [None, None],
+        [Some(-0.5), None],
+    );
+    let (list, _) = overlays(&b, 1.6, "Board");
+    let mask = area(named(&list, "Solder mask top"));
+    assert!((mask - 198.2329).abs() < 0.03, "{mask}");
+}
+
+#[test]
+fn a_via_uses_its_own_expansion_on_each_side() {
+    // Open both sides, a 1 mm via with a 0.5 mm drill. Top +0.3: radius 0.8, pi * 0.64 =
+    // 2.0106, so 197.9894. Bottom -0.2: radius 0.3 (above the drill's 0.25), pi * 0.09 =
+    // 0.2827, so 199.7173.
+    let mut b = via_at([Some(false), Some(false)], None, None);
+    if let Some(CopperItem::Via { mask_expansion, .. }) = b.copper.first_mut() {
+        *mask_expansion = [Some(0.3), Some(-0.2)];
+    }
+    let (list, _) = overlays(&b, 1.6, "Board");
+    let top = area(named(&list, "Solder mask top"));
+    assert!((top - 197.9894).abs() < 0.02, "{top}");
+    let bottom = area(named(&list, "Solder mask bottom"));
+    assert!((bottom - 199.7173).abs() < 0.02, "{bottom}");
 }
