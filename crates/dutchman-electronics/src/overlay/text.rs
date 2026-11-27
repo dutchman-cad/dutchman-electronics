@@ -1,9 +1,13 @@
-//! Text as pen strokes, in the Hershey Roman Simplex font (`fonts/hershey/rowmans.jhf`, free to
-//! use with the acknowledgement in `fonts/hershey/README.txt`).
+//! Text as pen strokes, in Hershey fonts (`fonts/hershey/`, free to use with the acknowledgement
+//! in `fonts/hershey/README.txt`).
 //!
-//! A stroke text is drawn in this font at the text's height and pen width, and so is a TrueType
-//! text whose font file the board does not embed (or that does not parse). Letters and spacing
-//! then differ a little from the CAD program's, which the package says in a Degraded note.
+//! A stroke text is drawn at the text's height and pen width, in the font family closest to the
+//! one it names ([`StrokeFont`]): Roman Simplex for Sans Serif (`rowmans.jhf`), Times Roman for
+//! Serif (`timesr.jhf`), and for Default the Roman Simplex glyphs on a fixed advance, see
+//! [`default_advance`]. A TrueType text whose font file the board does not embed (or that does
+//! not parse) is drawn in Roman Simplex as well. Letter shapes then differ from the CAD program's
+//! (and, in Default, so does nothing else about where the text lies: its width and placement
+//! follow the CAD program's), which the package says in a Degraded note.
 //!
 //! A TrueType text whose font file is embedded is drawn with the real letter outlines instead
 //! ([`outline`]): filled areas, no pen.
@@ -16,7 +20,7 @@ use std::collections::{HashMap, HashSet};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::OnceLock;
 
-use board_model::{Point, Text, TextFont};
+use board_model::{Point, StrokeFont, Text, TextFont};
 use geo::algorithm::bool_ops::FillRule;
 use geo::orient::{Direction, Orient};
 use geo::{BooleanOps, Coord, LineString, MultiPolygon, Polygon};
@@ -47,9 +51,39 @@ struct Glyph {
     strokes: Vec<Vec<(f64, f64)>>,
 }
 
-fn font() -> &'static [Glyph] {
-    static FONT: OnceLock<Vec<Glyph>> = OnceLock::new();
-    FONT.get_or_init(|| parse(include_str!("../../fonts/hershey/rowmans.jhf")))
+/// The glyphs a stroke font is drawn with. Default has no free equivalent: it takes the Roman
+/// Simplex shapes (see [`default_advance`] for its spacing).
+fn font(which: StrokeFont) -> &'static [Glyph] {
+    static SIMPLEX: OnceLock<Vec<Glyph>> = OnceLock::new();
+    static TIMES: OnceLock<Vec<Glyph>> = OnceLock::new();
+    match which {
+        StrokeFont::Serif => {
+            TIMES.get_or_init(|| parse(include_str!("../../fonts/hershey/timesr.jhf")))
+        }
+        StrokeFont::SansSerif | StrokeFont::Default => {
+            SIMPLEX.get_or_init(|| parse(include_str!("../../fonts/hershey/rowmans.jhf")))
+        }
+    }
+}
+
+/// The mm Altium's Default stroke font advances per character at text height `h`: the same for
+/// every character (the font is monospaced), a straight line through the two heights we have
+/// measured, from our own test boards' bounding rectangles (`crates/altium-pcbdoc/tests/boards/
+/// README.txt`):
+/// - height 2.0, stroke 0.2 (one-text "TEST" against one-rotated-text "ROT", which end in the
+///   same letter): (17.53097 - 10) - (20.53162 - 15) = 1.99935 mm;
+/// - height 1.5, stroke 0.15 (special-strings "L: Top Overlay" against "Top Overlay", three
+///   characters more): (22.144 - 17.895) / 3 = 1.41633 mm.
+///
+/// TODO: refit with the stroke-fonts board's text extents (more heights) once it is in the
+/// repository; the line is exact at these two heights only.
+const ADVANCE_PER_HEIGHT: f64 = (1.99935 - 1.41633) / (2.0 - 1.5);
+const ADVANCE_OFFSET: f64 = 1.99935 - 2.0 * ADVANCE_PER_HEIGHT;
+/// The narrowest advance, as a share of the height, so a very small text keeps its letters apart.
+const MIN_ADVANCE: f64 = 0.5;
+
+fn default_advance(height: f64) -> f64 {
+    (ADVANCE_PER_HEIGHT * height + ADVANCE_OFFSET).max(MIN_ADVANCE * height)
 }
 
 /// Parses the "James Hurt" format: per glyph a 5-character number, a 3-character count of
@@ -129,16 +163,19 @@ fn usable(text: &Text) -> bool {
 /// width, position (beyond the overlay limit) or rotation is not usable. Nothing is drawn before
 /// those checks.
 pub(super) fn draw(text: &Text) -> Option<Drawn> {
-    let pen = match &text.font {
-        TextFont::Stroke { width, .. } => *width,
-        TextFont::TrueType { .. } => text.height * TRUETYPE_PEN,
+    let (pen, which) = match &text.font {
+        TextFont::Stroke { width, font } => (*width, *font),
+        TextFont::TrueType { .. } => (text.height * TRUETYPE_PEN, StrokeFont::SansSerif),
     };
     if !usable(text) || !positive(pen) {
         return None;
     }
-    let glyphs = font();
+    let glyphs = font(which);
     let question = glyphs.get(QUESTION)?;
     let scale = text.height / CAP_UNITS;
+    // Default: every character takes a cell of one advance; its glyph is centered in it, and
+    // squeezed sideways when wider than the cell. The other fonts run on the glyphs' own widths.
+    let cell = (which == StrokeFont::Default).then(|| default_advance(text.height) / scale);
     let (sin, cos) = text.rotation_deg.to_radians().sin_cos();
     let mirror = if text.mirrored { -1.0 } else { 1.0 };
     let place = |x: f64, y: f64| {
@@ -173,19 +210,25 @@ pub(super) fn draw(text: &Text) -> Option<Drawn> {
                 drawn.missing = drawn.missing.saturating_add(1);
                 question
             });
+        let width = glyph.right - glyph.left;
+        let (squeeze, inset) = match cell {
+            Some(cell) if width > cell => (cell / width, 0.0),
+            Some(cell) => (1.0, (cell - width) / 2.0),
+            None => (1.0, 0.0),
+        };
         for s in &glyph.strokes {
             drawn.strokes.push(
                 s.iter()
                     .map(|&(x, y)| {
                         place(
-                            (pen_x + x - glyph.left) * scale,
+                            (pen_x + inset + (x - glyph.left) * squeeze) * scale,
                             (BASELINE - y - line * LINE_UNITS) * scale,
                         )
                     })
                     .collect(),
             );
         }
-        pen_x += glyph.right - glyph.left;
+        pen_x += cell.unwrap_or(width);
     }
     Some(drawn)
 }
@@ -206,6 +249,9 @@ const MAX_UNION_POINTS: usize = 5_000;
 const MAX_COMPOSITE_DEPTH: u32 = 8;
 /// The most simple glyphs a glyph may expand to once all its composite parts are followed.
 const MAX_COMPOSITE_PARTS: u64 = 64;
+/// A text's curves are followed to this fraction of its height, so letters stay smooth at any
+/// size (1.2 mm letters within 0.003 mm), but never more coarsely than [`super::CHORD`].
+const CURVE_FRACTION: f64 = 400.0;
 /// The most straight pieces one curve is cut into (DejaVu's curves need a handful).
 const MAX_CURVE_STEPS: usize = 256;
 
@@ -231,8 +277,15 @@ pub(super) struct Outlined {
     pub failed: usize,
 }
 
-/// Flattens a glyph outline into rings of points (in mm, y up), within [`super::CHORD`].
+/// How far a flattened curve of a text `height` mm high may lie from the true one.
+fn curve_tolerance(height: f64) -> f64 {
+    (height / CURVE_FRACTION).min(super::CHORD)
+}
+
+/// Flattens a glyph outline into rings of points (in mm, y up), within `tolerance`.
 struct Flatten {
+    /// The most a flattened curve may stray from the true one, in mm.
+    tolerance: f64,
     /// Font units to mm.
     scale: f64,
     /// Shift of the glyph in font units, and of its line in mm.
@@ -276,9 +329,9 @@ impl Flatten {
     }
 
     /// The number of pieces a curve whose second difference is `d` mm long needs to stay
-    /// within the chord: the error of `n` equal pieces is `factor * d / n^2`.
-    fn steps(d: f64, factor: f64) -> usize {
-        let n = (factor * d / super::CHORD).sqrt().ceil();
+    /// within the tolerance: the error of `n` equal pieces is `factor * d / n^2`.
+    fn steps(&self, d: f64, factor: f64) -> usize {
+        let n = (factor * d / self.tolerance).sqrt().ceil();
         if n.is_finite() {
             (n.max(1.0) as usize).min(MAX_CURVE_STEPS)
         } else {
@@ -306,7 +359,7 @@ impl OutlineBuilder for Flatten {
     fn quad_to(&mut self, x1: f32, y1: f32, x: f32, y: f32) {
         let (p0, p1, p2) = (self.last, self.at(x1, y1), self.at(x, y));
         let d = (p0.x - 2.0 * p1.x + p2.x).hypot(p0.y - 2.0 * p1.y + p2.y);
-        let n = Self::steps(d, 0.25);
+        let n = self.steps(d, 0.25);
         for i in 1..=n {
             if self.over {
                 return;
@@ -324,7 +377,7 @@ impl OutlineBuilder for Flatten {
         let (p0, p1, p2, p3) = (self.last, self.at(x1, y1), self.at(x2, y2), self.at(x, y));
         let a = (p0.x - 2.0 * p1.x + p2.x).hypot(p0.y - 2.0 * p1.y + p2.y);
         let b = (p1.x - 2.0 * p2.x + p3.x).hypot(p1.y - 2.0 * p2.y + p3.y);
-        let n = Self::steps(a.max(b), 0.75);
+        let n = self.steps(a.max(b), 0.75);
         for i in 1..=n {
             if self.over {
                 return;
@@ -627,6 +680,7 @@ pub(super) fn outline(
             continue;
         }
         let mut flat = Flatten {
+            tolerance: curve_tolerance(text.height),
             scale,
             shift_x: x - ink_left,
             shift_y: -line * line_step,
@@ -703,11 +757,133 @@ mod tests {
 
     #[test]
     fn the_font_holds_ascii_32_to_127() {
-        let glyphs = font();
+        let glyphs = font(StrokeFont::SansSerif);
         assert_eq!(glyphs.len(), 96);
         assert!(glyphs[0].strokes.is_empty(), "a space draws nothing");
         // 'H' (72) is "9G]KFK[ RYFY[ RKPYP": two uprights and a bar, so three strokes.
         assert_eq!(glyphs[72 - 32].strokes.len(), 3);
+    }
+
+    fn text_in(content: &str, which: StrokeFont, height: f64) -> Text {
+        let mut t = text(content, 0.0, false);
+        t.height = height;
+        t.font = TextFont::Stroke {
+            width: height / 10.0,
+            font: which,
+        };
+        t
+    }
+
+    fn near(a: f64, b: f64, by: f64) -> bool {
+        (a - b).abs() < by
+    }
+
+    #[test]
+    fn the_times_font_holds_ascii_32_to_127_and_stands_as_high_as_simplex() {
+        let times = font(StrokeFont::Serif);
+        assert!(times.len() >= 95);
+        assert!(times[0].strokes.is_empty());
+        let (a, b) = (
+            draw(&text_in("H", StrokeFont::Serif, 2.1)).unwrap(),
+            draw(&text_in("H", StrokeFont::SansSerif, 2.1)).unwrap(),
+        );
+        let (ay, by) = (bounds(&a), bounds(&b));
+        assert!(close(ay.1, by.1) && close(ay.3, by.3), "{ay:?} {by:?}");
+        assert_ne!(a.strokes, b.strokes, "serif letters are not the sans ones");
+    }
+
+    #[test]
+    fn curves_follow_a_four_hundredth_of_the_height_but_never_stray_past_the_chord() {
+        assert!(near(curve_tolerance(1.2), 0.003, 1e-12));
+        assert!(near(curve_tolerance(2.0), 0.005, 1e-12));
+        // From 8 mm up the share is past the 0.02 mm chord, which stays the limit.
+        assert!(near(curve_tolerance(8.0), super::super::CHORD, 1e-12));
+        assert!(near(curve_tolerance(500.0), super::super::CHORD, 1e-12));
+    }
+
+    #[test]
+    fn a_quarter_circle_is_flattened_within_the_tolerance() {
+        // A quadratic through (1,0), (1,1), (0,1) stands for a quarter of a curve: its midpoint
+        // (0.75, 0.75) is the farthest from the chord; the flattened points must all lie within
+        // the tolerance of the curve, whose points are ((1-t)^2 + 2(1-t)t, 2(1-t)t + t^2).
+        let tolerance = 0.003;
+        let mut f = Flatten {
+            tolerance,
+            scale: 1.0,
+            shift_x: 0.0,
+            shift_y: 0.0,
+            rings: Vec::new(),
+            ring: Vec::new(),
+            last: Coord { x: 1.0, y: 0.0 },
+            points: 0,
+            over: false,
+        };
+        f.quad_to(1.0, 1.0, 0.0, 1.0);
+        // Each flattened segment's midpoint lies within the tolerance of the true curve.
+        let curve = |t: f64| {
+            let u = 1.0 - t;
+            Coord {
+                x: u * u + 2.0 * u * t,
+                y: 2.0 * u * t + t * t,
+            }
+        };
+        let dense: Vec<Coord> = (0..=20_000).map(|i| curve(f64::from(i) / 20_000.0)).collect();
+        for w in f.ring.windows(2) {
+            let m = Coord {
+                x: (w[0].x + w[1].x) / 2.0,
+                y: (w[0].y + w[1].y) / 2.0,
+            };
+            let d = dense
+                .iter()
+                .map(|c| (c.x - m.x).hypot(c.y - m.y))
+                .fold(f64::INFINITY, f64::min);
+            assert!(d <= tolerance, "{d}");
+        }
+        assert!(f.ring.len() > 8, "a coarser tolerance would need fewer points");
+    }
+
+    #[test]
+    fn sans_serif_keeps_the_glyphs_own_widths() {
+        // 'H' is 22 units wide in Roman Simplex (-11 to 11); at 0.1 mm per unit "HH" starts its
+        // second H 2.2 mm after the first.
+        let one = bounds(&draw(&text_in("H", StrokeFont::SansSerif, 2.1)).unwrap());
+        let two = bounds(&draw(&text_in("HH", StrokeFont::SansSerif, 2.1)).unwrap());
+        assert!(close(two.2 - one.2, 2.2), "{one:?} {two:?}");
+    }
+
+    #[test]
+    fn default_advance_matches_the_two_measured_heights() {
+        // README.txt of the Altium test boards: "TEST" (one-text) ends at x 17.53097 from a
+        // position of 10, "ROT" (one-rotated-text, turned up) at y 20.53162 from 15; both end in
+        // the same letter, so the extra character is one advance: 1.99935 at height 2.0.
+        assert!(near(default_advance(2.0), (17.53097 - 10.0) - (20.53162 - 15.0), 1e-9));
+        // special-strings: "L: Top Overlay" ends at 22.144, "Top Overlay" at 17.895, both from
+        // x = 2: three more characters, at height 1.5.
+        assert!(near(default_advance(1.5), (22.144 - 17.895) / 3.0, 1e-9));
+    }
+
+    #[test]
+    fn default_text_runs_on_a_fixed_advance() {
+        for h in [1.5, 2.0, 5.0] {
+            let advance = default_advance(h);
+            // The same letter again moves by exactly one advance, whatever the letter.
+            for c in ["T", "i", "W", "."] {
+                let one = bounds(&draw(&text_in(c, StrokeFont::Default, h)).unwrap());
+                let two =
+                    bounds(&draw(&text_in(&c.repeat(2), StrokeFont::Default, h)).unwrap());
+                assert!(near(two.2 - one.2, advance, 1e-9), "{c} {h}");
+                // And its ink stays inside its own cell.
+                assert!(one.0 >= 10.0 - 1e-9 && one.2 <= 10.0 + advance + 1e-9, "{c} {one:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn default_text_has_the_width_of_its_character_count() {
+        // The right end of a text of n characters ending in the same letter grows by one advance
+        // per character, so "TEST" and "ROT" differ by one (see the README rectangles).
+        let end = |s: &str| bounds(&draw(&text_in(s, StrokeFont::Default, 2.0)).unwrap()).2;
+        assert!(near(end("TEST") - end("ROT"), 1.99935, 1e-9));
     }
 
     #[test]
