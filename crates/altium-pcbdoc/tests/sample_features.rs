@@ -342,3 +342,33 @@ fn a_top_middle_bottom_pad_is_read_with_its_top_size() -> Result<(), Box<dyn std
     );
     Ok(())
 }
+
+/// solder-mask-region: a solid region on Top Solder, (22, 12) to (28, 18), is a mask opening
+/// drawn by hand. The board model has no place for one, so it is left out with a note that says
+/// what it is.
+#[test]
+fn a_hand_drawn_mask_opening_is_left_out_with_a_note() -> Result<(), Box<dyn std::error::Error>> {
+    let out = read("solder-mask-region.PcbDoc")?;
+    let dropped: Vec<&str> = out
+        .notes
+        .iter()
+        .filter(|n| n.severity == Severity::Dropped)
+        .map(|n| n.message.as_str())
+        .collect();
+    assert_eq!(
+        dropped,
+        [
+            "1 region(s) on Top Solder left out: a solder mask opening drawn by hand has no place \
+          in the board model yet"
+        ]
+    );
+    // one-fill's copper fill is still there, the only region.
+    let regions = out
+        .board
+        .copper
+        .iter()
+        .filter(|c| matches!(c, CopperItem::Region { .. }))
+        .count();
+    assert_eq!(regions, 1);
+    Ok(())
+}
