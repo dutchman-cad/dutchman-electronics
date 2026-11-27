@@ -569,7 +569,12 @@ impl Pile {
         if self.outlined.is_empty() {
             return geo::unary_union(&self.polygons);
         }
-        let all: Vec<Polygon> = self.polygons.iter().chain(&self.outlined).cloned().collect();
+        let all: Vec<Polygon> = self
+            .polygons
+            .iter()
+            .chain(&self.outlined)
+            .cloned()
+            .collect();
         geo::unary_union(&all)
     }
 

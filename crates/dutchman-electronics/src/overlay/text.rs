@@ -827,7 +827,9 @@ mod tests {
                 y: 2.0 * u * t + t * t,
             }
         };
-        let dense: Vec<Coord> = (0..=20_000).map(|i| curve(f64::from(i) / 20_000.0)).collect();
+        let dense: Vec<Coord> = (0..=20_000)
+            .map(|i| curve(f64::from(i) / 20_000.0))
+            .collect();
         for w in f.ring.windows(2) {
             let m = Coord {
                 x: (w[0].x + w[1].x) / 2.0,
@@ -839,7 +841,10 @@ mod tests {
                 .fold(f64::INFINITY, f64::min);
             assert!(d <= tolerance, "{d}");
         }
-        assert!(f.ring.len() > 8, "a coarser tolerance would need fewer points");
+        assert!(
+            f.ring.len() > 8,
+            "a coarser tolerance would need fewer points"
+        );
     }
 
     #[test]
@@ -870,11 +875,13 @@ mod tests {
             // The same letter again moves by exactly one advance, whatever the letter.
             for c in ["T", "i", "W", "."] {
                 let one = bounds(&draw(&text_in(c, StrokeFont::Default, h)).unwrap());
-                let two =
-                    bounds(&draw(&text_in(&c.repeat(2), StrokeFont::Default, h)).unwrap());
+                let two = bounds(&draw(&text_in(&c.repeat(2), StrokeFont::Default, h)).unwrap());
                 assert!(near(two.2 - one.2, advance, 1e-9), "{c} {h}");
                 // And its ink stays inside its own cell.
-                assert!(one.0 >= 10.0 - 1e-9 && one.2 <= 10.0 + advance + 1e-9, "{c} {one:?}");
+                assert!(
+                    one.0 >= 10.0 - 1e-9 && one.2 <= 10.0 + advance + 1e-9,
+                    "{c} {one:?}"
+                );
             }
         }
     }

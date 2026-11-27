@@ -298,7 +298,10 @@ mod tests {
         let (out, _) = thin_keeping(&shape, THIN, &MultiPolygon::new(vec![b.clone()]));
         assert_eq!(out.0.len(), 2);
         assert!(out.0.contains(&b), "the kept area keeps every point");
-        assert!(out.0.iter().any(|p| p.exterior().0.len() <= 6), "the other is thinned");
+        assert!(
+            out.0.iter().any(|p| p.exterior().0.len() <= 6),
+            "the other is thinned"
+        );
     }
 
     #[test]
