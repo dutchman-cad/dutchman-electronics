@@ -11,23 +11,16 @@ use board_model::{Color, SurfaceFinish};
 
 /// Solder mask: a dark green.
 pub const MASK_COLOR: &str = "#1f5f3a";
-/// How opaque the solder mask overlay is (0 clear, 1 solid): fully.
+/// How opaque the solder mask overlay is (0 clear, 1 solid) when the board file gives no
+/// opacity of its own: 0.75.
 ///
-/// The mask overlay fills only between the copper (the masked copper is cut out of it and drawn
-/// in [`COPPER_MASKED_COLOR`], the color copper shows through the mask), so all it ever lies on
-/// is bare laminate, and the board body under it is the pale FR4 of the board edge
-/// ([`BOARD_COLOR`]). A translucent mask let that cream through: at 0.85 the mask over laminate
-/// came out paler than the copper-colored areas beside it, the reverse of a real board, where
-/// mask over bare laminate is the darkest green and mask over copper the lighter. Solid, the
-/// mask over laminate is exactly the file's mask color (never toned down) and the copper next
-/// to it is the lighter, warmer [`COPPER_MASKED_COLOR`]; the board edge stays the laminate color.
-///
-/// This is ours on purpose, whatever the file says: the opacity in a board file (0.6 on the
-/// blue-mask test board) is Altium's 3D-view display setting, not a property of the physical
-/// mask.
-pub const MASK_OPACITY: f64 = 1.0;
-/// Copper under the mask, as it looks through it: a green a little lighter and warmer than the mask.
-pub const COPPER_MASKED_COLOR: &str = "#2b6e43";
+/// The mask lies over all copper and the laminate sheet and is see-through, so copper shows
+/// through it and laminate shows darker (a real mask over laminate is the darkest). Where the
+/// file gives a mask color it gives its opacity too (0.6 for Altium's 3D view), and that is used.
+pub const MASK_OPACITY: f64 = 0.75;
+/// The laminate sheet under the mask on each face: a dark FR4 olive, opaque. The mask over it
+/// reads as the dark mask color; the board edge keeps [`BOARD_COLOR`].
+pub const LAMINATE_COLOR: &str = "#2a2f1c";
 /// Bare pad copper: gold, as on an ENIG finish.
 pub const COPPER_BARE_COLOR: &str = "#d4af37";
 /// Pads under a tin, solder or silver finish (HASL, immersion tin or silver): a light silver.
@@ -92,78 +85,6 @@ pub const BOARD_FINISH: Finish = Finish {
 /// A color as lowercase `#rrggbb`.
 pub fn hex(c: &Color) -> String {
     format!("#{:02x}{:02x}{:02x}", c.r, c.g, c.b)
-}
-
-/// Per-channel gains that turn a dark or mid mask color into the copper seen through it. Red
-/// gains most and blue least, so the copper reads lighter and warmer than the mask. They are
-/// chosen so the default mask `#1f5f3a` gives exactly [`COPPER_MASKED_COLOR`], `#2b6e43`.
-const MASKED_COPPER_GAIN: [f64; 3] = [1.39, 1.158, 1.155];
-/// The same for a light mask, which cannot get lighter: copper under it reads a little darker
-/// and yellower.
-const LIGHT_MASK_GAIN: [f64; 3] = [0.95, 0.90, 0.78];
-/// Masks lighter than this (relative luminance, 0 to 1) use [`LIGHT_MASK_GAIN`].
-const LIGHT_MASK_LUMINANCE: f64 = 0.6;
-/// The copper always differs from its mask by at least this much (0 to 255) in some channel.
-pub const MIN_COPPER_DIFFERENCE: u8 = 12;
-/// What is added to (dark mask) or taken from (light mask) each channel when the gains alone
-/// leave the copper too close to the mask, as for a black mask or a fully saturated one.
-const COPPER_NUDGE: [u8; 3] = [16, 12, 12];
-
-/// The color of copper under a solder mask of color `mask`, as lowercase `#rrggbb`.
-///
-/// A dark or mid mask (relative luminance 0.6 or less) is multiplied per channel by
-/// [`MASKED_COPPER_GAIN`] (red 1.39, green 1.158, blue 1.155); a lighter one by
-/// [`LIGHT_MASK_GAIN`] (0.95, 0.90, 0.78). When a channel would pass 255, all three are scaled
-/// down together instead of clipped, so the hue stays. The default mask `#1f5f3a` gives exactly
-/// `#2b6e43`. If the result is still within [`MIN_COPPER_DIFFERENCE`] of the mask in every
-/// channel (black, or a mask whose gain is lost to the scaling), [`COPPER_NUDGE`] is added (dark)
-/// or taken away (light), so the copper never vanishes into the mask.
-pub fn masked_copper(mask: &Color) -> String {
-    let rgb = [mask.r, mask.g, mask.b];
-    let light = luminance(mask) > LIGHT_MASK_LUMINANCE;
-    let gains = if light {
-        LIGHT_MASK_GAIN
-    } else {
-        MASKED_COPPER_GAIN
-    };
-    let mut v = [0.0f64; 3];
-    for ((out, c), gain) in v.iter_mut().zip(rgb).zip(gains) {
-        *out = f64::from(c) * gain;
-    }
-    let top = v.iter().copied().fold(0.0, f64::max);
-    if top > 255.0 {
-        let scale = 255.0 / top;
-        for out in &mut v {
-            *out *= scale;
-        }
-    }
-    // Each value is within 0..=255 after the clamp, so the cast cannot truncate.
-    let mut out = v.map(|x| x.round().clamp(0.0, 255.0) as u8);
-    let apart = out
-        .iter()
-        .zip(rgb)
-        .any(|(o, m)| o.abs_diff(m) >= MIN_COPPER_DIFFERENCE);
-    if !apart {
-        for (o, nudge) in out.iter_mut().zip(COPPER_NUDGE) {
-            *o = if light {
-                o.saturating_sub(nudge)
-            } else {
-                o.saturating_add(nudge)
-            };
-        }
-    }
-    let [r, g, b] = out;
-    hex(&Color {
-        r,
-        g,
-        b,
-        opacity: 1.0,
-    })
-}
-
-/// Relative luminance of a color, 0 (black) to 1 (white), from its sRGB values as they are.
-fn luminance(c: &Color) -> f64 {
-    (0.2126 * f64::from(c.r) + 0.7152 * f64::from(c.g) + 0.0722 * f64::from(c.b)) / 255.0
 }
 
 /// What the bare pads of one side look like: color and finish.
@@ -239,45 +160,8 @@ mod tests {
     }
 
     #[test]
-    fn the_default_mask_gives_the_default_masked_copper() {
+    fn the_default_mask_color_round_trips_through_hex() {
         assert_eq!(hex(&rgb(0x1f, 0x5f, 0x3a)), MASK_COLOR);
-        assert_eq!(masked_copper(&rgb(0x1f, 0x5f, 0x3a)), COPPER_MASKED_COLOR);
-    }
-
-    #[test]
-    fn masked_copper_is_lighter_and_warmer_and_capped() {
-        // Blue mask 17, 85, 204 gives 23.63, 98.43, 235.62.
-        assert_eq!(masked_copper(&rgb(17, 85, 204)), "#1862ec");
-        // Copper under a light mask is darker and yellower, not the same white; under black it
-        // is nudged lighter. Neither may vanish into the mask.
-        assert_eq!(masked_copper(&rgb(255, 255, 255)), "#f2e6c7");
-        assert_eq!(masked_copper(&rgb(0, 0, 0)), "#100c0c");
-    }
-
-    #[test]
-    fn masked_copper_never_vanishes_into_its_mask() {
-        // (mask, copper): the mask, and what it gives.
-        let cases = [
-            ((255, 255, 255), "#f2e6c7"),
-            ((0, 0, 0), "#100c0c"),
-            ((200, 0, 0), "#ff0000"),
-            ((36, 120, 50), "#328b3a"),
-            ((17, 85, 204), "#1862ec"),
-            ((0x1f, 0x5f, 0x3a), "#2b6e43"),
-            ((255, 0, 0), "#ff0c0c"),
-        ];
-        for ((r, g, b), want) in cases {
-            let mask = rgb(r, g, b);
-            let copper = masked_copper(&mask);
-            assert_eq!(copper, want, "mask {r},{g},{b}");
-            let channel = |i: usize| u8::from_str_radix(&copper[1 + 2 * i..3 + 2 * i], 16).unwrap();
-            let apart = [(channel(0), r), (channel(1), g), (channel(2), b)]
-                .iter()
-                .any(|(c, m)| c.abs_diff(*m) >= MIN_COPPER_DIFFERENCE);
-            assert!(apart, "mask {r},{g},{b} gives {copper}");
-        }
-        // Red keeps its hue: green and blue stay zero.
-        assert_eq!(&masked_copper(&rgb(200, 0, 0))[3..], "0000");
     }
 
     #[test]
@@ -328,7 +212,7 @@ mod tests {
     fn every_color_is_a_lowercase_hex_triplet() {
         for c in [
             MASK_COLOR,
-            COPPER_MASKED_COLOR,
+            LAMINATE_COLOR,
             COPPER_BARE_COLOR,
             SILVER_COLOR,
             COPPER_COLOR,

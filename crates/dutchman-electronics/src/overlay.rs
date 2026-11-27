@@ -3,16 +3,16 @@
 //!
 //! Dutchman only draws polygons, so all the geometry happens here: every item becomes a polygon
 //! (a track a stroke with round ends, a pad its shape, a via its ring), the polygons of one
-//! overlay are united, every drill is cut out, and masked copper stops where a pad begins. Arcs
-//! are polylines within [`CHORD`] mm. Up to eight overlays come out, for each side: copper under
-//! the mask (`masked`), bare pad copper (`bare`), silkscreen, and the solder mask itself (the
-//! board face less the bare pads, the masked copper and every drill). Each carries its color from
-//! [`crate::colors`] and a `thickness`: every area is extruded from its `z` away from the board.
-//! Copper starts at the face and is [`COPPER_THICKNESS`] thick, the mask starts there too and is
-//! [`MASK_THICKNESS`] thick (so copper stands proud of it), silkscreen starts on top of the
-//! copper and is [`SILK_THICKNESS`] thick (real ink), so it clears both the copper and the mask.
-//! The bottom side mirrors the top. Past [`MAX_SOLID_FACES`] the largest overlays are drawn flat,
-//! and a note says which.
+//! overlay are united and every drill is cut out. Arcs are polylines within [`CHORD`] mm. Up to
+//! ten overlays come out, for each side, from the board face outward: an opaque `laminate` sheet
+//! (the board face less its cutouts and drills, [`LAMINATE_THICKNESS`] thick), all copper as one
+//! overlay ([`COPPER_THICKNESS`] thick from the face), the surface finish (the copper inside the
+//! mask openings, [`FINISH_THICKNESS`] on top of the copper), the solder mask (the face less the
+//! mask openings and the drills, not less the copper, from the face to [`MASK_OVER_COPPER`]
+//! above the copper, see-through) and the silkscreen on top of the mask, [`SILK_THICKNESS`]
+//! thick (real ink). Each carries its color from [`crate::colors`] and a `thickness`: every area
+//! is extruded from its `z` away from the board. The bottom side mirrors the top. Past
+//! [`MAX_SOLID_FACES`] the largest overlays are drawn flat, and a note says which.
 //!
 //! Copper on inner layers lies inside the board and is left out by default. With [`Copper::All`]
 //! each inner copper layer whose place in the stack is known gets an overlay of its own (side
@@ -34,8 +34,8 @@ use geo::{BooleanOps, Coord, LineString, MultiPolygon, Polygon};
 use serde_json::{json, Value};
 
 use crate::colors::{
-    hex, masked_copper, pad_look, Finish, COPPER_COLOR, COPPER_FINISH, COPPER_MASKED_COLOR,
-    MASK_COLOR, MASK_FINISH, MASK_OPACITY, SILKSCREEN_COLOR, SILKSCREEN_FINISH,
+    hex, pad_look, Finish, BOARD_FINISH, COPPER_COLOR, COPPER_FINISH, LAMINATE_COLOR, MASK_COLOR,
+    MASK_FINISH, MASK_OPACITY, SILKSCREEN_COLOR, SILKSCREEN_FINISH,
 };
 
 /// Which copper layers get overlays.
@@ -53,23 +53,31 @@ pub const CHORD: f64 = 0.02;
 /// How thick copper is, in mm (35 um, 1 oz): bare pads and copper under the mask are each
 /// extruded this far from the board face, away from the board.
 pub const COPPER_THICKNESS: f64 = 0.035;
-/// How thick the solder mask is, in mm (20 um). It fills only between the copper, so copper
-/// stands [`COPPER_THICKNESS`] less this proud of it.
-pub const MASK_THICKNESS: f64 = 0.020;
+/// How thick the laminate sheet at each face is, in mm. Copper starts at the face too, so it
+/// stands through the sheet.
+pub const LAMINATE_THICKNESS: f64 = 0.005;
+/// How thick the surface finish (gold, tin) is on top of the copper, in mm (4 um).
+pub const FINISH_THICKNESS: f64 = 0.004;
+/// How far the mask's top is above the copper's top, in mm.
+pub const MASK_OVER_COPPER: f64 = 0.010;
+/// How thick the solder mask is, in mm: from the face to [`MASK_OVER_COPPER`] above the copper,
+/// so it covers all copper and, being see-through, shows it.
+pub const MASK_THICKNESS: f64 = COPPER_THICKNESS + MASK_OVER_COPPER;
 /// How thick silkscreen ink is, in mm (15 um).
 pub const SILK_THICKNESS: f64 = 0.015;
-/// How far silkscreen starts off the board face, in mm: at the top of the copper
-/// ([`COPPER_THICKNESS`]), which is higher than the top of the mask ([`MASK_THICKNESS`]). Over
-/// masked copper the mask is cut away and the copper reaches this height, so starting here keeps
-/// the ink clear of both copper and mask.
-pub const SILK_LIFT: f64 = COPPER_THICKNESS;
-/// How far a flat sheet of copper under the mask (no `thickness`, see [`MAX_SOLID_FACES`]) is
-/// drawn off the board face, in mm, away from the board, so it does not share the face's plane.
-pub const FLAT_MASKED_COPPER_LIFT: f64 = 0.007;
+/// How far silkscreen starts off the board face, in mm: at the top of the mask
+/// ([`MASK_THICKNESS`]), which is above the copper, so the ink lies on the mask.
+pub const SILK_LIFT: f64 = MASK_THICKNESS;
+/// How far a flat laminate sheet (no `thickness`, see [`MAX_SOLID_FACES`]) is drawn off the
+/// board face, in mm, away from the board, so it does not share the face's plane. The flat
+/// sheets stack in the order of the solids: laminate, copper, finish, mask, silkscreen.
+pub const FLAT_LAMINATE_LIFT: f64 = 0.001;
+/// The same for a flat sheet of copper, in mm.
+pub const FLAT_COPPER_LIFT: f64 = 0.003;
+/// The same for a flat sheet of finish, in mm.
+pub const FLAT_FINISH_LIFT: f64 = 0.005;
 /// The same for a flat solder mask sheet, in mm.
-pub const FLAT_MASK_LIFT: f64 = 0.005;
-/// The same for a flat sheet of bare pads, in mm.
-pub const FLAT_PADS_LIFT: f64 = 0.001;
+pub const FLAT_MASK_LIFT: f64 = 0.007;
 /// The same for a flat silkscreen sheet, in mm.
 pub const FLAT_SILK_LIFT: f64 = 0.01;
 /// The most faces the solids of one board's overlays may have together, as estimated by
@@ -1198,24 +1206,25 @@ fn overlays_within(
                 )
             };
             let mask_color = mask_file.as_ref().map_or(MASK_COLOR.to_string(), hex);
-            let copper_color = mask_file
+            let mask_opacity = mask_file
                 .as_ref()
-                .map_or(COPPER_MASKED_COLOR.to_string(), masked_copper);
+                .map(|c| c.opacity)
+                .filter(|o| o.is_finite() && *o > 0.0 && *o <= 1.0)
+                .unwrap_or(MASK_OPACITY);
             let silk_color = silk_file.as_ref().map_or(SILKSCREEN_COLOR.to_string(), hex);
             let (pads, _) = pad_look(finish_file.as_ref());
-            let (bare_all, masked_all) = (f.bare.union(), f.masked.union());
-            let bare = bare_all.difference(&drilled);
-            let masked = masked_all.difference(&drilled).difference(&bare);
+            // All copper of the face is one unit; the finish is the part of it the mask opens
+            // over (the opening, not the pad, so the ring round a pad is covered too).
+            let copper_all = f.masked.union().union(&f.bare.union()).difference(&drilled);
             let opening_all = f.opening.union();
-            // Silkscreen is not printed over holes, via caps, or the mask openings (the bare
-            // pads and the ring of laminate round them).
+            let finish = copper_all.intersection(&opening_all);
+            // Silkscreen is not printed over holes, via caps, or the mask openings.
             let silk = f
                 .silk
                 .union()
                 .difference(&drilled)
                 .difference(&via_drilled)
-                .difference(&opening_all)
-                .difference(&bare);
+                .difference(&opening_all);
             let plain = |name: String,
                          kind,
                          finish,
@@ -1237,38 +1246,45 @@ fn overlays_within(
                 finish_look,
                 opacity: None,
             };
-            // The mask fills only between the copper: not over the bare pads (grown by the mask
-            // expansion), the masked copper or the drills, so copper stands proud of it. One cut from the united shapes (the
-            // copper before its drills are taken out), so no sliver is left where edges meet.
-            let mask = face.as_ref().map(|face| {
-                face.difference(
-                    &drilled
-                        .union(&bare_all)
-                        .union(&opening_all)
-                        .union(&masked_all),
-                )
-            });
+            // The mask lies over everything: the board face less its openings and the drills,
+            // not less the copper, which it covers (it is see-through). One cut from the united
+            // openings, so no sliver is left where edges meet.
+            let mask = face
+                .as_ref()
+                .map(|face| face.difference(&drilled.union(&opening_all)));
+            if let Some(face) = &face {
+                built.push(plain(
+                    format!("Laminate {side}"),
+                    "laminate",
+                    None,
+                    0.0,
+                    FLAT_LAMINATE_LIFT,
+                    LAMINATE_THICKNESS,
+                    face.difference(&drilled),
+                    (LAMINATE_COLOR.to_string(), BOARD_FINISH),
+                ));
+            }
             built.push(Built {
                 text: f.masked.outlined_union(),
                 ..plain(
                     format!("Copper {side}"),
                     "copper",
-                    Some("masked"),
+                    None,
                     0.0,
-                    FLAT_MASKED_COPPER_LIFT,
+                    FLAT_COPPER_LIFT,
                     COPPER_THICKNESS,
-                    masked,
-                    (copper_color, MASK_FINISH),
+                    copper_all,
+                    (COPPER_COLOR.to_string(), COPPER_FINISH),
                 )
             });
             built.push(plain(
-                format!("Copper {side} pads"),
+                format!("Finish {side}"),
                 "copper",
                 Some("bare"),
-                0.0,
-                FLAT_PADS_LIFT,
                 COPPER_THICKNESS,
-                bare,
+                FLAT_FINISH_LIFT,
+                FINISH_THICKNESS,
+                finish,
                 (pads.color.to_string(), pads.finish),
             ));
             built.push(Built {
@@ -1286,7 +1302,7 @@ fn overlays_within(
             });
             if let Some(mask) = mask {
                 built.push(Built {
-                    opacity: Some(MASK_OPACITY),
+                    opacity: Some(mask_opacity),
                     ..plain(
                         format!("Solder mask {side}"),
                         "mask",
