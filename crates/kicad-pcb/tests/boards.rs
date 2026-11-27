@@ -511,7 +511,10 @@ fn text_justification_and_pen_are_carried() {
         .iter()
         .any(|t| t.anchor.horizontal == H::Left && t.rotation_deg == 0.0));
     // Two lines are kept as one text.
-    assert_eq!(b.texts.iter().filter(|t| t.content == "HIH\nHIH").count(), 8);
+    assert_eq!(
+        b.texts.iter().filter(|t| t.content == "HIH\nHIH").count(),
+        8
+    );
     // The 1 mm text asked to have a 0.3 mm pen is drawn with 0.25.
     let small = b.texts.iter().find(|t| near(t.height, 1.0)).unwrap();
     assert!(matches!(small.font, TextFont::Stroke { width, .. } if near(width, 0.25)));
