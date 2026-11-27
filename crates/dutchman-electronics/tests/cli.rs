@@ -902,3 +902,177 @@ fn a_kicad_boards_linked_model_is_used_by_its_name() -> Result<(), Box<dyn std::
     );
     Ok(())
 }
+
+/// A new temporary folder `name` holding a copy of all-features.PcbDoc.
+#[cfg(feature = "altium")]
+fn folder_with_all_features(name: &str) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
+    let dir = std::env::temp_dir().join(format!("{name}-{}", std::process::id()));
+    std::fs::create_dir_all(&dir)?;
+    std::fs::copy(
+        test_board("all-features.PcbDoc"),
+        dir.join("all-features.PcbDoc"),
+    )?;
+    Ok(dir)
+}
+
+/// A project file text linking `link` and holding the parameter PCBNumber = `value`.
+#[cfg(feature = "altium")]
+fn project_text(link: &str, value: &str) -> String {
+    format!(
+        "\u{feff}[Design]\r\nVersion=1.0\r\n\r\n[Document1]\r\nDocumentPath={link}\r\n\r\n\
+         [Parameter1]\r\nName=PCBNumber\r\nValue={value}\r\n"
+    )
+}
+
+/// Reads `board` into a new folder under `dir`; the manifest and every file written.
+#[cfg(feature = "altium")]
+fn read_files(
+    board: &std::path::Path,
+    dir: &std::path::Path,
+    extra: &[&str],
+) -> Result<(serde_json::Value, Vec<(String, Vec<u8>)>), Box<dyn std::error::Error>> {
+    let out = dir.join(format!("out{}", extra.len()));
+    let mut args = vec![
+        "read".to_string(),
+        board.to_string_lossy().into_owned(),
+        "--out".into(),
+        out.to_string_lossy().into_owned(),
+        "--json".into(),
+    ];
+    args.extend(extra.iter().map(|a| (*a).to_string()));
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (ok, v) = run(&args)?;
+    assert!(ok, "{v}");
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(&out)? {
+        let entry = entry?;
+        files.push((
+            entry.file_name().to_string_lossy().into_owned(),
+            std::fs::read(entry.path())?,
+        ));
+    }
+    files.sort();
+    Ok((v, files))
+}
+
+#[cfg(feature = "altium")]
+#[test]
+fn a_board_alone_takes_the_parameters_of_the_project_beside_it(
+) -> Result<(), Box<dyn std::error::Error>> {
+    // all-features.PcbDoc's ".PCBNumber" and "Rev .BoardRevision" show DN-0001 and Rev A
+    // (README.txt, step 10) without --project: the drawing is the same as with it.
+    let board = test_board("all-features.PcbDoc");
+    let dir = std::env::temp_dir().join(format!("de-read-beside-{}", std::process::id()));
+    std::fs::create_dir_all(&dir)?;
+    let alone = read_files(&board, &dir, &[]);
+    let with = read_files(
+        &board,
+        &dir,
+        &[
+            "--project",
+            &test_board("all-features.PrjPcb").to_string_lossy(),
+        ],
+    );
+    std::fs::remove_dir_all(&dir).ok();
+    let ((alone_v, alone_files), (_, with_files)) = (alone?, with?);
+    let notes = messages(&alone_v);
+    assert!(
+        notes.contains(&"parameters taken from all-features.PrjPcb next to the board".to_string()),
+        "{notes:?}"
+    );
+    assert!(
+        notes
+            .iter()
+            .any(|m| m.starts_with("3 text(s) refer to a project parameter")),
+        "{notes:?}"
+    );
+    assert_eq!(alone_files, with_files);
+    Ok(())
+}
+
+#[cfg(feature = "altium")]
+#[test]
+fn two_projects_linking_the_board_give_a_warning_and_no_parameters(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let dir = folder_with_all_features("de-read-two")?;
+    std::fs::write(
+        dir.join("a.PrjPcb"),
+        project_text("all-features.PcbDoc", "A-1"),
+    )?;
+    std::fs::write(
+        dir.join("b.prjpcb"),
+        project_text(".\\ALL-FEATURES.pcbdoc", "B-2"),
+    )?;
+    let result = read_files(&dir.join("all-features.PcbDoc"), &dir, &[]);
+    std::fs::remove_dir_all(&dir).ok();
+    let notes = messages(&result?.0);
+    assert!(
+        notes.iter().any(|m| m
+            .starts_with("2 projects next to the board link it (a.PrjPcb, b.prjpcb)")
+            && m.contains("--project")),
+        "{notes:?}"
+    );
+    assert!(
+        !notes.iter().any(|m| m.starts_with("parameters taken from")),
+        "{notes:?}"
+    );
+    Ok(())
+}
+
+#[cfg(feature = "altium")]
+#[test]
+fn a_project_that_does_not_link_the_board_is_ignored() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = folder_with_all_features("de-read-other")?;
+    std::fs::write(
+        dir.join("other.PrjPcb"),
+        project_text("other.PcbDoc", "X-9"),
+    )?;
+    std::fs::write(
+        dir.join("sub.PrjPcb"),
+        project_text("sub\\all-features.PcbDoc", "X-8"),
+    )?;
+    let result = read_files(&dir.join("all-features.PcbDoc"), &dir, &[]);
+    std::fs::remove_dir_all(&dir).ok();
+    let notes = messages(&result?.0);
+    assert!(
+        !notes
+            .iter()
+            .any(|m| m.contains("next to the board") || m.contains("PrjPcb")),
+        "{notes:?}"
+    );
+    Ok(())
+}
+
+#[cfg(feature = "altium")]
+#[test]
+fn a_huge_or_broken_project_beside_the_board_is_skipped_with_a_note(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let dir = folder_with_all_features("de-read-huge")?;
+    // A sparse file one byte over the limit on what is read; a file that is not a project.
+    let huge = std::fs::File::create(dir.join("huge.PrjPcb"))?;
+    huge.set_len((256 << 20) + 1)?;
+    std::fs::write(dir.join("broken.PrjPcb"), "not a project")?;
+    std::fs::write(
+        dir.join("good.PrjPcb"),
+        project_text("all-features.PcbDoc", "G-1"),
+    )?;
+    let result = read_files(&dir.join("all-features.PcbDoc"), &dir, &[]);
+    std::fs::remove_dir_all(&dir).ok();
+    let notes = messages(&result?.0);
+    assert!(
+        notes.iter().any(|m| m.starts_with(
+            "the project huge.PrjPcb next to the board was not used: it is larger than"
+        )),
+        "{notes:?}"
+    );
+    assert!(
+        notes.iter().any(|m| m
+            .starts_with("the project broken.PrjPcb next to the board was not used")),
+        "{notes:?}"
+    );
+    assert!(
+        notes.contains(&"parameters taken from good.PrjPcb next to the board".to_string()),
+        "{notes:?}"
+    );
+    Ok(())
+}
