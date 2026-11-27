@@ -1025,6 +1025,32 @@ stroke-fonts.PcbDoc
 Saving embedded Arial in the four via boards (none of their texts uses it); it was removed as
 before (see "Paths inside the files").
 
+Pad mask overrides (pad-mask-overrides)
+---------------------------------------
+Made on 2026-11-27 from a file copy of one-plated-pad.PcbDoc (same outline and stack; its
+SolderMaskExpansion rule is 0.1 mm for all objects). By my own script, read back and logged: its
+pad removed and eight free pads added (no component, no net), simple pad stack, at y 15.000:
+    SMD pads         Top Layer, rectangle 2.000 x 1.000, no hole
+    through-hole     Multi-Layer, round 2.000, hole 1.000, plated
+Then by hand, in each pad's Properties panel (Pad Stack > Solder / Paste), one setting changed
+per pad, everything else left as Altium made it (paste and mask by the rule, not tented):
+    pad  x       kind          setting
+    P1   13.000  SMD           none: mask and paste by the rule (the reference pad)
+    P2   17.000  SMD           Solder: Manual Expansion, 0mm
+    P3   21.000  SMD           Solder: Manual Expansion, 0.2mm
+    P4   25.000  SMD           Solder: Manual Expansion (0.1mm kept), Tented ticked; Altium
+                               offers Tented only once the mask is Manual
+    P5   29.000  through-hole  Solder: Manual Expansion, top and bottom unlinked (the link
+                               button in the expanded Top Solder row), top 0.2mm, bottom 0.05mm
+    P6   33.000  through-hole  Solder: Manual Expansion (0.1mm kept), Tented ticked on Bottom
+                               Solder only
+    P7   37.000  SMD           Paste: Manual Expansion, 0.05mm (Altium then shows 15.5 % in
+                               the % column); solder mask by the rule
+    P8   41.000  through-hole  Solder: Manual Expansion, 0.1mm, From Hole Edge ticked
+Saved once and closed; Altium embedded Arial on saving and it was removed as before (no text on
+this board uses it).
+
+
 Paths inside the files
 ----------------------
 Altium writes a few paths from the PC that saved a board into the file. After the last save, I
