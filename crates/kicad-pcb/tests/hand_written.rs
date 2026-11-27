@@ -591,3 +591,58 @@ fn a_pads_solder_mask_margin_wins_over_its_footprints() {
         ]
     );
 }
+
+#[test]
+fn a_copper_polygon_with_an_arc_keeps_it_filled_or_as_its_edge() {
+    // On F.Cu: from (10, 9) an arc through (11, 10) to (10, 11) (radius 1 about (10, 10)), then
+    // straight to (9.5, 11), (9.5, 9) and back. Filled, it is one region whose edge holds the arc;
+    // not filled, its edge is three tracks and a track arc.
+    let shape = |fill: &str| {
+        format!(
+            "{HEAD}(gr_poly (pts (arc (start 10 9) (mid 11 10) (end 10 11)) (xy 9.5 11) (xy 9.5 9))\n\
+               (stroke (width 0.1) (type solid)) (fill {fill}) (layer \"F.Cu\"))\n)"
+        )
+    };
+    let o = read(&shape("yes")).unwrap();
+    assert!(
+        o.notes.iter().all(|n| n.severity != Severity::Dropped),
+        "{:?}",
+        o.notes
+    );
+    let region = o.board.copper.iter().find_map(|c| match c {
+        board_model::CopperItem::Region { contour, holes, .. } => Some((contour, holes)),
+        _ => None,
+    });
+    let (contour, holes) = region.unwrap();
+    assert!(holes.is_empty());
+    assert!(contour.segments.iter().any(|s| matches!(
+        s,
+        board_model::Segment::Arc { radius, .. } if (radius - 1.0).abs() < 1e-9
+    )));
+    let o = read(&shape("no")).unwrap();
+    assert!(
+        o.notes.iter().all(|n| n.severity != Severity::Dropped),
+        "{:?}",
+        o.notes
+    );
+    let arcs = o
+        .board
+        .copper
+        .iter()
+        .filter(|c| matches!(c, board_model::CopperItem::TrackArc { radius, start_deg, end_deg, .. }
+            if (radius - 1.0).abs() < 1e-9 && (start_deg - 270.0).abs() < 1e-6 && (end_deg - 90.0).abs() < 1e-6))
+        .count();
+    assert_eq!(arcs, 1);
+    let tracks = o
+        .board
+        .copper
+        .iter()
+        .filter(|c| matches!(c, board_model::CopperItem::Track { .. }))
+        .count();
+    assert_eq!(tracks, 3);
+    assert!(!o
+        .board
+        .copper
+        .iter()
+        .any(|c| matches!(c, board_model::CopperItem::Region { .. })));
+}
