@@ -890,11 +890,12 @@ fn a_blind_via_is_a_pocket_open_on_one_face() {
     assert_eq!(out.stats.faces, 6 + 2 + 1);
     check_topology_blind(&out.text, 1);
 
-    // The same from the bottom (In2 to bottom): a pocket open on the bottom face.
+    // The same from the bottom (In2 to bottom): a pocket open on the bottom face, up to the
+    // upper face of In2 (1.6 - 1.0 = 0.6).
     let out = write(&four_layer(vec![via_on(10.0, Some((3, 2)))]), "blind").unwrap();
     let (low, high) = out.holes[0].span.unwrap();
     assert!(
-        low.abs() < 1e-9 && (high - 0.565).abs() < 1e-9,
+        low.abs() < 1e-9 && (high - 0.6).abs() < 1e-9,
         "{low} {high}"
     );
     assert_eq!(out.stats.openings, 0);
