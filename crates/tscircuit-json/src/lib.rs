@@ -897,15 +897,11 @@ fn smt_pad(e: &Value, layer: Option<usize>) -> Option<CopperItem> {
             return None;
         }
         // The pad's center when the element gives none: the middle of its bounding box.
-        let (lo_x, hi_x) = p.iter().fold((f64::MAX, f64::MIN), |(lo, hi), q| {
-            (lo.min(q.x), hi.max(q.x))
-        });
-        let (lo_y, hi_y) = p.iter().fold((f64::MAX, f64::MIN), |(lo, hi), q| {
-            (lo.min(q.y), hi.max(q.y))
-        });
+        let xs = p.iter().map(|q| q.x);
+        let ys = p.iter().map(|q| q.y);
         let middle = Point {
-            x: (lo_x + hi_x) / 2.0,
-            y: (lo_y + hi_y) / 2.0,
+            x: (xs.clone().fold(f64::MAX, f64::min) + xs.fold(f64::MIN, f64::max)) / 2.0,
+            y: (ys.clone().fold(f64::MAX, f64::min) + ys.fold(f64::MIN, f64::max)) / 2.0,
         };
         return Some(CopperItem::PolygonPad {
             layer,
