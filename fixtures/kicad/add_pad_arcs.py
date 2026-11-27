@@ -5,7 +5,7 @@ format allows `(arc (start) (mid) (end))` among a polygon's points. This edits t
 every `(pts (xy A) (xy B) (xy C))` becomes `(pts (arc (start A) (mid B) (end C)))`, then loads the
 board in KiCad and saves it again, so KiCad itself writes the final file.
 
-Usage (inside KiCad 9): add_pad_arcs.py board.kicad_pcb
+Usage (inside KiCad 9 or 10): add_pad_arcs.py board.kicad_pcb [how many arcs, 4 by default]
 """
 import re
 import sys
@@ -20,7 +20,7 @@ pattern = re.compile(r"\(pts\s*" + xy + r"\s*" + xy + r"\s*" + xy + r"\s*\)")
 text, n = pattern.subn(
     lambda m: "(pts (arc (start {} {}) (mid {} {}) (end {} {})))".format(*m.groups()), text
 )
-assert n == 4, n
+assert n == (int(sys.argv[2]) if len(sys.argv) > 2 else 4), n
 open(path, "w").write(text)
 board = pcbnew.LoadBoard(path)
 board.Save(path)

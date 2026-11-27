@@ -1,0 +1,9 @@
+{
+  "meta": {
+    "filename": "k10-all-features.kicad_pro",
+    "version": 3
+  },
+  "text_variables": {
+    "PCB_NUMBER": "DN-0100"
+  }
+}
