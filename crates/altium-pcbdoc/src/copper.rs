@@ -76,6 +76,13 @@
 //!   (1.000 + 0.200 - 2.000) / 2 = -0.400), and a note counts the pads whose opening ends up
 //!   smaller than the pad. The paste expansion has no place in the board model and is only
 //!   counted in a note.
+//! - Pad holes that are not round (`pad-hole-shapes`): the hole size at byte 45 of block 4 is a
+//!   slot's width (0.800) or a square's side (1.000), and block 5 has its 651 bytes, with the
+//!   hole type at byte 262 (1 square, 2 slot; a round hole has an empty block 5), the slot's
+//!   length at bytes 263..267 (2.200) and the hole's turn at bytes 267..275 as an `f64` in degrees
+//!   (45.0 on the turned slot, 0.0 on the others). Byte 60 is the plating as on a round hole. The
+//!   board model holds a round drill only, so such a pad is read with a round hole of that width
+//!   or side, and a note names it.
 //! - Pad shapes (`pad-shapes`, checked against the Gerber file Altium wrote for its top copper):
 //!   shape code 3 is an octagon, a rectangle of the pad's size with each corner cut off at 45
 //!   degrees by a quarter of the shorter side (0.25 on a 2.000 x 1.000 pad, 0.375 on 1.500 x
@@ -155,6 +162,14 @@ const PAD_LAYER_TABLE_BLOCK: usize = 5;
 /// Where in that block the top layer's shape is, and its corner percentage.
 const LAYER_TABLE_TOP_SHAPE: usize = 640;
 const LAYER_TABLE_TOP_CORNER: usize = 649;
+/// Where in that block a hole that is not round keeps its type, a slot's length and its turn.
+const LAYER_TABLE_HOLE_TYPE: usize = 262;
+const LAYER_TABLE_SLOT_LENGTH: usize = 263;
+const LAYER_TABLE_HOLE_ROTATION: usize = 267;
+const SQUARE_HOLE: u8 = 1;
+const SLOT_HOLE: u8 = 2;
+/// The most pads with a hole that is not round named one by one in the notes.
+const MAX_NAMED_HOLES: usize = 20;
 /// The shape code of a rounded rectangle in that block.
 const ROUNDED_RECTANGLE: u8 = 9;
 /// The most records read from one stream before the file is treated as hostile.
@@ -577,6 +592,7 @@ pub(crate) fn pads(
     let mut items = Vec::new();
     let mut skipped = Skipped::default();
     let mut uneven = 0usize;
+    let mut shaped_holes: Vec<String> = Vec::new();
     let mut own_masks = OwnMasks::default();
     let mut at = 0usize;
     let mut count = 0usize;
@@ -664,6 +680,14 @@ pub(crate) fn pads(
         if middle != top || bottom != top || shapes.iter().any(|s| Some(s) != shapes.first()) {
             uneven += 1;
         }
+        if hole > 0.0 {
+            if let Some(what) = hole_shape(layer_table, hole) {
+                shaped_holes.push(format!(
+                    "the pad at ({:.3}, {:.3}) has {what}",
+                    at_point.x, at_point.y
+                ));
+            }
+        }
         let rounded = (layer_table.get(LAYER_TABLE_TOP_SHAPE) == Some(&ROUNDED_RECTANGLE))
             .then(|| layer_table.get(LAYER_TABLE_TOP_CORNER).copied())
             .flatten();
@@ -723,9 +747,47 @@ pub(crate) fn pads(
             ),
         });
     }
+    let more = shaped_holes.len().saturating_sub(MAX_NAMED_HOLES);
+    for what in shaped_holes.iter().take(MAX_NAMED_HOLES) {
+        notes.push(Note {
+            severity: Severity::Warning,
+            message: format!(
+                "{what}; the board model holds round holes only, so it is read as a round hole \
+                 of that width"
+            ),
+        });
+    }
+    if more > 0 {
+        notes.push(Note {
+            severity: Severity::Warning,
+            message: format!(
+                "and {more} more pad(s) with a slot or square hole, read as round holes of their \
+                 width"
+            ),
+        });
+    }
     own_masks.into_note(notes);
     skipped.into_notes("pad(s)", notes);
     Ok(items)
+}
+
+/// What a pad's hole is when it is not round, from its block 5 (see the module notes), e.g.
+/// "a slot hole 0.800 wide and 2.200 long, turned 45 degrees"; `None` for a round hole.
+fn hole_shape(layer_table: &[u8], width: f64) -> Option<String> {
+    let turn = read_f64(layer_table, LAYER_TABLE_HOLE_ROTATION)
+        .filter(|a| a.is_finite() && *a != 0.0)
+        .map(|a| format!(", turned {a} degrees"))
+        .unwrap_or_default();
+    match *layer_table.get(LAYER_TABLE_HOLE_TYPE)? {
+        SQUARE_HOLE => Some(format!("a square hole of side {width:.3}{turn}")),
+        SLOT_HOLE => {
+            let long = length(layer_table, LAYER_TABLE_SLOT_LENGTH).ok()?;
+            Some(format!(
+                "a slot hole {width:.3} wide and {long:.3} long{turn}"
+            ))
+        }
+        _ => None,
+    }
 }
 
 /// A pad's own solder and paste mask settings, from its geometry block (see the module notes).

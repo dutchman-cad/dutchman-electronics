@@ -62,3 +62,66 @@ fn keepouts_are_not_copper() -> Result<(), Box<dyn std::error::Error>> {
     );
     Ok(())
 }
+
+/// pad-hole-shapes: five pads at y 15 with a round hole of 1.000 (x 8), a slot 0.800 by 2.200
+/// (x 16), the same slot turned 45 degrees (x 25), a square hole of side 1.000 (x 34) and an
+/// unplated slot 0.800 by 2.200 (x 42). The board model holds round drills only, so each is read
+/// with a round hole of the slot's width or the square's side, and a Degraded note names each
+/// pad that is not round.
+#[test]
+fn slot_and_square_holes_are_read_as_round_with_a_note() -> Result<(), Box<dyn std::error::Error>> {
+    let out = read("pad-hole-shapes.PcbDoc")?;
+    let mut pads: Vec<(f64, f64, Option<f64>, bool)> = out
+        .board
+        .copper
+        .iter()
+        .filter_map(|c| match c {
+            CopperItem::Pad {
+                at, drill, plated, ..
+            } => Some((at.x, at.y, *drill, *plated)),
+            _ => None,
+        })
+        .collect();
+    pads.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let want = [
+        (8.0, 1.0, true),
+        (16.0, 0.8, true),
+        (25.0, 0.8, true),
+        (34.0, 1.0, true),
+        (42.0, 0.8, false),
+    ];
+    assert_eq!(pads.len(), want.len(), "{pads:?}");
+    for ((x, y, drill, plated), (wx, wd, wp)) in pads.iter().zip(want) {
+        assert!(
+            (x - wx).abs() <= TOLERANCE && (y - 15.0).abs() <= TOLERANCE,
+            "{pads:?}"
+        );
+        assert!(
+            drill.is_some_and(|d| (d - wd).abs() <= TOLERANCE),
+            "pad at x {wx}"
+        );
+        assert_eq!(*plated, wp, "pad at x {wx}");
+    }
+    let mut warnings: Vec<&str> = out
+        .notes
+        .iter()
+        .filter(|n| n.severity == Severity::Warning)
+        .map(|n| n.message.as_str())
+        .collect();
+    warnings.sort_unstable();
+    let tail = "; the board model holds round holes only, so it is read as a round hole of that \
+                width";
+    assert_eq!(
+        warnings,
+        [
+            format!("the pad at (16.000, 15.000) has a slot hole 0.800 wide and 2.200 long{tail}"),
+            format!(
+                "the pad at (25.000, 15.000) has a slot hole 0.800 wide and 2.200 long, turned 45 \
+                 degrees{tail}"
+            ),
+            format!("the pad at (34.000, 15.000) has a square hole of side 1.000{tail}"),
+            format!("the pad at (42.000, 15.000) has a slot hole 0.800 wide and 2.200 long{tail}"),
+        ]
+    );
+    Ok(())
+}
