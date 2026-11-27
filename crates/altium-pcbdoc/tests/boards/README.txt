@@ -905,6 +905,22 @@ scripts, every scripted change read back and logged:
         Rev .BoardRevision   Bottom Overlay  44.000, 3.750 0.600   0.100   yes   Rev A
    Their boxes, around the shown string: x 6.100 to 10.732, y 27.500 to 28.400, and x 41.101
    to 44.100, y 3.650 to 4.450. Saving put Arial into the board again; it was removed as before.
+11. On 2026-11-27, from the board as described so far. By my own script, read back and logged:
+   two texts on Top Overlay, rotation 0, no component, height 0.700, stroke 0.100:
+        "Sans"   Sans Serif stroke font, at (25.000, 27.000); box x 24.900 to 27.226,
+                 y 26.900 to 27.800
+        "Serif"  Serif stroke font, at (28.000, 27.000); box x 27.900 to 30.410,
+                 y 26.900 to 27.800
+   and four vias, no net, diameter 0.600, hole 0.300, Top Layer to Bottom Layer, at y 7.000.
+   Then by hand, in each via's Properties panel, Solder Mask Expansion set to Manual and:
+        x       solder mask
+        27.600  Tented on top only (expansion 0.1 on the open bottom)
+        29.000  Tented on the bottom only
+        30.400  Tented on both sides
+        31.800  open on both sides, expansion 0.2 (top and bottom linked)
+   Every other via keeps the board's rule (open, 0.1). Then Tools > Polygon Pours > Repour All
+   and Tools > Split Planes > Rebuild Split Planes on All Layers, and the board saved; Arial
+   was removed again as before.
 A first try put the TrueType text and the free copper over "DUTCHMAN NODE 1"; a second script
 removed them and placed them as above before the board was first saved with the cutout.
 

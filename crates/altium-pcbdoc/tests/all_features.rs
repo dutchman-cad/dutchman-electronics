@@ -6,7 +6,7 @@
 use altium_pcbdoc::Altium;
 use board_model::{
     Contour, CopperItem, InputFormat, LayerKind, PadShape, Point, ReadOutcome, Segment, Severity,
-    TextFont,
+    StrokeFont, TextFont,
 };
 
 const TOLERANCE: f64 = 0.001;
@@ -380,5 +380,79 @@ fn the_project_fills_in_its_parameters() -> Result<(), Box<dyn std::error::Error
         .ok_or("no Rev A")?;
     assert!(near(rev.at.x, 44.0) && near(rev.at.y, 3.75) && near(rev.height, 0.6));
     assert!(rev.mirrored);
+    Ok(())
+}
+
+/// Step 11 (README.txt): four vias at y 7, each with its own solder mask set by hand: tented on
+/// top, on the bottom, on both sides, and open with a manual expansion of 0.2. Every other via
+/// keeps the board's rule (open, no expansion of its own).
+#[test]
+fn four_vias_have_their_own_solder_mask() -> Result<(), Box<dyn std::error::Error>> {
+    let out = read()?;
+    // (x, tented top, tented bottom, manual expansion)
+    let want = [
+        (27.6, true, false, 0.1),
+        (29.0, false, true, 0.1),
+        (30.4, true, true, 0.1),
+        (31.8, false, false, 0.2),
+    ];
+    let mut own = 0;
+    for c in &out.board.copper {
+        let CopperItem::Via {
+            at,
+            diameter,
+            drill,
+            tented,
+            mask_expansion,
+            layers,
+        } = c
+        else {
+            continue;
+        };
+        assert!(near(*diameter, 0.6) && near(*drill, 0.3), "{c:?}");
+        assert_eq!(*layers, None, "{c:?}");
+        match want.iter().find(|w| near(at.x, w.0) && near(at.y, 7.0)) {
+            Some(&(_, top, bottom, expansion)) => {
+                own += 1;
+                assert_eq!(*tented, [Some(top), Some(bottom)], "{c:?}");
+                assert!(mask_expansion.is_some_and(|e| near(e, expansion)), "{c:?}");
+            }
+            None => {
+                assert_eq!(*tented, [Some(false), Some(false)], "{c:?}");
+                assert_eq!(*mask_expansion, None, "{c:?}");
+            }
+        }
+    }
+    assert_eq!(own, want.len());
+    Ok(())
+}
+
+/// Step 11: "Sans" and "Serif" on Top Overlay in Altium's Sans Serif and Serif stroke fonts; every
+/// other stroke text is in the Default font.
+#[test]
+fn texts_come_in_all_three_stroke_fonts() -> Result<(), Box<dyn std::error::Error>> {
+    let out = read()?;
+    for t in &out.board.texts {
+        let TextFont::Stroke { font, width } = &t.font else {
+            continue;
+        };
+        let want = match t.content.as_str() {
+            "Sans" => {
+                assert!(near(t.at.x, 25.0) && near(t.at.y, 27.0), "{t:?}");
+                StrokeFont::SansSerif
+            }
+            "Serif" => {
+                assert!(near(t.at.x, 28.0) && near(t.at.y, 27.0), "{t:?}");
+                StrokeFont::Serif
+            }
+            _ => StrokeFont::Default,
+        };
+        assert_eq!(*font, want, "{t:?}");
+        if want != StrokeFont::Default {
+            assert!(near(t.height, 0.7) && near(*width, 0.1), "{t:?}");
+        }
+    }
+    let named = |s: &str| out.board.texts.iter().filter(|t| t.content == s).count();
+    assert_eq!((named("Sans"), named("Serif")), (1, 1));
     Ok(())
 }
