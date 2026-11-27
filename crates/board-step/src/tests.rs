@@ -870,6 +870,35 @@ fn via_on(x: f64, layers: Option<(usize, usize)>) -> CopperItem {
         tented: [None, None],
         mask_expansion: None,
         layers,
+
+/// The (min, max) of the vertices of a STEP file, per axis.
+fn vertex_box(text: &str) -> ([f64; 3], [f64; 3]) {
+    let all = entities(text);
+    let mut lo = [f64::MAX; 3];
+    let mut hi = [f64::MIN; 3];
+    for (_, (name, args)) in all.iter().filter(|(_, (n, _))| n == "VERTEX_POINT") {
+        let _ = name;
+        let point = refs(args)[0];
+        let coords: Vec<f64> = all[&point]
+            .1
+            .split(['(', ')', ','])
+            .filter_map(|s| s.parse().ok())
+            .collect();
+        for k in 0..3 {
+            lo[k] = lo[k].min(coords[k]);
+            hi[k] = hi[k].max(coords[k]);
+        }
+    }
+    (lo, hi)
+}
+
+fn solid_of(outline: Contour, axis: Axis, from: f64, to: f64) -> Solid {
+    Solid {
+        outline,
+        openings: Vec::new(),
+        axis,
+        from,
+        to,
     }
 }
 
@@ -979,4 +1008,70 @@ fn only_the_vias_actually_drilled_count_as_unplaced() {
         .notes
         .iter()
         .any(|n| n.message.contains("touch or cross the board edge")));
+
+fn solids_along_each_axis_are_closed_and_end_where_asked() {
+    // A box sketched 2 x 3 and extruded 5 along each axis.
+    for (axis, lo, hi) in [
+        (Axis::Z, [0.0, 0.0, 1.0], [2.0, 3.0, 6.0]),
+        // Sketch (y, z) = (s, t), extruded along x.
+        (Axis::X, [1.0, 0.0, 0.0], [6.0, 2.0, 3.0]),
+        // Sketch (z, x) = (s, t), extruded along y.
+        (Axis::Y, [0.0, 1.0, 0.0], [3.0, 6.0, 2.0]),
+    ] {
+        let out = solids(
+            &[solid_of(rect(0.0, 0.0, 2.0, 3.0), axis, 1.0, 6.0)],
+            "box",
+            "test",
+        )
+        .unwrap();
+        check_topology(&out.text);
+        let (found_lo, found_hi) = vertex_box(&out.text);
+        assert_eq!((found_lo, found_hi), (lo, hi), "{axis:?}");
+    }
+}
+
+#[test]
+fn solids_gives_one_closed_brep_each_and_cuts_openings() {
+    let mut strip = solid_of(rect(0.0, 0.0, 6.0, 2.0), Axis::Z, 0.0, 2.5);
+    strip.openings = vec![rect(0.5, 0.5, 1.5, 1.5), rect(3.0, 0.5, 4.0, 1.5)];
+    // A gull-wing lead profile, sketched in (z, x) and extruded along y.
+    let lead = solid_of(
+        polyline(&[
+            (0.9, 1.0),
+            (0.9, 1.9),
+            (0.15, 1.9),
+            (0.15, 2.4),
+            (0.0, 2.4),
+            (0.0, 1.75),
+            (0.75, 1.75),
+            (0.75, 1.0),
+        ]),
+        Axis::Y,
+        -0.2,
+        0.2,
+    );
+    let out = solids(&[strip, lead], "part", "test").unwrap();
+    check_topology(&out.text);
+    assert_eq!(out.text.matches("MANIFOLD_SOLID_BREP").count(), 2);
+    assert_eq!(out.stats.openings, 2);
+    // 6 side faces + 2 caps, and 4 more sides for each opening; the lead has 8 + 2.
+    assert_eq!(out.stats.faces, 6 + 8 + 10);
+}
+
+#[test]
+fn solids_refuse_what_cannot_be_a_solid() {
+    let good = solid_of(rect(0.0, 0.0, 2.0, 3.0), Axis::Z, 0.0, 1.0);
+    assert!(solids(&[], "x", "y").is_err());
+    let mut flat = good.clone();
+    flat.to = 0.0;
+    assert!(solids(&[flat], "x", "y").is_err());
+    let mut outside = good.clone();
+    outside.openings = vec![rect(1.5, 1.0, 3.0, 2.0)];
+    assert!(solids(&[outside], "x", "y").is_err());
+    let mut bowtie = good.clone();
+    bowtie.outline = polyline(&[(0.0, 0.0), (2.0, 2.0), (2.0, 0.0), (0.0, 2.0)]);
+    assert!(solids(&[bowtie], "x", "y").is_err());
+    let mut empty = good;
+    empty.outline = Contour::default();
+    assert!(solids(&[empty], "x", "y").is_err());
 }
