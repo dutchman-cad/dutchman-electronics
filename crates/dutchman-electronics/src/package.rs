@@ -1662,6 +1662,7 @@ mod tests {
                 color: None,
             }],
             comment: String::new(),
+            fitted: true,
         }
     }
 

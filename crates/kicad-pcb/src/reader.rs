@@ -978,6 +978,7 @@ impl Reader {
             side: if bottom { Side::Bottom } else { Side::Top },
             models: model.into_iter().collect(),
             comment: String::new(),
+            fitted: true,
         });
     }
 
@@ -1730,6 +1731,7 @@ pub fn read(mut root: Node, variables: &Variables) -> ReadOutcome {
             components: r.components,
             appearance: Default::default(),
             free_models: Vec::new(),
+            variants: Vec::new(),
             solder_mask_expansion: mask_expansion,
         },
         notes,

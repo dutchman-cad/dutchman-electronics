@@ -154,6 +154,7 @@ fn board_frame() -> Placement {
         side: Side::Top,
         models: Vec::new(),
         comment: String::new(),
+        fitted: true,
     }
 }
 
@@ -873,6 +874,7 @@ mod tests {
                 color: None,
             }],
             comment: String::new(),
+            fitted: true,
         }
     }
 

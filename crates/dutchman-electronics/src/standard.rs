@@ -1845,6 +1845,7 @@ mod tests {
                 side: Side::Top,
                 models: Vec::new(),
                 comment: String::new(),
+                fitted: true,
             }],
             copper: (0..20_000)
                 .map(|i| CopperItem::Pad {
