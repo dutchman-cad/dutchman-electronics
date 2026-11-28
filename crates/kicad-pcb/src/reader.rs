@@ -969,6 +969,13 @@ impl Reader {
                 format!("3D model file(s) named by the board, not stored in it: first {file}"),
             );
         }
+        // KiCad's do-not-populate flag: `dnp` among the footprint's `attr` keywords
+        // (`(attr smd dnp)`). The published format page lists only `board_only`,
+        // `exclude_from_pos_files` and `exclude_from_bom` there; this form waits for a KiCad-made
+        // test board to confirm it.
+        let fitted = !fp
+            .child("attr")
+            .is_some_and(|a| a.args().iter().any(|k| k.text() == Some("dnp")));
         let pos = frame.point(0.0, 0.0);
         self.components.push(Placement {
             designator,
@@ -978,7 +985,7 @@ impl Reader {
             side: if bottom { Side::Bottom } else { Side::Top },
             models: model.into_iter().collect(),
             comment: String::new(),
-            fitted: true,
+            fitted,
         });
     }
 

@@ -663,3 +663,29 @@ fn a_footprint_zone_fill_off_copper_is_named_and_not_copper() {
     assert!(o.notes.iter().any(|n| n.severity == Severity::Dropped
         && n.message == "1 zone fill(s) on layer Dwgs.User (only copper zones are read)"));
 }
+
+/// A footprint whose `attr` holds `dnp` is not fitted; one without it, or without `attr`, is.
+#[test]
+fn a_do_not_populate_footprint_is_not_fitted() {
+    let footprint = |reference: &str, attr: &str| {
+        format!(
+            "(footprint \"R_0603\" (layer \"F.Cu\") (at 10 10) {attr}
+              (property \"Reference\" \"{reference}\" (at 0 0) (layer \"F.SilkS\")))
+"
+        )
+    };
+    let text = format!(
+        "{HEAD}{}{}{})",
+        footprint("R1", "(attr smd dnp)"),
+        footprint("R2", "(attr smd exclude_from_bom)"),
+        footprint("R3", "")
+    );
+    let o = read(&text).unwrap();
+    let fitted: Vec<(&str, bool)> = o
+        .board
+        .components
+        .iter()
+        .map(|c| (c.designator.as_str(), c.fitted))
+        .collect();
+    assert_eq!(fitted, [("R1", false), ("R2", true), ("R3", true)]);
+}

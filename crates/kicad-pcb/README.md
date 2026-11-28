@@ -14,7 +14,7 @@ empty board with a `Dropped` note that says to open and save the file in KiCad 9
 | thickness | the stack-up (`setup` > `stackup`): copper, dielectric and solder mask layers added up; else `general` > `thickness` |
 | solder mask opening | `setup` > `pad_to_mask_clearance` |
 | layers | the `layers` table, in stack order (top silkscreen, paste, mask, copper top to bottom, bottom mask, paste, silkscreen, then the rest), with kind and side |
-| placements | `footprint`: reference, library name, `at`, side from `layer`, first `model` (file, offset, rotate) |
+| placements | `footprint`: reference, library name, `at`, side from `layer`, first `model` (file, offset, rotate), not fitted when `attr` holds `dnp` (from a hand-written board so far; a KiCad-made one is wanted) |
 | copper | `segment`, `arc`, `via`, `pad` (circle, rect, oval, roundrect as a rounded rectangle; trapezoid, chamfered and custom pads as polygon pads; drills, plating, copper layers), `filled_polygon` of zones, split into an outer contour and its holes |
 | silkscreen | `gr_*` and `fp_*` lines, arcs, circles, rectangles, polygons; `gr_text`, `fp_text` and the reference and value `property` texts |
 
