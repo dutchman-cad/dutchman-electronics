@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/board-model", "crates/board-step", "crates/altium-pcbdoc", "crates/kicad-pcb", "crates/dutchman-electronics"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 rust-version = "1.88"
 # Dutchman itself is Apache-2.0 (its LICENSE and workspace Cargo.toml), so this module matches.
