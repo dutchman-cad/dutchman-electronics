@@ -450,3 +450,87 @@ fn frames_place_their_text_and_inverted_texts_get_a_note() -> Result<(), Box<dyn
     );
     Ok(())
 }
+
+/// pad-shapes-custom: pad 1 a 2.000 x 1.000 rounded rectangle (50%, radius 0.25) at (10, 15);
+/// pad 2 at (20, 15) a 2.000 x 1.000 rectangle with its upper corners cut by 0.25; pad 3 at
+/// (30.5, 14.5) an L from (30, 14) to (33, 17). Pads 2 and 3 store only a 1 mil square; their
+/// copper is the region that names them (PADINDEX), so they are polygon pads of that outline,
+/// and the region is not also read as free copper.
+#[test]
+fn chamfered_and_custom_pads_take_their_region_outline() -> Result<(), Box<dyn std::error::Error>> {
+    let out = read("pad-shapes-custom.PcbDoc")?;
+    let corners = |c: &board_model::Contour| -> Vec<(f64, f64)> {
+        c.segments
+            .iter()
+            .filter_map(|s| match s {
+                board_model::Segment::Line { from, .. } => Some((from.x, from.y)),
+                _ => None,
+            })
+            .collect()
+    };
+    let same = |got: &[(f64, f64)], want: &[(f64, f64)]| {
+        got.len() == want.len()
+            && want.iter().all(|w| {
+                got.iter()
+                    .any(|g| (g.0 - w.0).abs() <= TOLERANCE && (g.1 - w.1).abs() <= TOLERANCE)
+            })
+    };
+    let (mut rounded, mut polygons) = (Vec::new(), Vec::new());
+    for c in &out.board.copper {
+        match c {
+            CopperItem::Pad {
+                at,
+                shape,
+                size_x,
+                size_y,
+                ..
+            } => rounded.push((at.x, at.y, *shape, *size_x, *size_y)),
+            CopperItem::PolygonPad { at, shapes, .. } => polygons.push((at.x, at.y, shapes)),
+            other => return Err(format!("{other:?}").into()),
+        }
+    }
+    let [(x, y, shape, sx, sy)] = rounded.as_slice() else {
+        return Err(format!("{rounded:?}").into());
+    };
+    assert!((x - 10.0).abs() <= TOLERANCE && (y - 15.0).abs() <= TOLERANCE);
+    assert_eq!(
+        *shape,
+        board_model::PadShape::RoundedRectangle { radius_ratio: 0.25 }
+    );
+    assert!((sx - 2.0).abs() <= TOLERANCE && (sy - 1.0).abs() <= TOLERANCE);
+    polygons.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let [(x2, y2, s2), (x3, y3, s3)] = polygons.as_slice() else {
+        return Err(format!("{polygons:?}").into());
+    };
+    assert!((x2 - 20.0).abs() <= TOLERANCE && (y2 - 15.0).abs() <= TOLERANCE);
+    assert!((x3 - 30.5).abs() <= TOLERANCE && (y3 - 14.5).abs() <= TOLERANCE);
+    let [chamfered] = s2.as_slice() else {
+        return Err(format!("{s2:?}").into());
+    };
+    let [l] = s3.as_slice() else {
+        return Err(format!("{s3:?}").into());
+    };
+    assert!(same(
+        &corners(chamfered),
+        &[
+            (19.0, 14.5),
+            (21.0, 14.5),
+            (21.0, 15.25),
+            (20.75, 15.5),
+            (19.25, 15.5),
+            (19.0, 15.25)
+        ]
+    ));
+    assert!(same(
+        &corners(l),
+        &[
+            (30.0, 14.0),
+            (33.0, 14.0),
+            (33.0, 15.0),
+            (31.0, 15.0),
+            (31.0, 17.0),
+            (30.0, 17.0)
+        ]
+    ));
+    Ok(())
+}

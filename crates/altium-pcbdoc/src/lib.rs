@@ -229,10 +229,19 @@ impl InputFormat for Altium {
                     .map_err(ReadError::Invalid)?,
             );
         }
+        let mut pad_regions = std::collections::BTreeSet::new();
         if let Some(data) = &pads6 {
             copper.extend(
-                copper::pads(data, &layers, &components, &mut drills, &mut notes)
-                    .map_err(ReadError::Invalid)?,
+                copper::pads(
+                    data,
+                    &layers,
+                    &components,
+                    &shape.other_regions,
+                    &mut pad_regions,
+                    &mut drills,
+                    &mut notes,
+                )
+                .map_err(ReadError::Invalid)?,
             );
         }
         if let Some(data) = &vias6 {
@@ -243,7 +252,12 @@ impl InputFormat for Altium {
         if let Some(data) = &fills6 {
             copper.extend(copper::fills(data, &layers, &mut notes).map_err(ReadError::Invalid)?);
         }
-        copper.extend(copper::regions(&shape.other_regions, &layers, &mut notes));
+        copper.extend(copper::regions(
+            &shape.other_regions,
+            &pad_regions,
+            &layers,
+            &mut notes,
+        ));
         let rules6 = read_stream(&mut container, "/Rules6/Data")?;
         let solder_mask_expansion =
             mask::expansion(rules6.as_deref(), &mut notes).map_err(ReadError::Invalid)?;

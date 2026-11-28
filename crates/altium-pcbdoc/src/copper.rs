@@ -83,6 +83,14 @@
 //!   (45.0 on the turned slot, 0.0 on the others). Byte 60 is the plating as on a round hole. The
 //!   board model holds a round drill only, so such a pad is read with a round hole of that width
 //!   or side, and a note names it.
+//! - Chamfered and custom pads (`pad-shapes-custom`): pad 2 (a rectangle with its two upper
+//!   corners cut) and pad 3 (an L, 3 x 3) have a size of only 0.025 x 0.025 (1 mil) in block 4;
+//!   their copper is a region on their layer in `/Regions6/Data` whose text ends in
+//!   `PADINDEX=2` and `PADINDEX=1`: the pad's record number in `/Pads6/Data` counted from 1 (the
+//!   records run pad 3, 2, 1 here, and the L is `PADINDEX=1`, the chamfered outline 2). Such a
+//!   pad is read as a polygon pad of its region's outline, so its finish and mask opening follow
+//!   that outline, not the 1 mil square; the region is not read a second time. A rounded
+//!   rectangle (pad 1) keeps its own shape code, as on `pad-shapes`.
 //! - Pad shapes (`pad-shapes`, checked against the Gerber file Altium wrote for its top copper):
 //!   shape code 3 is an octagon, a rectangle of the pad's size with each corner cut off at 45
 //!   degrees by a quarter of the shorter side (0.25 on a 2.000 x 1.000 pad, 0.375 on 1.500 x
@@ -735,6 +743,8 @@ pub(crate) fn pads(
     data: &[u8],
     layers: &CopperLayers,
     components: &Components,
+    pad_regions: &[OtherRegion],
+    used_regions: &mut std::collections::BTreeSet<usize>,
     drills: &mut Vec<Drill>,
     notes: &mut Vec<Note>,
 ) -> Result<Vec<CopperItem>, String> {
@@ -843,6 +853,29 @@ pub(crate) fn pads(
                     at_point.x, at_point.y
                 ));
             }
+        }
+        // A chamfered or custom pad: its copper is the regions that name this pad.
+        let own_regions: Vec<(usize, &OtherRegion)> = pad_regions
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| {
+                r.pad_index == Some(count) && layers.copper_index(r.layer) == Some(layer)
+            })
+            .collect();
+        if !own_regions.is_empty() {
+            used_regions.extend(own_regions.iter().map(|(i, _)| *i));
+            items.push(CopperItem::PolygonPad {
+                bottom: None,
+                layer,
+                at: at_point,
+                shapes: own_regions.iter().map(|(_, r)| r.contour.clone()).collect(),
+                drill: (hole > 0.0).then_some(hole),
+                plated,
+                owner: components.owner(g),
+                tented,
+                mask_expansion,
+            });
+            continue;
         }
         let rounded = (layer_table.get(LAYER_TABLE_TOP_SHAPE) == Some(&ROUNDED_RECTANGLE))
             .then(|| layer_table.get(LAYER_TABLE_TOP_CORNER).copied())
@@ -1241,6 +1274,7 @@ pub(crate) fn fills(
 /// left out with a note.
 pub(crate) fn regions(
     others: &[OtherRegion],
+    used_by_pads: &std::collections::BTreeSet<usize>,
     layers: &CopperLayers,
     notes: &mut Vec<Note>,
 ) -> Vec<CopperItem> {
@@ -1250,7 +1284,10 @@ pub(crate) fn regions(
     let mut on_overlay = std::collections::BTreeMap::<String, usize>::new();
     let mut on_mask = std::collections::BTreeMap::<String, usize>::new();
     let (mut keepout_layer, mut keepouts) = (0usize, std::collections::BTreeMap::new());
-    for region in others {
+    for (n, region) in others.iter().enumerate() {
+        if used_by_pads.contains(&n) {
+            continue;
+        }
         let layer = layers.copper_index(region.layer);
         let name = layers.name(region.layer);
         if name == KEEPOUT_LAYER {
@@ -1637,13 +1674,24 @@ mod tests {
             &[PAD_RECORD, 0xff, 0xff, 0xff, 0x7f],
             &l,
             &none,
+            &[],
+            &mut Default::default(),
             &mut Vec::new(),
             &mut notes
         )
         .is_err());
         let mut few_blocks = vec![PAD_RECORD];
         few_blocks.extend_from_slice(&0u32.to_le_bytes());
-        assert!(pads(&few_blocks, &l, &none, &mut Vec::new(), &mut notes).is_err());
+        assert!(pads(
+            &few_blocks,
+            &l,
+            &none,
+            &[],
+            &mut Default::default(),
+            &mut Vec::new(),
+            &mut notes
+        )
+        .is_err());
         assert!(arcs(
             &record(ARC_RECORD, 40, |_| ()),
             &mut m,

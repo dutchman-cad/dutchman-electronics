@@ -1367,3 +1367,71 @@ fn read_unites_teardrops_with_their_copper() -> Result<(), Box<dyn std::error::E
     );
     Ok(())
 }
+
+/// pad-shapes-custom: the finish and the mask opening of each pad follow its real outline, not
+/// the 1 mil square pads 2 and 3 store: each opening is the pad grown by the board's 0.1 mask
+/// expansion on every side.
+#[cfg(feature = "altium")]
+#[test]
+fn read_opens_the_mask_round_chamfered_and_custom_pads() -> Result<(), Box<dyn std::error::Error>> {
+    let out = std::env::temp_dir().join(format!("de-custom-pads-{}", std::process::id()));
+    let board = test_board("pad-shapes-custom.PcbDoc");
+    let result = run(&[
+        "read",
+        &board.to_string_lossy(),
+        "--out",
+        &out.to_string_lossy(),
+        "--json",
+    ]);
+    std::fs::remove_dir_all(&out).ok();
+    let (ok, v) = result?;
+    assert!(ok, "{v}");
+    let ring_box = |r: &serde_json::Value| -> Option<[f64; 4]> {
+        let pts: Vec<(f64, f64)> = r
+            .as_array()?
+            .iter()
+            .filter_map(|p| Some((p[0].as_f64()?, p[1].as_f64()?)))
+            .collect();
+        Some([
+            pts.iter().map(|p| p.0).fold(f64::MAX, f64::min),
+            pts.iter().map(|p| p.0).fold(f64::MIN, f64::max),
+            pts.iter().map(|p| p.1).fold(f64::MAX, f64::min),
+            pts.iter().map(|p| p.1).fold(f64::MIN, f64::max),
+        ])
+    };
+    let overlay = |name: &str| {
+        v["overlays"]
+            .as_array()
+            .and_then(|o| o.iter().find(|o| o["name"] == name))
+            .cloned()
+    };
+    let near = |a: &[f64; 4], b: &[f64; 4]| a.iter().zip(b).all(|(x, y)| (x - y).abs() < 0.001);
+    let mut openings: Vec<[f64; 4]> = overlay("Solder mask top").ok_or("no top mask")?["areas"][0]
+        ["holes"]
+        .as_array()
+        .ok_or("no openings")?
+        .iter()
+        .filter_map(ring_box)
+        .collect();
+    openings.sort_by(|a, b| a[0].total_cmp(&b[0]));
+    let want = [
+        [8.9, 11.1, 14.4, 15.6],
+        [18.9, 21.1, 14.4, 15.6],
+        [29.9, 33.1, 13.9, 17.1],
+    ];
+    assert_eq!(openings.len(), 3, "{openings:?}");
+    for (o, w) in openings.iter().zip(&want) {
+        assert!(near(o, w), "{o:?}, want {w:?}");
+    }
+    let mut finish: Vec<[f64; 4]> = overlay("Finish top").ok_or("no top finish")?["areas"]
+        .as_array()
+        .ok_or("no finish")?
+        .iter()
+        .filter_map(|a| ring_box(&a["outer"]))
+        .collect();
+    finish.sort_by(|a, b| a[0].total_cmp(&b[0]));
+    assert_eq!(finish.len(), 3, "{finish:?}");
+    assert!(near(&finish[1], &[19.0, 21.0, 14.5, 15.5]), "{finish:?}");
+    assert!(near(&finish[2], &[30.0, 33.0, 14.0, 17.0]), "{finish:?}");
+    Ok(())
+}
