@@ -24,7 +24,7 @@ fn near(a: f64, b: f64) -> bool {
     (a - b).abs() <= 0.001
 }
 
-/// All five parts are placed as the README gives them, test:R_0603 on the top, not turned, with
+/// All five parts are placed as the README gives them, value 10k, test:R_0603 on the top, not turned, with
 /// their model; only R2, `(attr smd dnp)`, is not fitted. R3 to R5 carry the other flags
 /// (exclude_from_pos_files, exclude_from_bom, board_only) and stay fitted.
 #[test]
@@ -52,6 +52,7 @@ fn only_the_do_not_populate_part_is_not_fitted() {
         assert_eq!(p.side, Side::Top);
         assert!(near(p.rotation_deg, 0.0));
         assert_eq!(p.models.len(), 1, "{name}");
+        assert_eq!(p.comment, "10k", "{name}: the comment is the Value field");
     }
 }
 

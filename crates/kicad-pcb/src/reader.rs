@@ -918,6 +918,12 @@ impl Reader {
                 fields.push(("Value".into(), value.to_string()));
             }
         }
+        // The part's comment is its Value field, as stored (`k10-dnp`: "10k").
+        let comment = fields
+            .iter()
+            .find(|(n, _)| n == "Value")
+            .map(|(_, v)| v.clone())
+            .unwrap_or_default();
         let fields_at = self.fields.len();
         self.fields.push(Fields {
             reference: designator.clone(),
@@ -1001,7 +1007,7 @@ impl Reader {
             rotation_deg: angle,
             side: if bottom { Side::Bottom } else { Side::Top },
             models: model.into_iter().collect(),
-            comment: String::new(),
+            comment,
             fitted,
         });
     }
