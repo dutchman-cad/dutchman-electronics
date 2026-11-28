@@ -54,6 +54,10 @@
 //!   y 1.000, as typed). Round with unequal sizes is the oval of `one-oval-pad` (2.000 x 1.000).
 //!   Byte 60 is 1 on the plated hole of `one-plated-pad` and 0 on the unplated hole of
 //!   `outline-with-hole` and on every SMD pad.
+//!   A pad of Altium's Top-Middle-Bottom stack (`pad-stack-tmb`: top round 2.000, middle round
+//!   1.400, bottom rectangle 2.400 x 1.600) keeps its top as its shape and gets its bottom size
+//!   and shape as the pad's bottom; inner layers keep the top (a note says so), and a bottom the
+//!   reader cannot shape (a rounded rectangle's, or another shape under an octagon) is noted.
 //!   Bytes 7..9 are the index of the component the pad belongs to (see `components.rs`);
 //!   its designator becomes the pad's owner.
 //! - A pad's own solder and paste mask (`pad-mask-overrides`, each pad compared with its
@@ -716,7 +720,8 @@ pub(crate) fn pads(
 ) -> Result<Vec<CopperItem>, String> {
     let mut items = Vec::new();
     let mut skipped = Skipped::default();
-    let mut uneven = 0usize;
+    let mut middle_own = 0usize;
+    let mut bottom_unread = 0usize;
     let mut shaped_holes: Vec<String> = Vec::new();
     let mut own_masks = OwnMasks::default();
     let mut at = 0usize;
@@ -802,8 +807,9 @@ pub(crate) fn pads(
             Some(sides) => sides.map(Some),
             None => [None, None],
         };
-        if middle != top || bottom != top || shapes.iter().any(|s| Some(s) != shapes.first()) {
-            uneven += 1;
+        let [top_code, middle_code, bottom_code] = [shapes.first(), shapes.get(1), shapes.get(2)];
+        if middle != top || middle_code != top_code {
+            middle_own += 1;
         }
         if hole > 0.0 {
             if let Some(what) = hole_shape(layer_table, hole) {
@@ -816,6 +822,24 @@ pub(crate) fn pads(
         let rounded = (layer_table.get(LAYER_TABLE_TOP_SHAPE) == Some(&ROUNDED_RECTANGLE))
             .then(|| layer_table.get(LAYER_TABLE_TOP_CORNER).copied())
             .flatten();
+        // `pad-stack-tmb`: a bottom side of its own (bytes 37..45 and the third shape byte) goes on
+        // the pad's bottom; a rounded rectangle keeps its corner only in block 5, read for the top.
+        let bottom_differs = bottom != top || bottom_code != top_code;
+        let octagonal = top_code == Some(&3);
+        let bottom_shape = if !bottom_differs || octagonal {
+            None
+        } else {
+            match (bottom_code, rounded) {
+                (Some(1), None) if bottom.0 == bottom.1 => Some(PadShape::Round),
+                (Some(1), None) => Some(PadShape::Oval),
+                (Some(2), _) => Some(PadShape::Rectangle),
+                _ => {
+                    bottom_unread += 1;
+                    None
+                }
+            }
+        };
+        let (bottom_x, bottom_y) = bottom;
         let shape = match shapes.first() {
             Some(1) if rounded.is_some() => PadShape::RoundedRectangle {
                 // Percent of half the shorter side, as a share of the whole shorter side.
@@ -826,7 +850,16 @@ pub(crate) fn pads(
             Some(2) => PadShape::Rectangle,
             Some(3) => {
                 items.push(CopperItem::PolygonPad {
-                    bottom: None,
+                    bottom: match (bottom_differs, bottom_code) {
+                        (false, _) => None,
+                        (true, Some(3)) => {
+                            Some(vec![octagon(at_point, bottom_x, bottom_y, rotation)])
+                        }
+                        (true, _) => {
+                            bottom_unread += 1;
+                            None
+                        }
+                    },
                     layer,
                     at: at_point,
                     shapes: vec![octagon(at_point, size_x, size_y, rotation)],
@@ -851,7 +884,7 @@ pub(crate) fn pads(
             }
         };
         items.push(CopperItem::Pad {
-            bottom: None,
+            bottom: bottom_shape.map(|s| (s, bottom_x, bottom_y)),
             layer,
             at: at_point,
             shape,
@@ -865,12 +898,21 @@ pub(crate) fn pads(
             mask_expansion,
         });
     }
-    if uneven > 0 {
+    if middle_own > 0 {
+        notes.push(Note {
+            severity: Severity::Info,
+            message: format!(
+                "{middle_own} pad(s) have a middle size or shape of their own; inner layers are \
+                 drawn with the top size and shape"
+            ),
+        });
+    }
+    if bottom_unread > 0 {
         notes.push(Note {
             severity: Severity::Warning,
             message: format!(
-                "{uneven} pad(s) differ between top, middle and bottom; read with the top size and \
-                 shape"
+                "{bottom_unread} pad(s) have a bottom shape of their own that is not read yet; \
+                 the bottom is drawn with the top size and shape"
             ),
         });
     }
@@ -1147,16 +1189,18 @@ pub(crate) fn vias(
     Ok(items)
 }
 
-/// Reads the fills from `/Fills6/Data` as rectangular copper regions. A rotated fill is the
-/// rectangle of its two corners turned counter-clockwise about its center (`one-rotated-fill`).
+/// Reads the fills from `/Fills6/Data` as rectangular copper regions, and those on an overlay
+/// layer as filled silkscreen areas (`overlay-region-fill`). A rotated fill is the rectangle of
+/// its two corners turned counter-clockwise about its center (`one-rotated-fill`).
 pub(crate) fn fills(
     data: &[u8],
-    layers: &CopperLayers,
+    layers: &mut CopperLayers,
+    components: &Components,
+    graphics: &mut Vec<Graphic>,
     notes: &mut Vec<Note>,
 ) -> Result<Vec<CopperItem>, String> {
     let mut items = Vec::new();
     let mut skipped = Skipped::default();
-    let mut on_overlay = std::collections::BTreeMap::<String, usize>::new();
     for body in records(data, FILL_RECORD, "/Fills6/Data", notes)? {
         let layer_number = *body.first().ok_or("fill record is empty")?;
         let a = point(body, 13)?;
@@ -1171,18 +1215,6 @@ pub(crate) fn fills(
         if skipped.keepout(layers, layer_number, body) || skipped.on_plane(layers, layer_number) {
             continue;
         }
-        let Some(layer) = layers.copper_index(layer_number) else {
-            let name = layers.name(layer_number);
-            if is_overlay(&name) {
-                *on_overlay.entry(name).or_default() += 1;
-            } else {
-                *skipped
-                    .off_copper
-                    .entry(layers.off_copper_label(layer_number))
-                    .or_default() += 1;
-            }
-            continue;
-        };
         let center = Point {
             x: (a.x + b.x) / 2.0,
             y: (a.y + b.y) / 2.0,
@@ -1193,30 +1225,46 @@ pub(crate) fn fills(
             y: center.y + (p.x - center.x) * sin + (p.y - center.y) * cos,
         };
         let corners = [a, Point { x: b.x, y: a.y }, b, Point { x: a.x, y: b.y }].map(turn);
+        let Some(layer) = layers.copper_index(layer_number) else {
+            match layers.overlay_layer(layer_number) {
+                Some(layer) => graphics.push(Graphic::Area {
+                    layer,
+                    contour: closed(&corners),
+                    holes: Vec::new(),
+                    owner: components.owner(body),
+                }),
+                None => {
+                    *skipped
+                        .off_copper
+                        .entry(layers.off_copper_label(layer_number))
+                        .or_default() += 1;
+                }
+            }
+            continue;
+        };
         items.push(CopperItem::Region {
             layer,
             contour: closed(&corners),
             holes: Vec::new(),
         });
     }
-    filled_on_overlay("fill(s)", on_overlay, notes);
     skipped.into_notes("fill(s)", notes);
     Ok(items)
 }
 
 /// Turns the non-cutout regions of `/Regions6/Data` into copper regions: `KIND=0` on a copper
-/// layer is a solid copper region, or the poured copper of a polygon pour. Any other region is
-/// left out with a note.
+/// layer is a solid copper region, or the poured copper of a polygon pour; on an overlay layer
+/// a filled silkscreen area (`overlay-region-fill`). Any other region is left out with a note.
 pub(crate) fn regions(
     others: &[OtherRegion],
-    layers: &CopperLayers,
+    layers: &mut CopperLayers,
+    graphics: &mut Vec<Graphic>,
+    mask_openings: &mut Vec<board_model::MaskOpening>,
     notes: &mut Vec<Note>,
 ) -> Vec<CopperItem> {
     let mut items = Vec::new();
     let mut poured = 0usize;
     let mut not_copper: std::collections::BTreeMap<String, usize> = Default::default();
-    let mut on_overlay = std::collections::BTreeMap::<String, usize>::new();
-    let mut on_mask = std::collections::BTreeMap::<String, usize>::new();
     let (mut keepout_layer, mut keepouts) = (0usize, std::collections::BTreeMap::new());
     for region in others {
         let layer = layers.copper_index(region.layer);
@@ -1241,10 +1289,25 @@ pub(crate) fn regions(
                 });
             }
             (None, Some("0")) if is_overlay(&layers.name(region.layer)) => {
-                *on_overlay.entry(layers.name(region.layer)).or_default() += 1;
+                if let Some(layer) = layers.overlay_layer(region.layer) {
+                    graphics.push(Graphic::Area {
+                        layer,
+                        contour: region.contour.clone(),
+                        holes: region.holes.clone(),
+                        owner: None,
+                    });
+                }
             }
-            (None, Some("0")) if is_solder_mask(&layers.name(region.layer)) => {
-                *on_mask.entry(layers.name(region.layer)).or_default() += 1;
+            (None, Some("0")) if solder_mask_side(&layers.name(region.layer)).is_some() => {
+                // `solder-mask-region`: a solid region on Top Solder is an opening in the mask
+                // drawn by hand.
+                if let Some(side) = solder_mask_side(&layers.name(region.layer)) {
+                    mask_openings.push(board_model::MaskOpening {
+                        side,
+                        contour: region.contour.clone(),
+                        holes: region.holes.clone(),
+                    });
+                }
             }
             (_, kind) => {
                 let what = format!(
@@ -1270,47 +1333,22 @@ pub(crate) fn regions(
             message: format!("{count} {what} not read yet"),
         });
     }
-    filled_on_overlay("region(s)", on_overlay, notes);
     keepout_notes("region(s)", keepout_layer, keepouts, notes);
-    // `solder-mask-region`: a solid region on Top Solder is an opening in the mask drawn by hand.
-    for (layer, count) in on_mask {
-        notes.push(Note {
-            severity: Severity::Dropped,
-            message: format!(
-                "{count} region(s) on {layer} left out: a solder mask opening drawn by hand has \
-                 no place in the board model yet"
-            ),
-        });
-    }
     items
 }
 
-/// Whether a layer is one of the solder mask layers, by its name (`Top Solder`, `Bottom Solder`).
-fn is_solder_mask(name: &str) -> bool {
-    name == "Top Solder" || name == "Bottom Solder"
+/// The side of a solder mask layer, by its name (`Top Solder`, `Bottom Solder`).
+fn solder_mask_side(name: &str) -> Option<Side> {
+    match name {
+        "Top Solder" => Some(Side::Top),
+        "Bottom Solder" => Some(Side::Bottom),
+        _ => None,
+    }
 }
 
 /// Whether a layer is one of the silkscreen layers, by its name.
 fn is_overlay(name: &str) -> bool {
     name.ends_with("Overlay")
-}
-
-/// A note for each overlay layer with filled shapes (`overlay-region-fill`): the board model
-/// holds silkscreen lines, arcs and texts only, so a filled area there has no place yet.
-fn filled_on_overlay(
-    what: &str,
-    counts: std::collections::BTreeMap<String, usize>,
-    notes: &mut Vec<Note>,
-) {
-    for (layer, count) in counts {
-        notes.push(Note {
-            severity: Severity::Dropped,
-            message: format!(
-                "{count} {what} on {layer} left out: a filled silkscreen shape has no place in \
-                 the board model yet"
-            ),
-        });
-    }
 }
 
 /// An octagonal pad: a `size_x` x `size_y` rectangle about `at` with each corner cut off at 45
@@ -1636,8 +1674,22 @@ mod tests {
         )
         .is_err());
         assert!(vias(&[VIA_RECORD, 1, 0, 0, 0], &l, &mut Vec::new(), &mut notes).is_err());
-        assert!(fills(&[FILL_RECORD, 0xff, 0xff, 0xff, 0x7f], &l, &mut notes).is_err());
-        assert!(fills(&[FILL_RECORD, 2, 0, 0, 0, 1, 0], &l, &mut notes).is_err());
+        assert!(fills(
+            &[FILL_RECORD, 0xff, 0xff, 0xff, 0x7f],
+            &mut m,
+            &none,
+            &mut g,
+            &mut notes
+        )
+        .is_err());
+        assert!(fills(
+            &[FILL_RECORD, 2, 0, 0, 0, 1, 0],
+            &mut m,
+            &none,
+            &mut g,
+            &mut notes
+        )
+        .is_err());
         assert!(tracks(&[0x42], &mut m, &none, &mut g, &mut notes)
             .unwrap()
             .is_empty());
