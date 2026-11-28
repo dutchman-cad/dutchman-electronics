@@ -224,18 +224,147 @@ fn a_cylinder_body_is_an_extruded_circle() -> Result<(), Box<dyn std::error::Err
     Ok(())
 }
 
-/// body-sphere: the board model has no sphere, so R1's body is left out with a note.
+/// body-sphere: R1's body is a sphere of radius 0.5 whose center lies at R1's center on the top
+/// face: in R1's frame center (0, 0), 0 above the seating plane, in R1's gray.
 #[test]
-fn a_sphere_body_is_left_out_with_a_note() -> Result<(), Box<dyn std::error::Error>> {
+fn a_sphere_body_is_read_as_a_sphere() -> Result<(), Box<dyn std::error::Error>> {
     let out = read("body-sphere.PcbDoc")?;
     let r1 = out.board.components.first().ok_or("no R1")?;
-    assert!(r1.models.is_empty(), "{:?}", r1.models);
+    let [m] = r1.models.as_slice() else {
+        return Err(format!("{:?}", r1.models).into());
+    };
+    let ModelSource::Sphere { center, z, radius } = &m.source else {
+        return Err(format!("{m:?}").into());
+    };
     assert!(
-        out.notes.iter().any(|n| {
-            n.severity == Severity::Dropped
-            && n.message
-                == "1 component 3D bod(ies) not read: a sphere has no place in the board model yet"
-        }),
+        center.x.abs() <= TOLERANCE && center.y.abs() <= TOLERANCE,
+        "{center:?}"
+    );
+    assert!(
+        z.abs() <= TOLERANCE && (radius - 0.5).abs() <= TOLERANCE,
+        "{m:?}"
+    );
+    let c = m.color.ok_or("no color")?;
+    assert_eq!((c.r, c.g, c.b, c.opacity), (128, 128, 128, Some(1.0)));
+    assert!(
+        out.notes.iter().all(|n| !n.message.contains("3D bod")),
+        "{:?}",
+        out.notes
+    );
+    Ok(())
+}
+
+/// The corners' x and y range of an extruded body's outline, and its standoff and height.
+fn extruded_box(m: &board_model::ModelRef) -> Option<(f64, f64, f64, f64, f64, f64)> {
+    let ModelSource::Extruded {
+        outline,
+        standoff,
+        height,
+    } = &m.source
+    else {
+        return None;
+    };
+    let points: Vec<(f64, f64)> = outline
+        .segments
+        .iter()
+        .filter_map(|s| match s {
+            Segment::Line { from, .. } => Some((from.x, from.y)),
+            _ => None,
+        })
+        .collect();
+    let lo = |f: fn(&(f64, f64)) -> f64| points.iter().map(f).fold(f64::MAX, f64::min);
+    let hi = |f: fn(&(f64, f64)) -> f64| points.iter().map(f).fold(f64::MIN, f64::max);
+    Some((
+        lo(|p| p.0),
+        hi(|p| p.0),
+        lo(|p| p.1),
+        hi(|p| p.1),
+        *standoff,
+        *height,
+    ))
+}
+
+/// body-two-extruded: R1 has both its boxes, each with its own standoff and color. Its own
+/// 1.600 x 0.800 gray box on the board comes first (the file lists the added one first), then the
+/// 0.800 x 0.400 box (0, 160, 224) from 0.450 up to 0.750, both in R1's frame.
+#[test]
+fn a_part_keeps_every_body() -> Result<(), Box<dyn std::error::Error>> {
+    let out = read("body-two-extruded.PcbDoc")?;
+    let r1 = out.board.components.first().ok_or("no R1")?;
+    let [main, second] = r1.models.as_slice() else {
+        return Err(format!("{:?}", r1.models).into());
+    };
+    let want = [
+        (main, (-0.8, 0.8, -0.4, 0.4, 0.0, 0.45), (128, 128, 128)),
+        (second, (-0.4, 0.4, -0.2, 0.2, 0.45, 0.75), (0, 160, 224)),
+    ];
+    for (m, (x0, x1, y0, y1, standoff, height), rgb) in want {
+        let b = extruded_box(m).ok_or("not extruded")?;
+        let got = [b.0, b.1, b.2, b.3, b.4, b.5];
+        let expected = [x0, x1, y0, y1, standoff, height];
+        assert!(
+            got.iter()
+                .zip(expected)
+                .all(|(g, e)| (g - e).abs() <= TOLERANCE),
+            "{got:?}, want {expected:?}"
+        );
+        let c = m.color.ok_or("no color")?;
+        assert_eq!(((c.r, c.g, c.b), c.opacity), (rgb, Some(1.0)));
+    }
+    assert!(
+        out.notes.iter().all(|n| !n.message.contains("3D bod")),
+        "{:?}",
+        out.notes
+    );
+    Ok(())
+}
+
+/// arc-region: the rounded slot on Mechanical 2 belongs to no part. It is a free body in board
+/// coordinates: two lines at y 13 and 17 and two half circles of radius 2 about (30, 15) and
+/// (36, 15), from the board's top face up to 0.508.
+#[test]
+fn a_body_of_no_part_is_a_free_body() -> Result<(), Box<dyn std::error::Error>> {
+    let out = read("arc-region.PcbDoc")?;
+    let [m] = out.board.free_models.as_slice() else {
+        return Err(format!("{:?}", out.board.free_models).into());
+    };
+    let ModelSource::Extruded {
+        outline,
+        standoff,
+        height,
+    } = &m.source
+    else {
+        return Err(format!("{m:?}").into());
+    };
+    assert!(standoff.abs() <= TOLERANCE && (height - 0.508).abs() <= TOLERANCE);
+    assert_eq!((m.offset, m.rotation_deg), ([0.0; 3], [0.0; 3]));
+    let mut centers = Vec::new();
+    let mut lines = 0;
+    for s in &outline.segments {
+        match s {
+            Segment::Arc { center, radius, .. } => {
+                assert!((radius - 2.0).abs() <= TOLERANCE, "{s:?}");
+                let sweep = s.sweep_deg().ok_or("no sweep")?;
+                assert!((sweep.abs() - 180.0).abs() <= TOLERANCE, "{s:?}");
+                centers.push((center.x, center.y));
+            }
+            Segment::Line { from, to } => {
+                lines += 1;
+                assert!((from.y - to.y).abs() <= TOLERANCE, "{s:?}");
+                let y = from.y;
+                assert!((y - 13.0).abs() <= TOLERANCE || (y - 17.0).abs() <= TOLERANCE);
+            }
+        }
+    }
+    assert_eq!(lines, 2, "{outline:?}");
+    centers.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let [(x0, y0), (x1, y1)] = centers.as_slice() else {
+        return Err(format!("{outline:?}").into());
+    };
+    assert!((x0 - 30.0).abs() <= TOLERANCE && (y0 - 15.0).abs() <= TOLERANCE);
+    assert!((x1 - 36.0).abs() <= TOLERANCE && (y1 - 15.0).abs() <= TOLERANCE);
+    assert!(
+        out.notes.iter().all(|n| !n.message.contains("3D bod")),
         "{:?}",
         out.notes
     );

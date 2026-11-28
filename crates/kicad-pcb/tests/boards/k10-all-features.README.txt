@@ -83,7 +83,17 @@ R1 and R2 (test:R_0603)
   - Reference "R2" at (33,58), turned 90 and mirrored;
   - MPN "RC0603-1K" at (37,58), turned 90 and mirrored.
 
+Copper shape and footprint zone (added with the reader's filled copper shapes and footprint zones; every number above stayed the same when the board was rebuilt)
+- A trapezoid on F.Cu, filled, stroke 0.2: corners (50,45), (58,45), (56,52), (52,52). Fill area (8 + 4) / 2 * 7 = 42 mm2. The reader gives a copper region and its four edges as 0.2 tracks (no net).
+- U3 (test:Zone, top, at (80,50), not turned, value ZONE):
+  - a plain hole of 1.0 at (80,50);
+  - a zone on F.Cu, no net, minimum width 0.25, clearance 0.5, outline (75,46), (85,46), (85,54), (75,54) (written in board coordinates, as KiCad writes a footprint's zones).
+- KiCad's fill of U3's zone, read back:
+  - 78.2093 mm2 of copper;
+  - a gap round the hole whose nearest corners lie 0.7509 to 0.7541 from (80,50) (the hole's radius 0.5 plus the board's hole clearance 0.25).
+  The reader gives one region with one hole.
+
 What the reader still loses on this board (crates/kicad-pcb/tests/all_features.rs, only_the_known_gaps):
-- the four Value fields on F.Fab (U1, J1, R1) and B.Fab (R2), which the reader does not draw;
+- the five Value fields on F.Fab (U1, J1, R1, U3) and B.Fab (R2), which the reader does not draw;
 - the stack-up's finish and materials (an Info note);
 - the model files, which the board names but does not hold (an Info note).

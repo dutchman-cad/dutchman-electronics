@@ -306,7 +306,7 @@ impl Reader {
                 let owner = owner.map(str::to_string);
                 self.silk_shape(layer, shape, width, owner);
             }
-            Some(LayerKind::Copper) => self.copper_shape(layer, shape, width),
+            Some(LayerKind::Copper) => self.copper_shape(layer, shape, width, filled),
             _ => self.tally.add(
                 Severity::Dropped,
                 format!("drawing item(s) on layer {layer_name} (only silkscreen, copper and the outline are read)"),
@@ -383,7 +383,10 @@ impl Reader {
     }
 
     /// A line or arc drawn on a copper layer is a track with no net.
-    fn copper_shape(&mut self, layer: usize, shape: Shape, width: f64) {
+    /// A shape drawn on copper. A filled circle or polygon (rectangles are polygons) is a copper
+    /// region, with its stroke drawn round its edge when it has one (KiCad's copper is the fill
+    /// and the stroke together); any other shape is its stroke alone.
+    fn copper_shape(&mut self, layer: usize, shape: Shape, width: f64, filled: bool) {
         match shape {
             Shape::Line(from, to) => self.copper.push(CopperItem::Track {
                 layer,
@@ -404,31 +407,76 @@ impl Reader {
                     net: None,
                 });
             }
-            Shape::Circle(center, radius) => self.copper.push(CopperItem::TrackArc {
-                layer,
-                center,
-                radius,
-                start_deg: 0.0,
-                end_deg: 0.0,
-                width,
-                net: None,
-            }),
+            Shape::Circle(center, radius) => {
+                if filled {
+                    self.copper.push(CopperItem::Region {
+                        layer,
+                        contour: Contour {
+                            segments: vec![circle_segment(center, radius)],
+                        },
+                        holes: Vec::new(),
+                    });
+                }
+                if !filled || width > 0.0 {
+                    self.copper.push(CopperItem::TrackArc {
+                        layer,
+                        center,
+                        radius,
+                        start_deg: 0.0,
+                        end_deg: 0.0,
+                        width,
+                        net: None,
+                    });
+                }
+            }
             Shape::Poly(c) => {
-                for s in &c.segments {
-                    if let Segment::Line { from, to } = *s {
-                        self.copper.push(CopperItem::Track {
-                            layer,
-                            from,
-                            to,
-                            width,
-                            net: None,
-                        });
+                if !filled || width > 0.0 {
+                    self.copper_edge(layer, &c, width);
+                }
+                if filled {
+                    self.copper.push(CopperItem::Region {
+                        layer,
+                        contour: c,
+                        holes: Vec::new(),
+                    });
+                }
+            }
+        }
+    }
+
+    /// The edge of a polygon drawn on copper as tracks and track arcs of `width`.
+    fn copper_edge(&mut self, layer: usize, c: &Contour, width: f64) {
+        for s in &c.segments {
+            match *s {
+                Segment::Line { from, to } => self.copper.push(CopperItem::Track {
+                    layer,
+                    from,
+                    to,
+                    width,
+                    net: None,
+                }),
+                Segment::Arc {
+                    center,
+                    radius,
+                    start_deg,
+                    end_deg,
+                    clockwise,
+                } => {
+                    // A track arc runs counter-clockwise from its start to its end.
+                    let (start_deg, end_deg) = if clockwise {
+                        (end_deg, start_deg)
                     } else {
-                        self.tally.add(
-                            Severity::Dropped,
-                            "arc piece(s) of polygons drawn on copper (not read)",
-                        );
-                    }
+                        (start_deg, end_deg)
+                    };
+                    self.copper.push(CopperItem::TrackArc {
+                        layer,
+                        center,
+                        radius,
+                        start_deg,
+                        end_deg,
+                        width,
+                        net: None,
+                    });
                 }
             }
         }
@@ -761,6 +809,13 @@ impl Reader {
                 );
                 continue;
             };
+            if self.layers.get(layer).map(|l| l.kind) != Some(LayerKind::Copper) {
+                self.tally.add(
+                    Severity::Dropped,
+                    format!("zone fill(s) on layer {layer_name} (only copper zones are read)"),
+                );
+                continue;
+            }
             let Some(split) = fp
                 .child("pts")
                 .and_then(|p| split_fill(&Frame::IDENTITY, p))
@@ -888,9 +943,9 @@ impl Reader {
                         self.graphic_item(kind, item, &frame, owner);
                     }
                 }
-                "zone" => self
-                    .tally
-                    .add(Severity::Dropped, "zone(s) inside footprints (not read)"),
+                // KiCad writes a footprint's zones, outline and fill, in board coordinates, as it
+                // does the board's own (k10-footprint-zone).
+                "zone" => self.zone(item),
                 _ => {}
             }
         }

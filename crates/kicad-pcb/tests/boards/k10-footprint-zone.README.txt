@@ -1,0 +1,24 @@
+Original test board made for Dutchman Electronics. Released under CC0 1.0 (public domain): https://creativecommons.org/publicdomain/zero/1.0/
+
+k10-footprint-zone: copper zones inside footprints, on the top and flipped to the bottom, filled by KiCad, and a keep-out rule area in a footprint.
+
+Made with KiCad 10.0.8 (file version 20260206) by fixtures/kicad/build_k10_copper_boards.py and fixtures/kicad/fill_zones.py (KiCad fills the zones, the footprints' ones too). Every number below was read back with KiCad's own scripting. KiCad shows coordinates in millimeters with Y pointing down; the board's top-left corner is at page position (100, 100), and every number below is relative to that corner (so add 100 to x and y for the page position). The reader gives Y up: model x = 100 + X, model y = -(100 + Y).
+
+- Outline: rectangle (0,0) to (50,30) on Edge.Cuts, line width 0.1; two copper layers, 1.6 mm. The board's hole clearance is 0.25 (KiCad's default).
+- Each of U1 and U2 (test:Shapes) holds:
+  - a plain (unplated) hole of 1.0 at its origin;
+  - a zone on its copper layer, outline (-6,-5), (6,-5), (6,5), (-6,5) from its origin, no net, minimum width 0.25, clearance 0.5.
+- U2 also holds a keep-out rule area (no tracks, no vias), (-3,6), (3,6), (3,8), (-3,8) from its origin.
+- KiCad writes a footprint's zone, outline and fill, in board coordinates, as it writes the board's own zones.
+- U1 on the top at (13,15), not turned. Its zone on F.Cu has the outline (7,10), (19,10), (19,20), (7,20).
+- U2 flipped to the bottom at (36,15), turned 150 (30, then the flip). Its zone on B.Cu has the outline (43.6962,13.6699), (33.3038,7.6699), (28.3038,16.3301), (38.6962,22.3301). Its rule area is on B.Cu and holds no fill.
+- Each zone's fill, read back:
+  - one polygon, the outline with its corners rounded off by the minimum width;
+  - a gap round the hole: the fill's corners nearest the hole's center lie 0.7509 to 0.7541 from it (the hole's radius 0.5 plus the hole clearance 0.25, not the zone clearance);
+  - copper area 118.2093 mm2 (120 less the gap and the rounded corners).
+  The file saves each fill as one polygon with a bridge into the gap; the reader gives one region with one hole.
+
+What the reader gives:
+- one copper region with one hole on F.Cu and one on B.Cu, each 118.2093 mm2 of copper;
+- the keep-out rule area named in the note "1 keep-out zone(s) (they hold no copper)";
+- no other note above Info.
