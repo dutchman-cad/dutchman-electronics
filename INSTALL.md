@@ -1,18 +1,18 @@
-# Install Dutchman Electronics 0.1.0
+# Install Dutchman Electronics 0.1.1
 
 **Dutchman 0.4.0 and later include this module.** Installing Dutchman installs it, so most people need nothing from this page.
 
 Use these steps only to run a newer module than the one your Dutchman includes, or to use the module on its own. Dutchman's Settings shows which copy it uses.
 
-Download the archive for the computer and its matching `.sha256` file from the [0.1.0 release](https://github.com/dutchman-cad/dutchman-electronics/releases/tag/v0.1.0). Each archive contains one folder with the program, README.md, INSTALL.md and the licenses. We ship unsigned downloads; the macOS program has only an ad-hoc signature.
+Download the archive for the computer and its matching `.sha256` file from the [0.1.1 release](https://github.com/dutchman-cad/dutchman-electronics/releases/tag/v0.1.1). Each archive contains one folder with the program, README.md, INSTALL.md and the licenses. We ship unsigned downloads; the macOS program has only an ad-hoc signature.
 
 ## Windows
 
-1. Download `dutchman-electronics-0.1.0-x86_64-pc-windows-msvc.zip` and its `.sha256` file. In PowerShell, open the download folder and compare these two hashes. They must match; stop if they differ.
+1. Download `dutchman-electronics-0.1.1-x86_64-pc-windows-msvc.zip` and its `.sha256` file. In PowerShell, open the download folder and compare these two hashes. They must match; stop if they differ.
 
    ```powershell
-   (Get-FileHash .\dutchman-electronics-0.1.0-x86_64-pc-windows-msvc.zip -Algorithm SHA256).Hash
-   Get-Content .\dutchman-electronics-0.1.0-x86_64-pc-windows-msvc.zip.sha256
+   (Get-FileHash .\dutchman-electronics-0.1.1-x86_64-pc-windows-msvc.zip -Algorithm SHA256).Hash
+   Get-Content .\dutchman-electronics-0.1.1-x86_64-pc-windows-msvc.zip.sha256
    ```
 
 2. Extract the ZIP. Open PowerShell inside the extracted folder containing `dutchman-electronics.exe`. Put the program directly in `%LOCALAPPDATA%\Dutchman\modules\`, creating the folder if needed:
@@ -26,10 +26,10 @@ Download the archive for the computer and its matching `.sha256` file from the [
 
 ## macOS
 
-1. Download `dutchman-electronics-0.1.0-macos-universal.tar.gz` (Apple silicon or Intel) and its `.sha256` file. We also offer `aarch64-apple-darwin.tar.gz` for Apple silicon and `x86_64-apple-darwin.tar.gz` for Intel, with the same `dutchman-electronics-0.1.0-` prefix. In Terminal, open the download folder and check the archive before extracting it:
+1. Download `dutchman-electronics-0.1.1-macos-universal.tar.gz` (Apple silicon or Intel) and its `.sha256` file. We also offer `aarch64-apple-darwin.tar.gz` for Apple silicon and `x86_64-apple-darwin.tar.gz` for Intel, with the same `dutchman-electronics-0.1.1-` prefix. In Terminal, open the download folder and check the archive before extracting it:
 
    ```sh
-   shasum -a 256 -c dutchman-electronics-0.1.0-macos-universal.tar.gz.sha256
+   shasum -a 256 -c dutchman-electronics-0.1.1-macos-universal.tar.gz.sha256
    ```
 
    The result must say `OK`; stop if it fails. Substitute the chosen archive name if using a single-processor download.
@@ -47,10 +47,10 @@ Download the archive for the computer and its matching `.sha256` file from the [
 
 ## Linux
 
-1. Download `dutchman-electronics-0.1.0-x86_64-unknown-linux-gnu.tar.gz` for an Intel/AMD 64-bit computer, or `dutchman-electronics-0.1.0-aarch64-unknown-linux-gnu.tar.gz` for ARM64, and its `.sha256` file. In a terminal, open the download folder and check before extracting:
+1. Download `dutchman-electronics-0.1.1-x86_64-unknown-linux-gnu.tar.gz` for an Intel/AMD 64-bit computer, or `dutchman-electronics-0.1.1-aarch64-unknown-linux-gnu.tar.gz` for ARM64, and its `.sha256` file. In a terminal, open the download folder and check before extracting:
 
    ```sh
-   sha256sum -c dutchman-electronics-0.1.0-x86_64-unknown-linux-gnu.tar.gz.sha256
+   sha256sum -c dutchman-electronics-0.1.1-x86_64-unknown-linux-gnu.tar.gz.sha256
    ```
 
    The result must say `OK`; stop if it fails. Substitute the ARM64 archive name if needed.
@@ -69,7 +69,7 @@ Download the archive for the computer and its matching `.sha256` file from the [
 
 ## Check the installation
 
-The full-path commands above run `dutchman-electronics --version`; we expect version `0.1.0`. The modules folder does not need to be on PATH. Restart Dutchman and check Settings to see where it found the module. This folder survives Dutchman updates.
+The full-path commands above run `dutchman-electronics --version`; we expect version `0.1.1`. The modules folder does not need to be on PATH. Restart Dutchman and check Settings to see where it found the module. This folder survives Dutchman updates.
 
 Run `dutchman formats` in a terminal (or use the full path to the Dutchman command). It lists the electronics formats as “placed parts and flat board layers, through the electronics module (`dutchman-electronics`, installed separately)”. This is a list of supported formats, not an installation check. Open a `.PcbDoc` or `.kicad_pcb` in Dutchman to check conversion.
 
