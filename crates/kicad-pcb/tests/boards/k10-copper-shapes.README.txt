@@ -1,0 +1,26 @@
+Original test board made for Dutchman Electronics. Released under CC0 1.0 (public domain): https://creativecommons.org/publicdomain/zero/1.0/
+
+k10-copper-shapes: shapes drawn on copper (gr_poly, gr_rect, gr_circle and their fp_ forms in footprints), filled and not, to check that a filled one is copper over its whole area.
+
+Made with KiCad 10.0.8 (file version 20260206) by fixtures/kicad/build_k10_copper_boards.py. Every number below was read back with KiCad's own scripting. KiCad shows coordinates in millimeters with Y pointing down; the board's top-left corner is at page position (100, 100), and every number below is relative to that corner (so add 100 to x and y for the page position). The reader gives Y up: model x = 100 + X, model y = -(100 + Y).
+
+- Outline: rectangle (0,0) to (50,30) on Edge.Cuts, line width 0.1; two copper layers, 1.6 mm.
+- KiCad's copper for a filled shape is its fill and its stroke together: the stroke is centered on the shape's edge. A shape with stroke width 0 is the fill alone. A shape that is not filled is its stroke alone.
+
+Board shapes:
+- L polygon on F.Cu, filled, stroke 0: corners (5,5), (15,5), (15,8), (8,8), (8,12), (5,12). Fill area 42 mm2.
+- Rectangle on F.Cu, filled, stroke 0.2: corners (20,5), (28,5), (28,12), (20,12). Fill area 56 mm2.
+- Circle on F.Cu, filled, stroke 0: center (36,8.5), radius 3. Fill area pi * 9 = 28.274 mm2 (28.263 with KiCad's facets).
+- Triangle on B.Cu, filled, stroke 0.3: corners (42,4), (47,4), (44.5,10). Fill area 15 mm2.
+- Rectangle on F.Cu, not filled, stroke 0.25: corners (5,16), (12,16), (12,22), (5,22).
+
+Footprint shapes:
+- U1 (test:Shapes) on the top at (20,22), not turned. Both shapes are on F.Cu, filled, stroke 0:
+  - a circle of radius 1.5 about (20,22), fill area 7.069 mm2 (7.063 with KiCad's facets);
+  - a rectangle with corners (22,20.5), (25,20.5), (25,23.5), (22,23.5), fill area 9 mm2.
+- U2 (test:Shapes) flipped to the bottom at (38,22), turned 150 (30, then the flip). Its triangle is on B.Cu, filled, stroke 0. In the footprint it is (0,-2), (3,1), (-3,1). KiCad gives its corners as (39,20.2679), (34.9019,21.366), (40.0981,24.366). Fill area 9 mm2.
+
+What the reader gives:
+- One copper region per filled shape: five on F.Cu, two on B.Cu, none with holes. The circles are exact: one full arc of the radius.
+- The strokes as tracks on the shapes' edges: 4 of 0.2 (the filled rectangle), 3 of 0.3 (the triangle) and 4 of 0.25 (the rectangle that is not filled).
+- No note above Info.

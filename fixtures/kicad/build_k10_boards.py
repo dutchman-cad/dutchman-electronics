@@ -261,7 +261,8 @@ def via(b, at, net_, size=0.8, drill=0.4, span=None, tenting=None, micro=False):
 #   along y = 50 (tenting, blind, buried, micro);
 # - silkscreen shapes and texts (stroke, TrueType, text variables, one on the bottom);
 # - R1 on the top at (15, 58) and R2 on the bottom at (35, 58), turned 90, with models and a
-#   shown MPN field.
+#   shown MPN field;
+# - a filled copper trapezoid on F.Cu and a footprint U3 at (80, 50) holding a copper zone.
 R2 = 0.70710678
 b = new_board(4, 1.6)
 line(b, (3, 0), (97, 0))
@@ -410,4 +411,29 @@ for ref, value, at, rot, flip, mpn in [
         fp.SetOrientationDegrees(rot)
     if flip:
         fp.Flip(fp.GetPosition(), False)
+
+# A filled copper shape (issue #1 of the KiCad gap survey): a trapezoid on F.Cu, (50,45) (58,45)
+# (56,52) (52,52), filled, stroke 0.2 (four corners: add_pad_arcs.py turns any three-point
+# polygon into an arc).
+s = poly(b, [(50, 45), (58, 45), (56, 52), (52, 52)], pcbnew.F_Cu, 0.2)
+s.SetFilled(True)
+# A copper zone inside a footprint (#10): U3 on the top at (80,50), a plain hole of 1.0 at its
+# origin and a zone on F.Cu, outline (-5,-4) (5,-4) (5,4) (-5,4) from its origin, no net, minimum
+# width 0.25, clearance 0.5 (filled by fill_zones.py with the board's own).
+fp = pcbnew.FOOTPRINT(b)
+fp.SetReference("U3")
+fp.SetValue("ZONE")
+fp.SetFPID(pcbnew.LIB_ID("test", "Zone"))
+pad(fp, "", 0, (1.0, 1.0), pcbnew.PAD_SHAPE_CIRCLE, pcbnew.PAD_ATTRIB_NPTH, 1.0)
+z = pcbnew.ZONE(fp)
+z.SetLayer(pcbnew.F_Cu)
+z.SetMinThickness(FromMM(0.25))
+z.SetLocalClearance(FromMM(0.5))
+ol = z.Outline()
+ol.NewOutline()
+for q in [(-5, -4), (5, -4), (5, 4), (-5, 4)]:
+    ol.Append(FromMM(q[0]), FromMM(q[1]))
+fp.Add(z)
+b.Add(fp)
+fp.SetPosition(p(80, 50))
 save(b, "k10-all-features")
