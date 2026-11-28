@@ -1325,3 +1325,46 @@ fn read_draws_hatched_and_outline_pours_as_altium_pours_them(
     );
     Ok(())
 }
+
+/// pad-stack-tmb: the pad's top copper is its round 2.000, its bottom copper its 2.400 x 1.600
+/// rectangle, both at (25, 15).
+#[cfg(feature = "altium")]
+#[test]
+fn read_draws_a_pads_bottom_with_its_bottom_shape() -> Result<(), Box<dyn std::error::Error>> {
+    let out = std::env::temp_dir().join(format!("de-tmb-{}", std::process::id()));
+    let board = test_board("pad-stack-tmb.PcbDoc");
+    let result = run(&[
+        "read",
+        &board.to_string_lossy(),
+        "--out",
+        &out.to_string_lossy(),
+        "--json",
+    ]);
+    std::fs::remove_dir_all(&out).ok();
+    let (ok, v) = result?;
+    assert!(ok, "{v}");
+    let outer_box = |name: &str| -> Option<[f64; 4]> {
+        let o = v["overlays"]
+            .as_array()?
+            .iter()
+            .find(|o| o["name"] == name)?
+            .clone();
+        let pts: Vec<(f64, f64)> = o["areas"][0]["outer"]
+            .as_array()?
+            .iter()
+            .filter_map(|p| Some((p[0].as_f64()?, p[1].as_f64()?)))
+            .collect();
+        Some([
+            pts.iter().map(|p| p.0).fold(f64::MAX, f64::min),
+            pts.iter().map(|p| p.0).fold(f64::MIN, f64::max),
+            pts.iter().map(|p| p.1).fold(f64::MAX, f64::min),
+            pts.iter().map(|p| p.1).fold(f64::MIN, f64::max),
+        ])
+    };
+    let near = |a: [f64; 4], b: [f64; 4]| a.iter().zip(b).all(|(x, y)| (x - y).abs() < 0.001);
+    let top = outer_box("Copper top").ok_or("no top copper")?;
+    let bottom = outer_box("Copper bottom").ok_or("no bottom copper")?;
+    assert!(near(top, [24.0, 26.0, 14.0, 16.0]), "{top:?}");
+    assert!(near(bottom, [23.8, 26.2, 14.2, 15.8]), "{bottom:?}");
+    Ok(())
+}

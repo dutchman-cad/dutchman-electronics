@@ -54,6 +54,10 @@
 //!   y 1.000, as typed). Round with unequal sizes is the oval of `one-oval-pad` (2.000 x 1.000).
 //!   Byte 60 is 1 on the plated hole of `one-plated-pad` and 0 on the unplated hole of
 //!   `outline-with-hole` and on every SMD pad.
+//!   A pad of Altium's Top-Middle-Bottom stack (`pad-stack-tmb`: top round 2.000, middle round
+//!   1.400, bottom rectangle 2.400 x 1.600) keeps its top as its shape and gets its bottom size
+//!   and shape as the pad's bottom; inner layers keep the top (a note says so), and a bottom the
+//!   reader cannot shape (a rounded rectangle's, or another shape under an octagon) is noted.
 //!   Bytes 7..9 are the index of the component the pad belongs to (see `components.rs`);
 //!   its designator becomes the pad's owner.
 //! - A pad's own solder and paste mask (`pad-mask-overrides`, each pad compared with its
@@ -716,7 +720,8 @@ pub(crate) fn pads(
 ) -> Result<Vec<CopperItem>, String> {
     let mut items = Vec::new();
     let mut skipped = Skipped::default();
-    let mut uneven = 0usize;
+    let mut middle_own = 0usize;
+    let mut bottom_unread = 0usize;
     let mut shaped_holes: Vec<String> = Vec::new();
     let mut own_masks = OwnMasks::default();
     let mut at = 0usize;
@@ -802,8 +807,9 @@ pub(crate) fn pads(
             Some(sides) => sides.map(Some),
             None => [None, None],
         };
-        if middle != top || bottom != top || shapes.iter().any(|s| Some(s) != shapes.first()) {
-            uneven += 1;
+        let [top_code, middle_code, bottom_code] = [shapes.first(), shapes.get(1), shapes.get(2)];
+        if middle != top || middle_code != top_code {
+            middle_own += 1;
         }
         if hole > 0.0 {
             if let Some(what) = hole_shape(layer_table, hole) {
@@ -816,6 +822,24 @@ pub(crate) fn pads(
         let rounded = (layer_table.get(LAYER_TABLE_TOP_SHAPE) == Some(&ROUNDED_RECTANGLE))
             .then(|| layer_table.get(LAYER_TABLE_TOP_CORNER).copied())
             .flatten();
+        // `pad-stack-tmb`: a bottom side of its own (bytes 37..45 and the third shape byte) goes on
+        // the pad's bottom; a rounded rectangle keeps its corner only in block 5, read for the top.
+        let bottom_differs = bottom != top || bottom_code != top_code;
+        let octagonal = top_code == Some(&3);
+        let bottom_shape = if !bottom_differs || octagonal {
+            None
+        } else {
+            match (bottom_code, rounded) {
+                (Some(1), None) if bottom.0 == bottom.1 => Some(PadShape::Round),
+                (Some(1), None) => Some(PadShape::Oval),
+                (Some(2), _) => Some(PadShape::Rectangle),
+                _ => {
+                    bottom_unread += 1;
+                    None
+                }
+            }
+        };
+        let (bottom_x, bottom_y) = bottom;
         let shape = match shapes.first() {
             Some(1) if rounded.is_some() => PadShape::RoundedRectangle {
                 // Percent of half the shorter side, as a share of the whole shorter side.
@@ -826,7 +850,16 @@ pub(crate) fn pads(
             Some(2) => PadShape::Rectangle,
             Some(3) => {
                 items.push(CopperItem::PolygonPad {
-                    bottom: None,
+                    bottom: match (bottom_differs, bottom_code) {
+                        (false, _) => None,
+                        (true, Some(3)) => {
+                            Some(vec![octagon(at_point, bottom_x, bottom_y, rotation)])
+                        }
+                        (true, _) => {
+                            bottom_unread += 1;
+                            None
+                        }
+                    },
                     layer,
                     at: at_point,
                     shapes: vec![octagon(at_point, size_x, size_y, rotation)],
@@ -851,7 +884,7 @@ pub(crate) fn pads(
             }
         };
         items.push(CopperItem::Pad {
-            bottom: None,
+            bottom: bottom_shape.map(|s| (s, bottom_x, bottom_y)),
             layer,
             at: at_point,
             shape,
@@ -865,12 +898,21 @@ pub(crate) fn pads(
             mask_expansion,
         });
     }
-    if uneven > 0 {
+    if middle_own > 0 {
+        notes.push(Note {
+            severity: Severity::Info,
+            message: format!(
+                "{middle_own} pad(s) have a middle size or shape of their own; inner layers are \
+                 drawn with the top size and shape"
+            ),
+        });
+    }
+    if bottom_unread > 0 {
         notes.push(Note {
             severity: Severity::Warning,
             message: format!(
-                "{uneven} pad(s) differ between top, middle and bottom; read with the top size and \
-                 shape"
+                "{bottom_unread} pad(s) have a bottom shape of their own that is not read yet; \
+                 the bottom is drawn with the top size and shape"
             ),
         });
     }

@@ -357,11 +357,11 @@ fn a_component_body_keeps_its_half_circles() -> Result<(), Box<dyn std::error::E
     Ok(())
 }
 
-/// pad-stack-tmb: one plated pad, top round 2.000, middle round 1.400, bottom rectangle
-/// 2.400 x 1.600, hole 0.800. The board model has one shape per pad, so it is read with the top
-/// size and shape, and a note says so.
+/// pad-stack-tmb: one plated pad at (25, 15), top round 2.000, middle round 1.400, bottom
+/// rectangle 2.400 x 1.600, hole 0.800. The top is the pad's shape and the bottom its bottom
+/// override; inner layers keep the top, and a note says the middle is not drawn.
 #[test]
-fn a_top_middle_bottom_pad_is_read_with_its_top_size() -> Result<(), Box<dyn std::error::Error>> {
+fn a_top_middle_bottom_pad_has_its_bottom_shape() -> Result<(), Box<dyn std::error::Error>> {
     let out = read("pad-stack-tmb.PcbDoc")?;
     let pads: Vec<_> = out
         .board
@@ -373,25 +373,36 @@ fn a_top_middle_bottom_pad_is_read_with_its_top_size() -> Result<(), Box<dyn std
                 shape,
                 size_x,
                 size_y,
+                bottom,
                 drill,
                 plated,
                 ..
-            } => Some((at, shape, size_x, size_y, drill, plated)),
+            } => Some((at, shape, size_x, size_y, bottom, drill, plated)),
             _ => None,
         })
         .collect();
-    let [(at, shape, size_x, size_y, drill, plated)] = pads.as_slice() else {
+    let [(at, shape, size_x, size_y, bottom, drill, plated)] = pads.as_slice() else {
         return Err(format!("{pads:?}").into());
     };
     assert!((at.x - 25.0).abs() <= TOLERANCE && (at.y - 15.0).abs() <= TOLERANCE);
     assert_eq!(**shape, PadShape::Round);
     assert!((**size_x - 2.0).abs() <= TOLERANCE && (**size_y - 2.0).abs() <= TOLERANCE);
+    let Some((bottom_shape, bx, by)) = bottom else {
+        return Err("no bottom shape".into());
+    };
+    assert_eq!(*bottom_shape, PadShape::Rectangle);
+    assert!((bx - 2.4).abs() <= TOLERANCE && (by - 1.6).abs() <= TOLERANCE);
     assert!(drill.is_some_and(|d| (d - 0.8).abs() <= TOLERANCE) && **plated);
-    assert!(
-        out.notes.iter().any(|n| n.message
-            == "1 pad(s) differ between top, middle and bottom; read with the top size and shape"),
-        "{:?}",
-        out.notes
+    let pad_notes: Vec<&str> = out
+        .notes
+        .iter()
+        .filter(|n| n.message.contains("pad(s)"))
+        .map(|n| n.message.as_str())
+        .collect();
+    assert_eq!(
+        pad_notes,
+        ["1 pad(s) have a middle size or shape of their own; inner layers are drawn with the top \
+          size and shape"]
     );
     Ok(())
 }
