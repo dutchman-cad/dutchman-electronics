@@ -241,9 +241,17 @@ impl InputFormat for Altium {
             );
         }
         if let Some(data) = &fills6 {
-            copper.extend(copper::fills(data, &layers, &mut notes).map_err(ReadError::Invalid)?);
+            copper.extend(
+                copper::fills(data, &mut layers, &components, &mut graphics, &mut notes)
+                    .map_err(ReadError::Invalid)?,
+            );
         }
-        copper.extend(copper::regions(&shape.other_regions, &layers, &mut notes));
+        copper.extend(copper::regions(
+            &shape.other_regions,
+            &mut layers,
+            &mut graphics,
+            &mut notes,
+        ));
         let rules6 = read_stream(&mut container, "/Rules6/Data")?;
         let solder_mask_expansion =
             mask::expansion(rules6.as_deref(), &mut notes).map_err(ReadError::Invalid)?;

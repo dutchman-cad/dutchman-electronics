@@ -1147,16 +1147,18 @@ pub(crate) fn vias(
     Ok(items)
 }
 
-/// Reads the fills from `/Fills6/Data` as rectangular copper regions. A rotated fill is the
-/// rectangle of its two corners turned counter-clockwise about its center (`one-rotated-fill`).
+/// Reads the fills from `/Fills6/Data` as rectangular copper regions, and those on an overlay
+/// layer as filled silkscreen areas (`overlay-region-fill`). A rotated fill is the rectangle of
+/// its two corners turned counter-clockwise about its center (`one-rotated-fill`).
 pub(crate) fn fills(
     data: &[u8],
-    layers: &CopperLayers,
+    layers: &mut CopperLayers,
+    components: &Components,
+    graphics: &mut Vec<Graphic>,
     notes: &mut Vec<Note>,
 ) -> Result<Vec<CopperItem>, String> {
     let mut items = Vec::new();
     let mut skipped = Skipped::default();
-    let mut on_overlay = std::collections::BTreeMap::<String, usize>::new();
     for body in records(data, FILL_RECORD, "/Fills6/Data", notes)? {
         let layer_number = *body.first().ok_or("fill record is empty")?;
         let a = point(body, 13)?;
@@ -1171,18 +1173,6 @@ pub(crate) fn fills(
         if skipped.keepout(layers, layer_number, body) || skipped.on_plane(layers, layer_number) {
             continue;
         }
-        let Some(layer) = layers.copper_index(layer_number) else {
-            let name = layers.name(layer_number);
-            if is_overlay(&name) {
-                *on_overlay.entry(name).or_default() += 1;
-            } else {
-                *skipped
-                    .off_copper
-                    .entry(layers.off_copper_label(layer_number))
-                    .or_default() += 1;
-            }
-            continue;
-        };
         let center = Point {
             x: (a.x + b.x) / 2.0,
             y: (a.y + b.y) / 2.0,
@@ -1193,29 +1183,45 @@ pub(crate) fn fills(
             y: center.y + (p.x - center.x) * sin + (p.y - center.y) * cos,
         };
         let corners = [a, Point { x: b.x, y: a.y }, b, Point { x: a.x, y: b.y }].map(turn);
+        let Some(layer) = layers.copper_index(layer_number) else {
+            match layers.overlay_layer(layer_number) {
+                Some(layer) => graphics.push(Graphic::Area {
+                    layer,
+                    contour: closed(&corners),
+                    holes: Vec::new(),
+                    owner: components.owner(body),
+                }),
+                None => {
+                    *skipped
+                        .off_copper
+                        .entry(layers.off_copper_label(layer_number))
+                        .or_default() += 1;
+                }
+            }
+            continue;
+        };
         items.push(CopperItem::Region {
             layer,
             contour: closed(&corners),
             holes: Vec::new(),
         });
     }
-    filled_on_overlay("fill(s)", on_overlay, notes);
     skipped.into_notes("fill(s)", notes);
     Ok(items)
 }
 
 /// Turns the non-cutout regions of `/Regions6/Data` into copper regions: `KIND=0` on a copper
-/// layer is a solid copper region, or the poured copper of a polygon pour. Any other region is
-/// left out with a note.
+/// layer is a solid copper region, or the poured copper of a polygon pour; on an overlay layer
+/// a filled silkscreen area (`overlay-region-fill`). Any other region is left out with a note.
 pub(crate) fn regions(
     others: &[OtherRegion],
-    layers: &CopperLayers,
+    layers: &mut CopperLayers,
+    graphics: &mut Vec<Graphic>,
     notes: &mut Vec<Note>,
 ) -> Vec<CopperItem> {
     let mut items = Vec::new();
     let mut poured = 0usize;
     let mut not_copper: std::collections::BTreeMap<String, usize> = Default::default();
-    let mut on_overlay = std::collections::BTreeMap::<String, usize>::new();
     let mut on_mask = std::collections::BTreeMap::<String, usize>::new();
     let (mut keepout_layer, mut keepouts) = (0usize, std::collections::BTreeMap::new());
     for region in others {
@@ -1241,7 +1247,14 @@ pub(crate) fn regions(
                 });
             }
             (None, Some("0")) if is_overlay(&layers.name(region.layer)) => {
-                *on_overlay.entry(layers.name(region.layer)).or_default() += 1;
+                if let Some(layer) = layers.overlay_layer(region.layer) {
+                    graphics.push(Graphic::Area {
+                        layer,
+                        contour: region.contour.clone(),
+                        holes: region.holes.clone(),
+                        owner: None,
+                    });
+                }
             }
             (None, Some("0")) if is_solder_mask(&layers.name(region.layer)) => {
                 *on_mask.entry(layers.name(region.layer)).or_default() += 1;
@@ -1270,7 +1283,6 @@ pub(crate) fn regions(
             message: format!("{count} {what} not read yet"),
         });
     }
-    filled_on_overlay("region(s)", on_overlay, notes);
     keepout_notes("region(s)", keepout_layer, keepouts, notes);
     // `solder-mask-region`: a solid region on Top Solder is an opening in the mask drawn by hand.
     for (layer, count) in on_mask {
@@ -1293,24 +1305,6 @@ fn is_solder_mask(name: &str) -> bool {
 /// Whether a layer is one of the silkscreen layers, by its name.
 fn is_overlay(name: &str) -> bool {
     name.ends_with("Overlay")
-}
-
-/// A note for each overlay layer with filled shapes (`overlay-region-fill`): the board model
-/// holds silkscreen lines, arcs and texts only, so a filled area there has no place yet.
-fn filled_on_overlay(
-    what: &str,
-    counts: std::collections::BTreeMap<String, usize>,
-    notes: &mut Vec<Note>,
-) {
-    for (layer, count) in counts {
-        notes.push(Note {
-            severity: Severity::Dropped,
-            message: format!(
-                "{count} {what} on {layer} left out: a filled silkscreen shape has no place in \
-                 the board model yet"
-            ),
-        });
-    }
 }
 
 /// An octagonal pad: a `size_x` x `size_y` rectangle about `at` with each corner cut off at 45
@@ -1636,8 +1630,22 @@ mod tests {
         )
         .is_err());
         assert!(vias(&[VIA_RECORD, 1, 0, 0, 0], &l, &mut Vec::new(), &mut notes).is_err());
-        assert!(fills(&[FILL_RECORD, 0xff, 0xff, 0xff, 0x7f], &l, &mut notes).is_err());
-        assert!(fills(&[FILL_RECORD, 2, 0, 0, 0, 1, 0], &l, &mut notes).is_err());
+        assert!(fills(
+            &[FILL_RECORD, 0xff, 0xff, 0xff, 0x7f],
+            &mut m,
+            &none,
+            &mut g,
+            &mut notes
+        )
+        .is_err());
+        assert!(fills(
+            &[FILL_RECORD, 2, 0, 0, 0, 1, 0],
+            &mut m,
+            &none,
+            &mut g,
+            &mut notes
+        )
+        .is_err());
         assert!(tracks(&[0x42], &mut m, &none, &mut g, &mut notes)
             .unwrap()
             .is_empty());

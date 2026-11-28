@@ -14,38 +14,91 @@ fn read(name: &str) -> Result<ReadOutcome, Box<dyn std::error::Error>> {
     Ok(Altium.read(&std::fs::read(path)?)?)
 }
 
-/// overlay-region-fill: a region and two fills on each overlay. The board model has no filled
-/// silkscreen shape yet, so they are left out, each layer with a note that says why (not, as
-/// before, "not a copper or overlay layer").
+/// overlay-region-fill: a region and two fills on each overlay, read as filled silkscreen areas
+/// in board coordinates. Top Overlay: the region (5, 18), (15, 18), (13, 25), (7, 25), the fill
+/// (20, 19) to (26, 23) and the fill (32, 19) to (38, 23) turned 30 degrees about (35, 21), whose
+/// box is Altium's x 31.402 to 38.598, y 17.768 to 24.232. Bottom Overlay: the same 13 lower.
 #[test]
-fn filled_shapes_on_the_overlay_are_left_out_with_the_right_reason(
-) -> Result<(), Box<dyn std::error::Error>> {
+fn filled_shapes_on_the_overlay_are_silkscreen_areas() -> Result<(), Box<dyn std::error::Error>> {
     let out = read("overlay-region-fill.PcbDoc")?;
-    assert!(out.board.graphics.is_empty(), "{:?}", out.board.graphics);
-    assert!(
-        !out.board
-            .copper
+    let mut areas: Vec<(String, Vec<(f64, f64)>)> = Vec::new();
+    for g in &out.board.graphics {
+        let board_model::Graphic::Area {
+            layer,
+            contour,
+            holes,
+            owner,
+        } = g
+        else {
+            return Err(format!("{g:?}").into());
+        };
+        assert!(holes.is_empty() && owner.is_none(), "{g:?}");
+        let name = out.board.layers.get(*layer).map(|l| l.name.clone());
+        let corners: Vec<(f64, f64)> = contour
+            .segments
             .iter()
-            .any(|c| matches!(c, CopperItem::Region { .. })),
+            .filter_map(|s| match s {
+                Segment::Line { from, .. } => Some((from.x, from.y)),
+                _ => None,
+            })
+            .collect();
+        areas.push((name.unwrap_or_default(), corners));
+    }
+    let same = |got: &[(f64, f64)], want: &[(f64, f64)]| {
+        got.len() == want.len()
+            && want.iter().all(|w| {
+                got.iter()
+                    .any(|g| (g.0 - w.0).abs() <= TOLERANCE && (g.1 - w.1).abs() <= TOLERANCE)
+            })
+    };
+    // The turned fill's corners: (32, 19) to (38, 23) turned 30 degrees about (35, 21).
+    let turned = |dy: f64| -> Vec<(f64, f64)> {
+        let (sin, cos) = 30f64.to_radians().sin_cos();
+        [(32.0, 19.0), (38.0, 19.0), (38.0, 23.0), (32.0, 23.0)]
+            .iter()
+            .map(|&(x, y)| {
+                let (dx, dyy) = (x - 35.0, y - 21.0);
+                (
+                    35.0 + dx * cos - dyy * sin,
+                    21.0 + dx * sin + dyy * cos - dy,
+                )
+            })
+            .collect()
+    };
+    for (layer, dy) in [("Top Overlay", 0.0), ("Bottom Overlay", 13.0)] {
+        let on: Vec<&Vec<(f64, f64)>> = areas
+            .iter()
+            .filter(|(l, _)| l == layer)
+            .map(|(_, c)| c)
+            .collect();
+        assert_eq!(on.len(), 3, "{layer}: {areas:?}");
+        let region =
+            [(5.0, 18.0), (15.0, 18.0), (13.0, 25.0), (7.0, 25.0)].map(|(x, y)| (x, y - dy));
+        let fill =
+            [(20.0, 19.0), (26.0, 19.0), (26.0, 23.0), (20.0, 23.0)].map(|(x, y)| (x, y - dy));
+        let tilted = turned(dy);
+        assert!(
+            on.iter().any(|c| same(c, &region)),
+            "{layer} region: {on:?}"
+        );
+        assert!(on.iter().any(|c| same(c, &fill)), "{layer} fill: {on:?}");
+        let t = on
+            .iter()
+            .find(|c| same(c, &tilted))
+            .ok_or(format!("{layer} turned fill: {on:?}"))?;
+        let lo = |f: fn(&(f64, f64)) -> f64| t.iter().map(f).fold(f64::MAX, f64::min);
+        let hi = |f: fn(&(f64, f64)) -> f64| t.iter().map(f).fold(f64::MIN, f64::max);
+        let b = [lo(|p| p.0), hi(|p| p.0), lo(|p| p.1), hi(|p| p.1)];
+        let want = [31.402, 38.598, 17.768 - dy, 24.232 - dy];
+        assert!(
+            b.iter().zip(want).all(|(g, w)| (g - w).abs() <= TOLERANCE),
+            "{layer}: {b:?}"
+        );
+    }
+    assert!(
+        out.notes.iter().all(|n| n.severity != Severity::Dropped),
         "{:?}",
-        out.board.copper
-    );
-    let mut dropped: Vec<&str> = out
-        .notes
-        .iter()
-        .filter(|n| n.severity == Severity::Dropped)
-        .map(|n| n.message.as_str())
-        .collect();
-    dropped.sort_unstable();
-    let why = "left out: a filled silkscreen shape has no place in the board model yet";
-    assert_eq!(
-        dropped,
-        [
-            format!("1 region(s) on Bottom Overlay {why}"),
-            format!("1 region(s) on Top Overlay {why}"),
-            format!("2 fill(s) on Bottom Overlay {why}"),
-            format!("2 fill(s) on Top Overlay {why}"),
-        ]
+        out.notes
     );
     Ok(())
 }
