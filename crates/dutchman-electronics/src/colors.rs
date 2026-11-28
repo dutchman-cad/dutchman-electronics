@@ -150,7 +150,7 @@ mod tests {
             r,
             g,
             b,
-            opacity: 1.0,
+            opacity: Some(1.0),
         }
     }
 

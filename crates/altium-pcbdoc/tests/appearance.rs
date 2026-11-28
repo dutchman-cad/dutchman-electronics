@@ -11,7 +11,12 @@ fn read(name: &str) -> Result<ReadOutcome, Box<dyn std::error::Error>> {
 }
 
 fn rgba(r: u8, g: u8, b: u8, opacity: f64) -> Option<Color> {
-    Some(Color { r, g, b, opacity })
+    Some(Color {
+        r,
+        g,
+        b,
+        opacity: Some(opacity),
+    })
 }
 
 /// The colors a board has, with the same solder mask and the same silkscreen on both sides.

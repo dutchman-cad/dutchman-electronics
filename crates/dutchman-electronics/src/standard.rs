@@ -1848,6 +1848,7 @@ mod tests {
             }],
             copper: (0..20_000)
                 .map(|i| CopperItem::Pad {
+                    bottom: None,
                     layer: 0,
                     at: Point {
                         x: f64::from(i) * 0.5,

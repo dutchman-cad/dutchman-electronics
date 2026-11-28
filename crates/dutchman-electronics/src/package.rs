@@ -1148,7 +1148,7 @@ fn body_part(
     });
     // An extruded body or sphere the file colors; an embedded STEP model keeps its own colors.
     if let Some(color) = &model.color {
-        if color.opacity <= 0.0 {
+        if color.opacity.is_some_and(|o| o <= 0.0) {
             notes.push(json!({
                 "severity": "Info",
                 "message": format!("{name}'s 3D body is fully transparent, as the board file says"),
@@ -1157,7 +1157,13 @@ fn body_part(
     }
     if let (Some(color), Some(map)) = (&model.color, part.as_object_mut()) {
         map.insert("color".into(), json!(hex(color)));
-        map.insert("opacity".into(), json!(color.opacity));
+        map.insert(
+            "opacity".into(),
+            json!(color
+                .opacity
+                .filter(|o| o.is_finite() && (0.0..=1.0).contains(o))
+                .unwrap_or(1.0)),
+        );
         map.insert("metallic".into(), json!(BODY_FINISH.metallic));
         map.insert("roughness".into(), json!(BODY_FINISH.roughness));
     }
@@ -2586,7 +2592,7 @@ mod tests {
                     r: 1,
                     g: 2,
                     b: 3,
-                    opacity,
+                    opacity: Some(opacity),
                 });
             }
         }
@@ -3485,6 +3491,7 @@ mod tests {
     /// A rectangular SMD pad owned by a part, at a board position.
     fn smd_pad(owner: &str, x: f64, y: f64) -> CopperItem {
         CopperItem::Pad {
+            bottom: None,
             layer: 0,
             at: Point { x, y },
             shape: board_model::PadShape::Rectangle,
@@ -3696,7 +3703,7 @@ mod tests {
             r,
             g: 0,
             b: 0,
-            opacity,
+            opacity: Some(opacity),
         }
     }
 
@@ -3743,6 +3750,24 @@ mod tests {
             apply(&placed.parts[2]["transform"], [0.0, 0.0, 0.0]),
             [25.5, 14.75, 2.35]
         ));
+        assert!(placed.notes.is_empty(), "{:?}", placed.notes);
+    }
+
+    #[test]
+    fn unknown_body_opacity_defaults_for_siblings_and_free_bodies() {
+        let mut r1 = part("R1", 0.0, 0.0, 0.0, Side::Top);
+        let mut unknown = color(128, 1.0);
+        unknown.opacity = None;
+        r1.models[0].color = Some(unknown);
+        let mut sphere = ball(0.0, 0.0, 1.0, 0.5);
+        sphere.color = Some(unknown);
+        r1.models.push(sphere.clone());
+        let placed = components_with(&[r1], &[], 1.6, &[sphere], None);
+        assert_eq!(names(&placed), ["R1", "R1 body 2", "Free body 1"]);
+        for body in &placed.parts {
+            assert_eq!(body["color"], "#800000");
+            assert_eq!(body["opacity"], 1.0);
+        }
         assert!(placed.notes.is_empty(), "{:?}", placed.notes);
     }
 

@@ -1242,6 +1242,7 @@ impl Reader {
         for layer in targets {
             if let Some(shapes) = &polygon {
                 self.copper.push(CopperItem::PolygonPad {
+                    bottom: None,
                     layer,
                     at: center,
                     shapes: shapes
@@ -1257,6 +1258,7 @@ impl Reader {
                 continue;
             }
             self.copper.push(CopperItem::Pad {
+                bottom: None,
                 layer,
                 at: center,
                 shape,
@@ -1667,6 +1669,7 @@ pub fn read(mut root: Node, variables: &Variables) -> ReadOutcome {
             layers: r.layers,
             outline: joined.outline,
             copper: r.copper,
+            mask_openings: Vec::new(),
             graphics: r.graphics,
             texts: r.texts,
             components: r.components,
