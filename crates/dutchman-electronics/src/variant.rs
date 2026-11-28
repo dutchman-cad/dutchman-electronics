@@ -154,10 +154,15 @@ mod tests {
         altium_pcbdoc::project::add_variants(&mut board, &project);
         // The test board shows designators; add a comment reference to exercise drawing
         // with the same placement and the documented R1 value.
+        let r1 = board
+            .components
+            .iter()
+            .position(|p| p.designator == "R1")
+            .unwrap();
         let mut comment = board
             .texts
             .iter()
-            .find(|t| t.component == Some(0))
+            .find(|t| t.component == Some(r1))
             .unwrap()
             .clone();
         comment.content = ".Comment".into();
@@ -184,7 +189,13 @@ mod tests {
     #[test]
     fn omitted_silk_is_removed_and_remaining_owners_are_remapped() {
         let mut b = board();
-        // Omit the first component, so the second component's texts must move from 1 to 0.
+        // Put R1 first to exercise remapping when the first component is omitted.
+        if b.components.first().unwrap().designator != "R1" {
+            b.components.swap(0, 1);
+            for text in &mut b.texts {
+                text.component = text.component.map(|i| if i == 0 { 1 } else { 0 });
+            }
+        }
         b.variants.push(Variant {
             name: "First out".into(),
             not_fitted: vec!["R1".into()],

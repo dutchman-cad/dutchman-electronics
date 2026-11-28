@@ -4,3 +4,7 @@ Checks use buildq for dutchman-electronics only.
 1795863801.989599-abe5b750: initial clippy found manifest indexing and test helper unwrap lints; corrected.
 1795863818.349440-4cb74ab3: formatting check before final lint fixes.
 1795863836.530560-c4037500: final test run (pending).
+1795863836.530560-c4037500: tests exposed component ordering in the test helper; corrected the helper to locate R1 by designator.
+1795863866.695594-ee32d014: clippy passed.
+1795863879.098621-1e7d4cf6: corrected test run.
+1795863900.161672-ca9146dc: final formatting check.

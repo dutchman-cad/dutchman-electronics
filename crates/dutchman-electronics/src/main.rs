@@ -9,6 +9,7 @@
 //! draw inner copper layers too (the default, `--copper outer`, draws the top and bottom only),
 //! and `--bodies standard` to give recognized packages a standard body in place of a plain
 //! extruded one (the default, `--bodies file`, only gives one to a part with no model at all).
+//! `--variant NAME` applies an assembly variant; without it we use the base design and omit DNP parts.
 //! `--accept-overlay <kind>` (repeatable; only `laminate` today) to say which newer overlay kinds
 //! the loader draws: without `laminate` there is no laminate overlay and the mask is opaque.
 //! For people: `formats`, `streams <file>` and

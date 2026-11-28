@@ -1686,6 +1686,12 @@ fn altium_assembly_choices_follow_the_test_project() {
     let board = test_board("variants-project/variants-board.PcbDoc");
     let adjacent = variant_package(&board, "altium-adjacent", &["--variant", "Lite"]);
     assert!(!has_part(&adjacent, "R2"));
+    let explicit = variant_package(
+        &board,
+        "altium-explicit",
+        &["--project", &path.to_string_lossy(), "--variant", "Lite"],
+    );
+    assert!(!has_part(&explicit, "R2"));
 }
 
 #[cfg(feature = "altium")]
