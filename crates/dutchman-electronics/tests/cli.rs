@@ -1627,3 +1627,112 @@ fn read_writes_spheres_further_bodies_and_free_bodies() -> Result<(), Box<dyn st
     assert!(radii.iter().all(|r| (r - 2.0).abs() < 0.001), "{radii:?}");
     Ok(())
 }
+
+#[cfg(any(feature = "altium", feature = "kicad"))]
+#[allow(clippy::unwrap_used)]
+fn variant_package(path: &std::path::Path, label: &str, extra: &[&str]) -> serde_json::Value {
+    let out = std::env::temp_dir().join(format!("de-variant-{label}-{}", std::process::id()));
+    let path = path.to_string_lossy();
+    let folder = out.to_string_lossy();
+    let mut args = vec!["read", &path, "--out", &folder, "--json"];
+    args.extend_from_slice(extra);
+    let (ok, value) = run(&args).unwrap();
+    std::fs::remove_dir_all(&out).ok();
+    assert!(ok, "{value}");
+    value
+}
+
+#[cfg(any(feature = "altium", feature = "kicad"))]
+#[allow(clippy::unwrap_used)]
+fn has_part(value: &serde_json::Value, name: &str) -> bool {
+    value["parts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|p| p["name"] == name)
+}
+
+#[cfg(any(feature = "altium", feature = "kicad"))]
+#[allow(clippy::unwrap_used)]
+fn has_info(value: &serde_json::Value, message: &str) -> bool {
+    value["notes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|n| n["severity"] == "Info" && n["message"] == message)
+}
+
+#[cfg(feature = "altium")]
+#[test]
+fn altium_assembly_choices_follow_the_test_project() {
+    // variants-project/README.txt: R1 10k and R2 4k7; Lite omits R2; Alt changes R1 to 22k.
+    let path = test_board("variants-project/variants-project.PrjPcb");
+    let base = variant_package(&path, "altium-base", &[]);
+    assert!(has_part(&base, "R1") && has_part(&base, "R2"));
+    assert_eq!(base["variants"], serde_json::json!(["Lite", "Alt"]));
+    assert!(base.get("variant").is_none());
+    assert!(has_info(
+        &base,
+        "Available variants: Lite, Alt; the base design was converted"
+    ));
+    let lite = variant_package(&path, "altium-lite", &["--variant", "Lite"]);
+    assert!(has_part(&lite, "R1") && !has_part(&lite, "R2"));
+    assert_eq!(lite["variant"], "Lite");
+    assert!(has_info(&lite, "Not fitted in variant \"Lite\": R2"));
+    let alt = variant_package(&path, "altium-alt", &["--variant", "Alt"]);
+    assert!(has_part(&alt, "R1") && has_part(&alt, "R2"));
+    assert_eq!(alt["variant"], "Alt");
+    // Passing the board alone discovers the same project's variants.
+    let board = test_board("variants-project/variants-board.PcbDoc");
+    let adjacent = variant_package(&board, "altium-adjacent", &["--variant", "Lite"]);
+    assert!(!has_part(&adjacent, "R2"));
+    let explicit = variant_package(
+        &board,
+        "altium-explicit",
+        &["--project", &path.to_string_lossy(), "--variant", "Lite"],
+    );
+    assert!(!has_part(&explicit, "R2"));
+}
+
+#[cfg(feature = "altium")]
+#[test]
+fn unknown_variant_is_a_json_error_listing_the_choices() {
+    let path = test_board("variants-project/variants-project.PrjPcb");
+    let out = std::env::temp_dir().join(format!("de-unknown-variant-{}", std::process::id()));
+    let (ok, value) = run(&[
+        "read",
+        &path.to_string_lossy(),
+        "--out",
+        &out.to_string_lossy(),
+        "--json",
+        "--variant",
+        "lite",
+    ])
+    .unwrap();
+    assert!(!ok);
+    assert_eq!(value["ok"], false);
+    assert_eq!(
+        value["error"],
+        "unknown variant \"lite\"; available variants: Lite, Alt"
+    );
+    assert!(!out.exists());
+}
+
+#[cfg(feature = "kicad")]
+#[test]
+fn kicad_default_omits_dnp_and_variant_can_fit_it() {
+    // k10-dnp.README.txt: only R2 is DNP; LITE omits R1 and fits R2.
+    let path = kicad_board("k10-dnp.kicad_pcb");
+    let base = variant_package(&path, "kicad-base", &[]);
+    for name in ["R1", "R3", "R4", "R5"] {
+        assert!(has_part(&base, name));
+    }
+    assert!(!has_part(&base, "R2"));
+    assert!(has_info(&base, "Not fitted (do not populate): R2"));
+    let lite = variant_package(&path, "kicad-lite", &["--variant", "LITE"]);
+    for name in ["R2", "R3", "R4", "R5"] {
+        assert!(has_part(&lite, name));
+    }
+    assert!(!has_part(&lite, "R1"));
+    assert!(has_info(&lite, "Not fitted in variant \"LITE\": R1"));
+}
