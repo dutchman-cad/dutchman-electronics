@@ -106,6 +106,25 @@ def package(binary, target, root=ROOT, notices=None):
     return archive
 
 
+INTERFACE = 1
+
+
+def manifest(dist, value):
+    """release.json: what an updater needs to pick, fetch and check an archive."""
+    dist = Path(dist)
+    assets = {}
+    for checksum in sorted(dist.glob("*.sha256")):
+        digest, name = checksum.read_text(encoding="utf-8").split()
+        prefix = f"dutchman-electronics-{value}-"
+        target = name[len(prefix):].removesuffix(".tar.gz").removesuffix(".zip")
+        assets[target] = {"file": name, "sha256": digest}
+    data = {"name": "dutchman-electronics", "version": value,
+            "interface": INTERFACE, "assets": assets}
+    out = dist / "release.json"
+    out.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8", newline="\n")
+    return out
+
+
 if __name__ == "__main__":
     command = sys.argv[1]
     if command == "version":
@@ -117,5 +136,7 @@ if __name__ == "__main__":
         smoke(sys.argv[2])
     elif command == "package":
         package(sys.argv[2], sys.argv[3], notices=third_party(sys.argv[3]))
+    elif command == "manifest":
+        manifest(sys.argv[2], sys.argv[3])
     else:
         raise ValueError(f"Unknown command: {command}")

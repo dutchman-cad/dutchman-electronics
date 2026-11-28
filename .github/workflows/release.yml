@@ -133,6 +133,7 @@ jobs:
           set -euo pipefail
           test "$(find dist -name '*.sha256' | wc -l)" -eq 6
           (cd dist && sha256sum --check *.sha256)
+          python3 scripts/release.py manifest dist "$VERSION"
           args=(--repo "$GITHUB_REPOSITORY" --verify-tag --draft --title "Dutchman Electronics $VERSION")
           if [[ "$TAG" == *-rc.* ]]; then args+=(--prerelease); fi
           notes="docs/release-notes/$VERSION.md"

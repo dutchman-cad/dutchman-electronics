@@ -90,6 +90,23 @@ class ReleaseTests(unittest.TestCase):
                     digest = hashlib.sha256(archive.read_bytes()).hexdigest()
                     self.assertEqual(checksum, f"{digest}  {archive.name}\n")
 
+    def test_release_json_lists_every_archive_with_its_digest(self):
+        import json
+        with tempfile.TemporaryDirectory() as folder:
+            dist = Path(folder)
+            for target, ext in [("x86_64-pc-windows-msvc", ".zip"),
+                                ("macos-universal", ".tar.gz")]:
+                name = f"dutchman-electronics-0.1.0-{target}{ext}"
+                (dist / (name + ".sha256")).write_text(f"{'a' * 64}  {name}\n")
+            data = json.loads(release.manifest(dist, "0.1.0").read_text())
+            self.assertEqual(data["version"], "0.1.0")
+            self.assertEqual(data["interface"], 1)
+            self.assertEqual(
+                data["assets"]["macos-universal"],
+                {"file": "dutchman-electronics-0.1.0-macos-universal.tar.gz", "sha256": "a" * 64},
+            )
+            self.assertEqual(sorted(data["assets"]), ["macos-universal", "x86_64-pc-windows-msvc"])
+
 
 if __name__ == "__main__":
     unittest.main()
