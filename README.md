@@ -12,7 +12,11 @@ Reads circuit boards into [SolidCraft](https://github.com/tangency-labs/solidcra
 | KiCad (`.kicad_pcb`, KiCad 9 and 10) | In progress: reader in `crates/kicad-pcb` (scope: issue 75); more scope depends on the SolidCraft maintainers' answer on [tangency-labs/solidcraft#21320](https://github.com/tangency-labs/solidcraft/issues/21320) |
 | Fusion Electronics | TBD |
 
-It is an optional add-on. Dutchman works without it, and installing Dutchman does not install it. It is not part of cadmpeg: cadmpeg reads mechanical CAD, this reads electronics.
+It comes with Dutchman from 0.4.0 on, and is kept in its own repository. It is not part of cadmpeg: cadmpeg reads mechanical CAD, this reads electronics.
+
+## Install
+
+Dutchman 0.4.0 and later include this module, so installing Dutchman is enough. To run a newer module on its own, use the Windows, macOS and Linux downloads and follow [INSTALL.md](INSTALL.md).
 
 ## The goal
 
