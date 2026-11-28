@@ -1,6 +1,8 @@
 # Install Dutchman Electronics 0.1.0
 
-We need [Dutchman 0.4.0 or later](https://github.com/dutchman-cad/dutchman/releases). We install this module separately.
+**Dutchman 0.4.0 and later include this module.** Installing Dutchman installs it, so most people need nothing from this page.
+
+Use these steps only to run a newer module than the one your Dutchman includes, or to use the module on its own. Dutchman's Settings shows which copy it uses.
 
 Download the archive for the computer and its matching `.sha256` file from the [0.1.0 release](https://github.com/dutchman-cad/dutchman-electronics/releases/tag/v0.1.0). Each archive contains one folder with the program, README.md, INSTALL.md and the licenses. We ship unsigned downloads; the macOS program has only an ad-hoc signature.
 
