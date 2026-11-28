@@ -43,7 +43,35 @@ def smoke(binary):
             raise ValueError("The smoke test did not write manifest.json")
 
 
-def package(binary, target, root=ROOT):
+NOTICE_GLOBS = ("LICENSE*", "LICENCE*", "COPYING*", "NOTICE*", "UNLICENSE*")
+
+
+def third_party(target, root=ROOT):
+    """The licenses of every crate built into the program, as one text."""
+    platform = "aarch64-apple-darwin" if target == "macos-universal" else target
+    meta = json.loads(subprocess.check_output(
+        ["cargo", "metadata", "--format-version", "1", "--locked",
+         "--filter-platform", platform], cwd=root, text=True))
+    members = set(meta["workspace_members"])
+    used = {node["id"] for node in meta["resolve"]["nodes"]}
+    parts = ["Third-party software built into dutchman-electronics, with its licenses.\n"]
+    for pkg in sorted(meta["packages"], key=lambda p: (p["name"], p["version"])):
+        if pkg["id"] in members or pkg["id"] not in used:
+            continue
+        folder = Path(pkg["manifest_path"]).parent
+        parts.append("=" * 78)
+        parts.append(f"{pkg['name']} {pkg['version']}  License: {pkg.get('license') or 'see below'}")
+        if pkg.get("repository"):
+            parts.append(pkg["repository"])
+        texts = sorted({f for g in NOTICE_GLOBS for f in folder.glob(g) if f.is_file()})
+        for text in texts:
+            parts.append(f"--- {text.name} ---")
+            parts.append(text.read_text(encoding="utf-8", errors="replace").rstrip())
+        parts.append("")
+    return "\n".join(parts) + "\n"
+
+
+def package(binary, target, root=ROOT, notices=None):
     name = f"dutchman-electronics-{version()}-{target}"
     windows = target == "x86_64-pc-windows-msvc"
     files = [(Path(binary), "dutchman-electronics.exe" if windows else "dutchman-electronics")]
@@ -51,8 +79,17 @@ def package(binary, target, root=ROOT):
     files.extend((p, p.name) for p in sorted(root.glob("LICENSE*")) if p.is_file())
     if (root / "INSTALL.md").is_file():
         files.append((root / "INSTALL.md", "INSTALL.md"))
+    # The Hershey font data is built in, and its use restriction must travel with it.
+    hershey = root / "crates/dutchman-electronics/fonts/hershey/README.txt"
+    if hershey.is_file():
+        files.append((hershey, "LICENSE-Hershey-fonts.txt"))
     dist = root / "dist"
     dist.mkdir(exist_ok=True)
+    if notices is not None:
+        third = root / "target" / f"THIRD-PARTY-LICENSES-{target}.txt"
+        third.parent.mkdir(exist_ok=True)
+        third.write_text(notices, encoding="utf-8", newline="\n")
+        files.append((third, "THIRD-PARTY-LICENSES.txt"))
     archive = dist / (name + (".zip" if windows else ".tar.gz"))
     if windows:
         with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as output:
@@ -79,6 +116,6 @@ if __name__ == "__main__":
     elif command == "smoke":
         smoke(sys.argv[2])
     elif command == "package":
-        package(sys.argv[2], sys.argv[3])
+        package(sys.argv[2], sys.argv[3], notices=third_party(sys.argv[3]))
     else:
         raise ValueError(f"Unknown command: {command}")
