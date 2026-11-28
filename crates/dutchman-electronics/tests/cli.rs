@@ -1368,3 +1368,50 @@ fn read_draws_a_pads_bottom_with_its_bottom_shape() -> Result<(), Box<dyn std::e
     assert!(near(bottom, [23.8, 26.2, 14.2, 15.8]), "{bottom:?}");
     Ok(())
 }
+
+/// solder-mask-region: the hand-drawn opening (22, 12) to (28, 18) on Top Solder opens the
+/// mask over one-fill's copper there, and that copper gets the finish.
+#[cfg(feature = "altium")]
+#[test]
+fn read_opens_the_mask_where_an_opening_is_drawn() -> Result<(), Box<dyn std::error::Error>> {
+    let out = std::env::temp_dir().join(format!("de-mask-opening-{}", std::process::id()));
+    let board = test_board("solder-mask-region.PcbDoc");
+    let result = run(&[
+        "read",
+        &board.to_string_lossy(),
+        "--out",
+        &out.to_string_lossy(),
+        "--json",
+    ]);
+    std::fs::remove_dir_all(&out).ok();
+    let (ok, v) = result?;
+    assert!(ok, "{v}");
+    let ring_box = |r: &serde_json::Value| -> Option<[f64; 4]> {
+        let pts: Vec<(f64, f64)> = r
+            .as_array()?
+            .iter()
+            .filter_map(|p| Some((p[0].as_f64()?, p[1].as_f64()?)))
+            .collect();
+        Some([
+            pts.iter().map(|p| p.0).fold(f64::MAX, f64::min),
+            pts.iter().map(|p| p.0).fold(f64::MIN, f64::max),
+            pts.iter().map(|p| p.1).fold(f64::MAX, f64::min),
+            pts.iter().map(|p| p.1).fold(f64::MIN, f64::max),
+        ])
+    };
+    let overlay = |name: &str| {
+        v["overlays"]
+            .as_array()
+            .and_then(|o| o.iter().find(|o| o["name"] == name))
+            .cloned()
+    };
+    let want = [22.0, 28.0, 12.0, 18.0];
+    let near = |a: [f64; 4]| a.iter().zip(want).all(|(x, y)| (x - y).abs() < 0.001);
+    let finish = overlay("Finish top").ok_or("no finish")?;
+    let f = ring_box(&finish["areas"][0]["outer"]).ok_or("no finish area")?;
+    assert!(near(f), "{f:?}");
+    let coat = overlay("Solder mask top over copper").ok_or("no mask over copper")?;
+    let hole = ring_box(&coat["areas"][0]["holes"][0]).ok_or("no opening")?;
+    assert!(near(hole), "{hole:?}");
+    Ok(())
+}

@@ -408,25 +408,32 @@ fn a_top_middle_bottom_pad_has_its_bottom_shape() -> Result<(), Box<dyn std::err
 }
 
 /// solder-mask-region: a solid region on Top Solder, (22, 12) to (28, 18), is a mask opening
-/// drawn by hand. The board model has no place for one, so it is left out with a note that says
-/// what it is.
+/// drawn by hand, on the top side; one-fill's copper fill under it is still the only region.
 #[test]
-fn a_hand_drawn_mask_opening_is_left_out_with_a_note() -> Result<(), Box<dyn std::error::Error>> {
+fn a_hand_drawn_mask_opening_is_a_mask_opening() -> Result<(), Box<dyn std::error::Error>> {
     let out = read("solder-mask-region.PcbDoc")?;
-    let dropped: Vec<&str> = out
-        .notes
+    let [opening] = out.board.mask_openings.as_slice() else {
+        return Err(format!("{:?}", out.board.mask_openings).into());
+    };
+    assert_eq!(opening.side, board_model::Side::Top);
+    assert!(opening.holes.is_empty());
+    let corners: Vec<(f64, f64)> = opening
+        .contour
+        .segments
         .iter()
-        .filter(|n| n.severity == Severity::Dropped)
-        .map(|n| n.message.as_str())
+        .filter_map(|s| match s {
+            Segment::Line { from, .. } => Some((from.x, from.y)),
+            _ => None,
+        })
         .collect();
-    assert_eq!(
-        dropped,
-        [
-            "1 region(s) on Top Solder left out: a solder mask opening drawn by hand has no place \
-          in the board model yet"
-        ]
+    let want = [(22.0, 12.0), (28.0, 12.0), (28.0, 18.0), (22.0, 18.0)];
+    assert_eq!(corners.len(), 4, "{corners:?}");
+    assert!(
+        want.iter().all(|w| corners
+            .iter()
+            .any(|c| (c.0 - w.0).abs() <= TOLERANCE && (c.1 - w.1).abs() <= TOLERANCE)),
+        "{corners:?}"
     );
-    // one-fill's copper fill is still there, the only region.
     let regions = out
         .board
         .copper
@@ -434,6 +441,11 @@ fn a_hand_drawn_mask_opening_is_left_out_with_a_note() -> Result<(), Box<dyn std
         .filter(|c| matches!(c, CopperItem::Region { .. }))
         .count();
     assert_eq!(regions, 1);
+    assert!(
+        out.notes.iter().all(|n| n.severity != Severity::Dropped),
+        "{:?}",
+        out.notes
+    );
     Ok(())
 }
 

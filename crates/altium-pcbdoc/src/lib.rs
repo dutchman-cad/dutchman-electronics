@@ -246,10 +246,12 @@ impl InputFormat for Altium {
                     .map_err(ReadError::Invalid)?,
             );
         }
+        let mut mask_openings = Vec::new();
         copper.extend(copper::regions(
             &shape.other_regions,
             &mut layers,
             &mut graphics,
+            &mut mask_openings,
             &mut notes,
         ));
         let rules6 = read_stream(&mut container, "/Rules6/Data")?;
@@ -324,6 +326,7 @@ impl InputFormat for Altium {
                 layers: layers.layers,
                 copper,
                 graphics,
+                mask_openings,
                 texts,
                 components: components.placements,
                 appearance,
