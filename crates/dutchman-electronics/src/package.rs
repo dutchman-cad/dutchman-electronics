@@ -1148,7 +1148,15 @@ fn body_part(
     });
     // An extruded body or sphere the file colors; an embedded STEP model keeps its own colors.
     if let Some(color) = &model.color {
-        if color.opacity.is_some_and(|o| o <= 0.0) {
+        if let Some(o) = color
+            .opacity
+            .filter(|o| !o.is_finite() || !(0.0..=1.0).contains(o))
+        {
+            notes.push(json!({
+                "severity": "Info",
+                "message": format!("{name}'s 3D body opacity {o} is not between 0 and 1, so it is drawn opaque"),
+            }));
+        } else if color.opacity == Some(0.0) {
             notes.push(json!({
                 "severity": "Info",
                 "message": format!("{name}'s 3D body is fully transparent, as the board file says"),
@@ -3982,5 +3990,61 @@ mod tests {
             Some((&recognizer, Bodies::Standard)),
         );
         assert_eq!(names(&placed), ["R1", "R2", "R2 leads"]);
+    }
+
+    #[test]
+    fn body_opacity_fallback_is_noted_and_zero_alone_is_transparent() {
+        for opacity in [
+            None,
+            Some(0.0),
+            Some(0.5),
+            Some(1.0),
+            Some(-0.1),
+            Some(1.1),
+            Some(f64::NAN),
+            Some(f64::INFINITY),
+            Some(f64::NEG_INFINITY),
+        ] {
+            let mut model = ball(0.0, 0.0, 0.0, 1.0);
+            model.color = Some(board_model::Color {
+                r: 10,
+                g: 20,
+                b: 30,
+                opacity,
+            });
+            let mut notes = Vec::new();
+            let part = body_part(
+                &model,
+                "U1",
+                "model-1",
+                &translation(0.0, 0.0, 0.0),
+                GROUP_FREE,
+                &mut notes,
+            )
+            .unwrap_or_else(|_| panic!("a finite body placement must succeed"));
+            let invalid = opacity.is_some_and(|o| !o.is_finite() || !(0.0..=1.0).contains(&o));
+            if invalid {
+                assert_eq!(part["opacity"], 1.0);
+                assert_eq!(
+                    notes,
+                    vec![json!({
+                        "severity": "Info",
+                        "message": format!("U1's 3D body opacity {} is not between 0 and 1, so it is drawn opaque", opacity.unwrap()),
+                    })]
+                );
+            } else if opacity == Some(0.0) {
+                assert_eq!(part["opacity"], 0.0);
+                assert_eq!(
+                    notes,
+                    vec![json!({
+                        "severity": "Info",
+                        "message": "U1's 3D body is fully transparent, as the board file says",
+                    })]
+                );
+            } else {
+                assert_eq!(part["opacity"], opacity.unwrap_or(1.0));
+                assert!(notes.is_empty(), "{notes:?}");
+            }
+        }
     }
 }
