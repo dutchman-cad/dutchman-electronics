@@ -2947,7 +2947,7 @@ fn tented_hairline_tracks_are_fully_covered_without_overlapping_mask_pieces() {
                     r: 31,
                     g: 95,
                     b: 58,
-                    opacity: 1.0,
+                    opacity: Some(1.0),
                 };
                 b.appearance.top_solder_mask = Some(opaque);
                 b.appearance.bottom_solder_mask = Some(opaque);
