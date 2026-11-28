@@ -240,7 +240,12 @@ fn read_says_why_an_older_kicad_file_is_refused() -> Result<(), Box<dyn std::err
     let (ok, v) = result?;
     assert!(!ok);
     assert_eq!(v["ok"], false);
-    assert!(v.to_string().contains("older than 9"), "{v}");
+    assert!(
+        v["error"]
+            .as_str()
+            .is_some_and(|e| e.starts_with("This board was saved by KiCad 8 or older")),
+        "{v}"
+    );
     Ok(())
 }
 

@@ -1708,9 +1708,9 @@ pub fn read(mut root: Node, variables: &Variables) -> ReadOutcome {
     if too_old || version.is_none() {
         let what = match version {
             Some(v) => format!(
-                "this board file is version {v}, written by a KiCad older than 9; we read KiCad 9 and 10 files and do not guess at older ones. Open it in KiCad 9 or later and save it again."
+                "This board was saved by KiCad 8 or older (file version {v}). We read KiCad 9 and 10 boards: open it in KiCad 9 or 10, save it, and convert again."
             ),
-            None => "this board file has no version, so we cannot tell which KiCad wrote it; we read KiCad 9 and 10 files. Open it in KiCad 9 or later and save it again.".to_string(),
+            None => "This board file has no version, so we cannot tell which KiCad saved it. We read KiCad 9 and 10 boards: open it in KiCad 9 or 10, save it, and convert again.".to_string(),
         };
         return ReadOutcome {
             board: Board {

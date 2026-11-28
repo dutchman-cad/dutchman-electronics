@@ -64,7 +64,9 @@ fn an_older_file_gets_a_note_and_no_board() {
     assert!(o.board.layers.is_empty());
     assert_eq!(o.notes.len(), 1);
     assert_eq!(o.notes[0].severity, Severity::Dropped);
-    assert!(o.notes[0].message.contains("older than 9"));
+    assert!(o.notes[0]
+        .message
+        .contains("KiCad 8 or older (file version 20240108)"));
     let o = read("(kicad_pcb (generator \"pcbnew\"))").unwrap();
     assert!(o.notes[0].message.contains("no version"));
 }
