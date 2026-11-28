@@ -38,6 +38,7 @@ const USAGE: &str = "usage: dutchman-electronics info [--json]
                                 [--models <dir>]... [--copper outer|all]
                                 [--bodies file|standard]
                                 [--accept-overlay laminate]...
+       dutchman-electronics --version
        dutchman-electronics formats
        dutchman-electronics streams <board.PcbDoc>
        dutchman-electronics privacy-check <board.PcbDoc|project.PrjPcb> [--watch WORD]... [--all-text]";
@@ -325,6 +326,10 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let arg: Vec<&str> = args.iter().map(String::as_str).collect();
     match arg.as_slice() {
+        ["--version"] => {
+            println!("dutchman-electronics {}", env!("CARGO_PKG_VERSION"));
+            ExitCode::SUCCESS
+        }
         ["info"] => info(false),
         ["info", "--json"] => info(true),
         ["detect", path] => detect(path, false),
