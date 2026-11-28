@@ -2694,7 +2694,7 @@ fn unusable_and_over_budget_areas_are_noted() {
     // needs zero points but has no polygon: one unusable item, counted separately.
     assert_eq!(messages(&notes), [
         "1 drawn area(s) left out: the drawing budget of 0 points is used up",
-        "1 copper, graphic or mask opening item(s) have unusable sizes or layers and were left out",
+        "1 copper, silkscreen, graphic or mask opening item(s) have unusable sizes or layers and were left out",
     ]);
     assert!(notes.iter().all(|n| n["severity"] == "Dropped"));
 }
@@ -2809,7 +2809,7 @@ fn single_face_pads_ignore_bottom_overrides_and_keep_position_and_rotation() {
             let (list, notes) = overlays(&b, 1.6, "Board");
             assert_eq!(
                 messages(&notes),
-                ["1 single-face pad(s) have bottom geometry, which is ignored"]
+                ["1 pad(s) have bottom geometry, which is ignored"]
             );
             assert_eq!(notes[0]["severity"], "Info");
             let side = if layer == 0 { "top" } else { "bottom" };
@@ -2895,7 +2895,7 @@ fn area_presence_selects_the_expanded_note_vocabulary() {
             // The same zero-width track fails once in every case. Only the
             // presence of areas or manual openings changes the note vocabulary.
             let expected = if area_present || opening_present {
-                "1 copper, graphic or mask opening item(s) have unusable sizes or layers and were left out"
+                "1 copper, silkscreen, graphic or mask opening item(s) have unusable sizes or layers and were left out"
             } else {
                 "1 copper or silkscreen item(s) have unusable sizes or layers and were left out"
             };
@@ -3202,4 +3202,138 @@ fn split_filter_counts_degenerate_rings_and_keeps_small_copper_pieces() {
     assert_eq!(out.0.len(), 2);
     assert!(out.0.contains(&small));
     assert!(out.0.iter().all(|p| p.interiors().is_empty()));
+}
+
+#[test]
+fn undrilled_pads_report_unused_bottom_geometry_on_every_layer() {
+    for layer in [0, 1, 2, 4, 5, usize::MAX] {
+        for polygon in [false, true] {
+            let mut item = square_pad(layer);
+            if let CopperItem::Pad { bottom, .. } = &mut item {
+                *bottom = Some((PadShape::Rectangle, 8.0, 8.0));
+            }
+            if polygon {
+                item = CopperItem::PolygonPad {
+                    layer,
+                    at: p(5.0, 5.0),
+                    shapes: vec![square(4.0, 4.0, 6.0, 6.0)],
+                    bottom: Some(vec![square(1.0, 1.0, 9.0, 9.0)]),
+                    drill: None,
+                    plated: false,
+                    owner: None,
+                    tented: [None, None],
+                    mask_expansion: [None, None],
+                };
+            }
+            let mut b = board(vec![item], vec![]);
+            b.layers[4].position = Some(board_model::StackPosition {
+                depth: 0.8,
+                thickness: 0.035,
+            });
+            let (_, notes) = super::overlays(&b, &[], 1.6, "Board", Copper::All);
+            assert!(
+                notes.iter().any(|n| n["severity"] == "Info"
+                    && n["message"] == "1 pad(s) have bottom geometry, which is ignored"),
+                "{layer}, {polygon}: {notes:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn unusable_layers_do_not_spend_the_silk_drawing_budget() {
+    let large = Contour {
+        segments: vec![Segment::Arc {
+            center: p(5.0, 5.0),
+            radius: 1000.0,
+            start_deg: 0.0,
+            end_deg: 360.0,
+            clockwise: false,
+        }],
+    };
+    let mut b = board(
+        vec![],
+        vec![
+            Graphic::Area {
+                layer: 5,
+                contour: large,
+                holes: vec![],
+                owner: None,
+            };
+            100
+        ],
+    );
+    b.graphics.push(Graphic::Area {
+        layer: 3,
+        contour: square(1.0, 1.0, 3.0, 3.0),
+        holes: vec![],
+        owner: None,
+    });
+    // One large mechanical area would use the entire budget. We skip all
+    // 100 before charging it, leaving room for the 2*2 = 4 mm2 of silk.
+    let budget = arc_steps(1000.0, 360.0) + 1;
+    let (list, notes) = overlays_within(&b, 1.6, "Board", 100, budget, MAX_SOLID_FACES);
+    assert!((area(named(&list, "Silkscreen top")) - 4.0).abs() < 0.001);
+    assert_eq!(
+        messages(&notes),
+        ["100 graphic(s) on layers other than copper and silkscreen are not drawn yet"]
+    );
+}
+
+#[test]
+fn openings_use_the_item_budget_left_after_copper_and_graphics() {
+    let mut b = board(
+        vec![track(0, p(0.0, 0.0), p(1.0, 0.0), 0.0); MAX_ITEMS - 2],
+        vec![Graphic::Line {
+            layer: 5,
+            from: p(0.0, 0.0),
+            to: p(1.0, 0.0),
+            width: 0.0,
+            owner: None,
+        }],
+    );
+    b.outline.outer = square(0.0, 0.0, 10.0, 10.0);
+    b.mask_openings = vec![
+        board_model::MaskOpening {
+            side: Side::Top,
+            contour: square(1.0, 1.0, 3.0, 3.0),
+            holes: vec![],
+        },
+        board_model::MaskOpening {
+            side: Side::Bottom,
+            contour: square(1.0, 1.0, 3.0, 3.0),
+            holes: vec![],
+        },
+    ];
+    let (list, notes) = overlays(&b, 1.6, "Board");
+    // Copper and the graphic leave one slot: top loses 2*2, bottom stays 10*10.
+    assert!((area(named(&list, "Solder mask top")) - 96.0).abs() < 0.001);
+    assert!((area(named(&list, "Solder mask bottom")) - 100.0).abs() < 0.001);
+    assert!(notes.iter().any(|n| n["severity"] == "Dropped"
+        && n["message"] == "1 copper, graphic, mask opening or text item(s) past the first 200000 were not drawn"));
+}
+
+#[test]
+fn mixed_regions_and_areas_name_both_in_hole_notes() {
+    for (holes, budget, expected) in [
+        (vec![Contour::default()], 100, "1 hole(s) of copper regions and drawn areas could not be drawn and were left filled"),
+        (vec![Contour::default(); MAX_REGION_HOLES + 1], 100, "1 hole(s) past the first 10000 of a copper region or drawn area were not cut from it"),
+        (vec![square(1.0, 1.0, 2.0, 2.0)], 0, "1 copper region(s) and drawn area(s) are drawn solid: the board's holes went past 200000 vertices"),
+    ] {
+        let b = board(
+            vec![CopperItem::Region {
+                layer: 0,
+                contour: square(0.0, 0.0, 4.0, 4.0),
+                holes,
+            }],
+            vec![Graphic::Area {
+                layer: 3,
+                contour: square(5.0, 5.0, 6.0, 6.0),
+                holes: vec![],
+                owner: None,
+            }],
+        );
+        let (_, notes) = overlays_within(&b, 1.6, "Board", 100, budget, MAX_SOLID_FACES);
+        assert!(messages(&notes).iter().any(|m| m == expected), "{notes:?}");
+    }
 }

@@ -1031,18 +1031,17 @@ fn overlays_within(
         }
     };
     let shown = board.copper.len().min(MAX_ITEMS);
+    let shown_graphics = board.graphics.len().min(MAX_ITEMS.saturating_sub(shown));
+    let opening_budget = MAX_ITEMS
+        .saturating_sub(shown)
+        .saturating_sub(shown_graphics);
     let skipped = board
         .copper
         .len()
-        .saturating_sub(MAX_ITEMS)
-        .saturating_add(
-            board
-                .graphics
-                .len()
-                .saturating_sub(MAX_ITEMS.saturating_sub(shown)),
-        )
+        .saturating_sub(shown)
+        .saturating_add(board.graphics.len().saturating_sub(shown_graphics))
         .saturating_add(board.texts.len().saturating_sub(MAX_ITEMS))
-        .saturating_add(board.mask_openings.len().saturating_sub(MAX_ITEMS));
+        .saturating_add(board.mask_openings.len().saturating_sub(opening_budget));
     for item in board.copper.iter().take(MAX_ITEMS) {
         let emptied_before = hole_counts.emptied;
         // The mask opening on each side (top, bottom) of a pad: `None` when that side is tented,
@@ -1165,7 +1164,7 @@ fn overlays_within(
                 } => {
                     let uses_bottom =
                         drill.is_some() && matches!(on(*layer), On::Through | On::Inner(_));
-                    if bottom.is_some() && matches!(on(*layer), On::Face(_)) {
+                    if bottom.is_some() && !uses_bottom {
                         ignored_bottom = ignored_bottom.saturating_add(1);
                     }
                     let bottom = if uses_bottom { bottom.as_ref() } else { None };
@@ -1212,7 +1211,7 @@ fn overlays_within(
                 } => {
                     let uses_bottom =
                         drill.is_some() && matches!(on(*layer), On::Through | On::Inner(_));
-                    if bottom.is_some() && matches!(on(*layer), On::Face(_)) {
+                    if bottom.is_some() && !uses_bottom {
                         ignored_bottom = ignored_bottom.saturating_add(1);
                     }
                     let bottom = if uses_bottom { bottom.as_ref() } else { None };
@@ -1447,38 +1446,11 @@ fn overlays_within(
             unusable = unusable.saturating_add(1);
         }
     }
-    for g in board.graphics.iter().take(MAX_ITEMS.saturating_sub(shown)) {
-        let emptied_before = hole_counts.emptied;
-        let budget_before = hole_counts.budget_dropped;
-        let (l, shapes) = match g {
-            Graphic::Area {
-                layer,
-                contour,
-                holes,
-                ..
-            } => (
-                *layer,
-                drawn_region(contour, holes, &mut hole_budget, &mut hole_counts),
-            ),
-            Graphic::Line {
-                layer,
-                from,
-                to,
-                width,
-                ..
-            } => (*layer, stroke(*from, *to, *width).into_iter().collect()),
-            Graphic::Arc {
-                layer,
-                center,
-                radius,
-                start_deg,
-                end_deg,
-                width,
-                ..
-            } => (
-                *layer,
-                arc_stroke(*center, *radius, *start_deg, *end_deg, *width),
-            ),
+    for g in board.graphics.iter().take(shown_graphics) {
+        let l = match g {
+            Graphic::Area { layer, .. }
+            | Graphic::Line { layer, .. }
+            | Graphic::Arc { layer, .. } => *layer,
         };
         let pile = match board.layers.get(l).map(|x| (x.kind, x.side)) {
             Some((LayerKind::Silkscreen, Some(Side::Top))) => &mut top.silk,
@@ -1501,6 +1473,24 @@ fn overlays_within(
                 continue;
             }
         };
+        let emptied_before = hole_counts.emptied;
+        let budget_before = hole_counts.budget_dropped;
+        let shapes = match g {
+            Graphic::Area { contour, holes, .. } => {
+                drawn_region(contour, holes, &mut hole_budget, &mut hole_counts)
+            }
+            Graphic::Line {
+                from, to, width, ..
+            } => stroke(*from, *to, *width).into_iter().collect(),
+            Graphic::Arc {
+                center,
+                radius,
+                start_deg,
+                end_deg,
+                width,
+                ..
+            } => arc_stroke(*center, *radius, *start_deg, *end_deg, *width),
+        };
         if shapes.is_empty()
             && emptied_before == hole_counts.emptied
             && budget_before == hole_counts.budget_dropped
@@ -1510,7 +1500,7 @@ fn overlays_within(
         pile.polygons.extend(shapes);
     }
 
-    for opening in board.mask_openings.iter().take(MAX_ITEMS) {
+    for opening in board.mask_openings.iter().take(opening_budget) {
         let before = hole_counts.emptied;
         let budget_before = hole_counts.budget_dropped;
         let shapes = drawn_region(
@@ -1872,7 +1862,7 @@ fn overlays_within(
     if ignored_bottom > 0 {
         notes.push(json!({
             "severity": "Info",
-            "message": format!("{ignored_bottom} single-face pad(s) have bottom geometry, which is ignored"),
+            "message": format!("{ignored_bottom} pad(s) have bottom geometry, which is ignored"),
         }));
     }
     if hole_counts.budget_dropped > 0 {
@@ -1893,7 +1883,7 @@ fn overlays_within(
         (
             hole_counts.undrawn,
             if extended_graphics {
-                "hole(s) of drawn areas could not be drawn and were left filled"
+                "hole(s) of copper regions and drawn areas could not be drawn and were left filled"
             } else {
                 "hole(s) of copper regions could not be drawn and were left filled"
             },
@@ -1901,7 +1891,7 @@ fn overlays_within(
         (
             hole_counts.over,
             if extended_graphics {
-                "hole(s) past the first 10000 of a drawn area were not cut from it"
+                "hole(s) past the first 10000 of a copper region or drawn area were not cut from it"
             } else {
                 "hole(s) past the first 10000 of a copper region were not cut from it"
             },
@@ -1909,7 +1899,7 @@ fn overlays_within(
         (
             hole_counts.solid,
             if extended_graphics {
-                "drawn area(s) are drawn solid: the board's holes went past 200000 vertices"
+                "copper region(s) and drawn area(s) are drawn solid: the board's holes went past 200000 vertices"
             } else {
                 "copper region(s) are drawn solid: the board's holes went past 200000 vertices"
             },
@@ -1921,7 +1911,7 @@ fn overlays_within(
         (
             unusable,
             if extended_graphics {
-                "copper, graphic or mask opening item(s) have unusable sizes or layers and were left out"
+                "copper, silkscreen, graphic or mask opening item(s) have unusable sizes or layers and were left out"
             } else {
                 "copper or silkscreen item(s) have unusable sizes or layers and were left out"
             },
