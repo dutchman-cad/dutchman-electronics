@@ -534,3 +534,49 @@ fn chamfered_and_custom_pads_take_their_region_outline() -> Result<(), Box<dyn s
     ));
     Ok(())
 }
+
+/// paste: a PasteMaskExpansion rule of -0.050, pad A by the rule, B with its own 0.100, C with
+/// its paste turned off (stored as -99999 mil), and a region on Top Paste. The board model draws
+/// no paste: B and C are counted in their notes (C not as an expansion), the region gets a note
+/// of its own, and nothing of it reaches the copper or the solder mask.
+#[test]
+fn paste_settings_and_paste_regions_are_only_notes() -> Result<(), Box<dyn std::error::Error>> {
+    let out = read("paste.PcbDoc")?;
+    let mut info: Vec<&str> = out
+        .notes
+        .iter()
+        .filter(|n| n.message.contains("paste") || n.message.contains("Paste"))
+        .map(|n| n.message.as_str())
+        .collect();
+    info.sort_unstable();
+    assert_eq!(
+        info,
+        [
+            "1 pad(s) have a paste mask expansion of their own; the paste mask is not drawn",
+            "1 pad(s) have their paste turned off; the paste mask is not drawn",
+            "1 region(s) on Top Paste left out: the paste mask (the stencil) is not drawn",
+        ]
+    );
+    assert!(out
+        .notes
+        .iter()
+        .filter(|n| n.message.contains("paste") || n.message.contains("Paste"))
+        .all(|n| n.severity == Severity::Info));
+    // No region of the paste layer became copper, and no pad's mask took the paste value.
+    for c in &out.board.copper {
+        match c {
+            CopperItem::Region { .. } => return Err(format!("{c:?}").into()),
+            CopperItem::Pad {
+                mask_expansion,
+                tented,
+                ..
+            } => {
+                assert_eq!(*mask_expansion, [None, None], "{c:?}");
+                assert_eq!(*tented, [None, None], "{c:?}");
+            }
+            _ => {}
+        }
+    }
+    assert!(out.board.mask_openings.is_empty());
+    Ok(())
+}

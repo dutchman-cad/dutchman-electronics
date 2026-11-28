@@ -74,7 +74,10 @@
 //!   reaches `hole / 2 + e` from the center and the pad `size / 2`, so it is
 //!   `(hole + 2 e - size) / 2`, with the shorter side as the size of a pad that is not round (P8:
 //!   (1.000 + 0.200 - 2.000) / 2 = -0.400), and a note counts the pads whose opening ends up
-//!   smaller than the pad. The paste expansion has no place in the board model and is only
+//!   smaller than the pad. On `paste`, pad C has its paste turned off (Enabled unticked): mode
+//!   byte 101 is 2 and bytes 86..90 hold -99999 mil, so a paste expansion below -1000 mm is
+//!   read as no paste, not as an expansion; B has its own 0.100. The paste expansion has no
+//!   place in the board model and is only
 //!   counted in a note.
 //! - Pad holes that are not round (`pad-hole-shapes`): the hole size at byte 45 of block 4 is a
 //!   slot's width (0.800) or a square's side (1.000), and block 5 has its 651 bytes, with the
@@ -1034,11 +1037,19 @@ fn from_hole_edge(e: f64, hole: f64, size_x: f64, size_y: f64) -> f64 {
 struct OwnMasks {
     inside_pad: usize,
     paste: usize,
+    paste_off: usize,
 }
+
+/// A paste expansion below this many mm is Altium's "no paste" (-99999 mil on `paste`'s pad C).
+const PASTE_OFF_BELOW_MM: f64 = -1000.0;
 
 impl OwnMasks {
     fn count(&mut self, mask: &PadMask) {
-        self.paste += usize::from(mask.paste.is_some());
+        match mask.paste {
+            Some(e) if e < PASTE_OFF_BELOW_MM => self.paste_off += 1,
+            Some(_) => self.paste += 1,
+            None => {}
+        }
     }
 
     fn into_note(self, notes: &mut Vec<Note>) {
@@ -1060,6 +1071,15 @@ impl OwnMasks {
                     "{} pad(s) have a paste mask expansion of their own; the paste mask is not \
                      drawn",
                     self.paste
+                ),
+            });
+        }
+        if self.paste_off > 0 {
+            notes.push(Note {
+                severity: Severity::Info,
+                message: format!(
+                    "{} pad(s) have their paste turned off; the paste mask is not drawn",
+                    self.paste_off
                 ),
             });
         }
@@ -1283,6 +1303,7 @@ pub(crate) fn regions(
     let mut not_copper: std::collections::BTreeMap<String, usize> = Default::default();
     let mut on_overlay = std::collections::BTreeMap::<String, usize>::new();
     let mut on_mask = std::collections::BTreeMap::<String, usize>::new();
+    let mut on_paste = std::collections::BTreeMap::<String, usize>::new();
     let (mut keepout_layer, mut keepouts) = (0usize, std::collections::BTreeMap::new());
     for (n, region) in others.iter().enumerate() {
         if used_by_pads.contains(&n) {
@@ -1315,6 +1336,9 @@ pub(crate) fn regions(
             (None, Some("0")) if is_solder_mask(&layers.name(region.layer)) => {
                 *on_mask.entry(layers.name(region.layer)).or_default() += 1;
             }
+            (None, Some("0")) if is_paste(&layers.name(region.layer)) => {
+                *on_paste.entry(layers.name(region.layer)).or_default() += 1;
+            }
             (_, kind) => {
                 let what = format!(
                     "region(s) of KIND {} on {}",
@@ -1341,6 +1365,15 @@ pub(crate) fn regions(
     }
     filled_on_overlay("region(s)", on_overlay, notes);
     keepout_notes("region(s)", keepout_layer, keepouts, notes);
+    // `paste`: a solid region on Top Paste is an opening in the paste stencil.
+    for (layer, count) in on_paste {
+        notes.push(Note {
+            severity: Severity::Info,
+            message: format!(
+                "{count} region(s) on {layer} left out: the paste mask (the stencil) is not drawn"
+            ),
+        });
+    }
     // `solder-mask-region`: a solid region on Top Solder is an opening in the mask drawn by hand.
     for (layer, count) in on_mask {
         notes.push(Note {
@@ -1352,6 +1385,11 @@ pub(crate) fn regions(
         });
     }
     items
+}
+
+/// Whether a layer is one of the paste layers, by its name (`Top Paste`, `Bottom Paste`).
+fn is_paste(name: &str) -> bool {
+    name == "Top Paste" || name == "Bottom Paste"
 }
 
 /// Whether a layer is one of the solder mask layers, by its name (`Top Solder`, `Bottom Solder`).
