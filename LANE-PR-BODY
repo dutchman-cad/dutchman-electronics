@@ -6,7 +6,7 @@ The manifest always includes `variants` and includes `variant` when selected. Un
 
 ## Validation
 
-We run formatting, clippy, and the dutchman-electronics test suite through buildq; GitHub CI is authoritative for the pushed commit.
+We passed per-crate formatting and clippy checks, plus 263 library tests and 46 CLI tests (one existing ignored test), through buildq. GitHub CI validates the final pushed commit.
 
 ## Declarations (see LEGAL.md)
 
