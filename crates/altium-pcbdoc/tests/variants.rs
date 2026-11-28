@@ -19,11 +19,13 @@ fn the_project_has_lite_and_alt() -> Result<(), Box<dyn std::error::Error>> {
             Variant {
                 name: "Lite".into(),
                 not_fitted: vec!["R2".into()],
+                fitted: Vec::new(),
                 values: Vec::new(),
             },
             Variant {
                 name: "Alt".into(),
                 not_fitted: Vec::new(),
+                fitted: Vec::new(),
                 values: vec![VariantValue {
                     designator: "R1".into(),
                     comment: "22k".into(),

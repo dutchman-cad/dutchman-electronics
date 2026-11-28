@@ -516,14 +516,22 @@ pub struct Placement {
     pub fitted: bool,
 }
 
-/// An assembly variant of the board's project: which parts it leaves out and which values it
-/// changes, against the base design. Designators are as the file writes them, matched exactly.
+/// An assembly variant of the board's project: which parts it leaves out, fits and changes the
+/// value of, against the base design. Designators are as the file writes them, matched exactly.
+///
+/// A part is left out of the variant when
+/// `(!placement.fitted || not_fitted contains it) && !fitted contains it`. A reader never puts
+/// one designator in both `not_fitted` and `fitted`; if a board model has it in both anyway,
+/// `not_fitted` wins.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Variant {
     /// The variant's name ("Lite").
     pub name: String,
     /// The designators of the parts this variant does not fit.
     pub not_fitted: Vec<String>,
+    /// The designators of the parts this variant fits although the board marks them not fitted
+    /// ([`Placement::fitted`] `false`, KiCad's DNP).
+    pub fitted: Vec<String>,
     /// The parts whose comment (value) this variant changes.
     pub values: Vec<VariantValue>,
 }

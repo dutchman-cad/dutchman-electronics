@@ -66,6 +66,7 @@ fn the_lite_variant_leaves_r1_out_with_its_value() {
         [Variant {
             name: "LITE".into(),
             not_fitted: vec!["R1".into()],
+            fitted: Vec::new(),
             values: vec![VariantValue {
                 designator: "R1".into(),
                 comment: "1k".into(),

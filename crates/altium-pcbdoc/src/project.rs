@@ -394,6 +394,7 @@ mod tests {
             [Variant {
                 name: "Swap".into(),
                 not_fitted: vec!["C1".into()],
+                fitted: Vec::new(),
                 values: Vec::new(),
             }]
         );
