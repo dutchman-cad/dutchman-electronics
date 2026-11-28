@@ -102,7 +102,7 @@ jobs:
           chmod +x dutchman-electronics
           codesign --force --sign - dutchman-electronics
           codesign --verify --strict dutchman-electronics
-          lipo -verify_arch arm64 x86_64 dutchman-electronics
+          lipo dutchman-electronics -verify_arch arm64 x86_64
           python3 scripts/release.py smoke ./dutchman-electronics
           python3 scripts/release.py package ./dutchman-electronics macos-universal
       - uses: actions/upload-artifact@v4
