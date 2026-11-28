@@ -1,6 +1,0 @@
-Add assembly variant selection to parts packages
-
-We apply named variants before resolving component models and drawing text,
-omit DNP parts by default, and report assembly choices in the manifest.
-We preserve project variants when opening projects or adjacent boards and
-cover the documented Altium and KiCad assembly states.
