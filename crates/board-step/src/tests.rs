@@ -1655,3 +1655,79 @@ fn merged_blind_drills_keep_their_plating_height_after_write() {
     assert!((heights.iter().copied().fold(f64::NEG_INFINITY, f64::max) - 1.6).abs() < 1e-9);
     check_topology(&plating.text);
 }
+
+#[test]
+fn bounded_hole_filter_preserves_step_bytes_and_notes() {
+    // We compare complete STEP output with an independent all-pairs filter. Columns, negative
+    // coordinates, duplicate and overlapping drills, mixed radii, and cutouts exercise the bounded filter.
+    let mut copper = Vec::new();
+    for i in 0..1600 {
+        let x = -35.0 + f64::from(i % 40) * 1.7;
+        let y = -35.0 + f64::from(i / 40) * 1.7;
+        copper.push(hole(x, y, if i % 31 == 0 { 2.0 } else { 0.3 }));
+        if i % 47 == 0 {
+            copper.push(hole(x + 0.1, y, 0.3));
+        }
+    }
+    copper.push(hole(-38.0, -38.0, 0.3));
+    copper.push(hole(-37.7 - TOLERANCE, -38.0, 0.3));
+    let b = board(
+        rect(-40.0, -40.0, 40.0, 40.0),
+        vec![rect(-5.0, -5.0, 5.0, 5.0)],
+        copper,
+    );
+    let actual = write(&b, "comparison").unwrap();
+    let mut notes = Vec::new();
+    let reference = profile_with_filter(&b, 1.6, &mut notes, |hole, kept| {
+        let mut touching = false;
+        let mut mixed = false;
+        for &k in kept {
+            match relation(k, hole) {
+                Relation::Clear => {}
+                Relation::Touching => touching = true,
+                Relation::Overlapping => mixed |= !same_kind(k, hole),
+            }
+        }
+        (touching, mixed)
+    })
+    .unwrap();
+    let mut stats = Stats {
+        openings: reference.openings.len(),
+        ..Stats::default()
+    };
+    let text = solid(
+        reference.outer,
+        reference.openings,
+        reference.pockets,
+        (0.0, 1.6),
+        "comparison",
+        "Board substrate",
+        &mut stats,
+    );
+    assert_eq!(actual.text, text);
+    assert_eq!(actual.notes, notes);
+    assert_eq!(actual.holes, reference.holes);
+    assert_eq!(actual.merged, reference.merged);
+    assert_eq!(actual.stats, stats);
+}
+
+#[test]
+fn spatial_filter_keeps_the_original_crowded_column_limit() {
+    // We accept 65 disjoint holes: the 65th sees 64 earlier X-neighbors.
+    // Each remaining hole sees 65, exceeding the limit even though Y is disjoint.
+    let b = board(
+        rect(0.0, 0.0, 10.0, 202.0),
+        vec![],
+        (0..100)
+            .map(|i| hole(5.0, 1.0 + f64::from(i) * 2.0, 0.3))
+            .collect(),
+    );
+    let step = write(&b, "column").unwrap();
+    assert_eq!(step.holes.len(), MAX_MERGED_HOLES + 1);
+    assert_eq!(step.notes.len(), 1);
+    assert_eq!(step.notes[0].severity, Severity::Dropped);
+    assert_eq!(
+        step.notes[0].message,
+        "35 drilled hole(s) exceed the bounded neighboring-hole comparison limit and were not cut"
+    );
+}

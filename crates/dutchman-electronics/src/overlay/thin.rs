@@ -13,7 +13,7 @@
 //! another, every hole inside the outer ring) and touches no other area of the same overlay;
 //! otherwise the area keeps its original outline. Rings keep at least three points.
 use geo::{
-    Area, BoundingRect, Coord, Intersects, LineString, MultiPolygon, Polygon, Rect, Validation,
+    Area, BoundingRect, Contains, Coord, Intersects, LineString, MultiPolygon, Polygon, Rect,
 };
 
 /// The most a point's removal may move an outline, in mm.
@@ -114,7 +114,11 @@ fn ring(l: &LineString, tolerance: f64) -> Option<LineString> {
 /// One area thinned, or `None` when it would not stay a valid polygon, when nothing could be
 /// left out, or when it has more than [`MAX_HOLES`] holes (checking it would take too long: the
 /// validity check compares the holes pairwise).
-fn polygon(p: &Polygon, tolerance: f64) -> Option<Polygon> {
+fn polygon_with_validity(
+    p: &Polygon,
+    tolerance: f64,
+    validity: &mut super::validity::Validity,
+) -> Option<Polygon> {
     if p.interiors().len() > MAX_HOLES {
         return None;
     }
@@ -130,7 +134,12 @@ fn polygon(p: &Polygon, tolerance: f64) -> Option<Polygon> {
             .fold(q.exterior().0.len(), |n, h| n.saturating_add(h.0.len()))
     };
     let thinned = Polygon::new(exterior, interiors);
-    (points(&thinned) < points(p) && thinned.is_valid()).then_some(thinned)
+    (points(&thinned) < points(p) && validity.valid(&thinned)).then_some(thinned)
+}
+
+#[cfg(test)]
+fn polygon(p: &Polygon, tolerance: f64) -> Option<Polygon> {
+    polygon_with_validity(p, tolerance, &mut super::validity::Validity::default())
 }
 
 /// The most holes an area may have and still be thinned.
@@ -150,6 +159,77 @@ fn grown(r: Rect, by: f64) -> Rect {
     )
 }
 
+fn envelope(r: Rect) -> rstar::AABB<[f64; 2]> {
+    rstar::AABB::from_corners([r.min().x, r.min().y], [r.max().x, r.max().y])
+}
+
+struct IndexedBox {
+    bounds: rstar::AABB<[f64; 2]>,
+    data: usize,
+}
+
+impl rstar::RTreeObject for IndexedBox {
+    type Envelope = rstar::AABB<[f64; 2]>;
+
+    fn envelope(&self) -> Self::Envelope {
+        self.bounds
+    }
+}
+
+fn boxed(r: Rect, data: usize) -> IndexedBox {
+    IndexedBox {
+        bounds: envelope(r),
+        data,
+    }
+}
+
+/// We filter in both axes and stream candidate pairs, keeping temporary memory linear
+/// even for nested polygons whose boxes all overlap.
+fn candidate_index(boxes: &[Option<Rect>]) -> rstar::RTree<IndexedBox> {
+    rstar::RTree::bulk_load(
+        boxes
+            .iter()
+            .enumerate()
+            .filter_map(|(i, b)| b.map(|r| boxed(r, i)))
+            .collect(),
+    )
+}
+
+fn visit_candidates(
+    boxes: &[Option<Rect>],
+    index: &rstar::RTree<IndexedBox>,
+    mut visit: impl FnMut(usize, usize),
+) {
+    let missing: Vec<usize> = boxes
+        .iter()
+        .enumerate()
+        .filter_map(|(i, b)| b.is_none().then_some(i))
+        .collect();
+    for (i, b) in boxes.iter().enumerate() {
+        if let Some(b) = b {
+            for k in index.locate_in_envelope_intersecting(&envelope(*b)) {
+                if k.data > i {
+                    visit(i, k.data);
+                }
+            }
+            for &j in missing.iter().filter(|&&j| j > i) {
+                visit(i, j);
+            }
+        } else {
+            for j in i.saturating_add(1)..boxes.len() {
+                visit(i, j);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+fn candidate_pairs(boxes: &[Option<Rect>]) -> Vec<(usize, usize)> {
+    let mut pairs = Vec::new();
+    visit_candidates(boxes, &candidate_index(boxes), |i, j| pairs.push((i, j)));
+    pairs
+}
+
 /// The areas of `shape` thinned at `tolerance`, and how many areas under [`MIN_AREA`] were left
 /// out; each area that would turn invalid, or would touch or overlap another area, keeps its
 /// original outline.
@@ -165,10 +245,18 @@ pub fn thin_keeping(
     tolerance: f64,
     keep: &MultiPolygon,
 ) -> (MultiPolygon, usize) {
-    let keep_box = keep.bounding_rect();
+    let keep_index = rstar::RTree::bulk_load(
+        keep.iter()
+            .enumerate()
+            .filter_map(|(i, p)| p.bounding_rect().map(|b| boxed(b, i)))
+            .collect(),
+    );
     let fixed = |p: &Polygon| {
-        keep_box.is_some_and(|k| p.bounding_rect().is_some_and(|b| k.intersects(&b)))
-            && p.intersects(keep)
+        p.bounding_rect().is_some_and(|b| {
+            keep_index
+                .locate_in_envelope_intersecting(&envelope(b))
+                .any(|k| keep.0.get(k.data).is_some_and(|q| p.intersects(q)))
+        })
     };
     let kept: Vec<Polygon> = shape
         .iter()
@@ -177,64 +265,100 @@ pub fn thin_keeping(
         .collect();
     let slivers = shape.0.len().saturating_sub(kept.len());
     let shape = MultiPolygon::new(kept);
+    let mut validity = super::validity::Validity::default();
     let mut out: Vec<Polygon> = shape
         .iter()
         .map(|p| {
             if fixed(p) {
                 return p.clone();
             }
-            polygon(p, tolerance).unwrap_or_else(|| p.clone())
+            polygon_with_validity(p, tolerance, &mut validity).unwrap_or_else(|| p.clone())
         })
         .collect();
+    // A pair of unchanged originals cannot cause a restoration. We record this once,
+    // avoiding repeated full-ring comparisons (or intersection tests through distant holes).
+    let mut simplified: Vec<bool> = out.iter().zip(&shape).map(|(a, b)| a != b).collect();
+    if !simplified.iter().any(|&changed| changed) {
+        return (MultiPolygon::new(out), slivers);
+    }
     let boxes: Vec<Option<Rect>> = shape
         .iter()
         .map(|p| p.bounding_rect().map(|r| grown(r, 2.0 * tolerance)))
         .collect();
-    // The pairs of areas whose grown boxes meet, found by sweeping along x: only these can come
-    // to touch. An area without a box is paired with every other.
-    let mut order: Vec<usize> = (0..boxes.len()).collect();
-    let left = |i: &usize| {
-        boxes
-            .get(*i)
-            .copied()
-            .flatten()
-            .map_or(f64::NEG_INFINITY, |r| r.min().x)
-    };
-    order.sort_by(|a, b| left(a).total_cmp(&left(b)));
-    let mut pairs = Vec::new();
-    for (k, &i) in order.iter().enumerate() {
-        let a = boxes.get(i).copied().flatten();
-        for &j in order.iter().skip(k.saturating_add(1)) {
-            let b = boxes.get(j).copied().flatten();
-            match (a, b) {
-                (Some(x), Some(y)) => {
-                    if y.min().x > x.max().x {
-                        break;
-                    }
-                    if x.intersects(&y) {
-                        pairs.push((i, j));
-                    }
+    let index = candidate_index(&boxes);
+    // A fixed polygon can surround many separate islands inside its holes. Its exterior
+    // box reaches all of them, but a local hole query can prove they do not touch copper.
+    let hole_indices: Vec<_> = shape
+        .iter()
+        .map(|p| {
+            rstar::RTree::bulk_load(if p.interiors().len() > MAX_HOLES {
+                p.interiors()
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, h)| h.bounding_rect().map(|r| boxed(r, i)))
+                    .collect()
+            } else {
+                Vec::new()
+            })
+        })
+        .collect();
+    let inside_hole = |i: usize, other: &Polygon| {
+        use rstar::Envelope;
+        let (Some(index), Some(original), Some(bounds)) =
+            (hole_indices.get(i), shape.0.get(i), other.bounding_rect())
+        else {
+            return false;
+        };
+        index
+            .locate_in_envelope_intersecting(&envelope(bounds))
+            .any(|entry| {
+                if !entry.bounds.contains_envelope(&envelope(bounds)) {
+                    return false;
                 }
-                _ => pairs.push((i, j)),
-            }
-        }
-    }
+                let Some(hole) = original.interiors().get(entry.data) else {
+                    return false;
+                };
+                !hole.intersects(other.exterior())
+                    && Polygon::new(hole.clone(), vec![]).contains(other)
+            })
+    };
     // Restoring an area can make it touch a thinned neighbour, so repeat until nothing changes;
     // each pass restores at least one area, and restored areas never touch each other.
     loop {
-        let mut restore = Vec::new();
-        for &(i, j) in &pairs {
+        let mut restore = vec![false; out.len()];
+        visit_candidates(&boxes, &index, |i, j| {
+            if !simplified.get(i).copied().unwrap_or(false)
+                && !simplified.get(j).copied().unwrap_or(false)
+            {
+                return;
+            }
             if let (Some(a), Some(b)) = (out.get(i), out.get(j)) {
+                if (!simplified.get(i).copied().unwrap_or(true) && inside_hole(i, b))
+                    || (!simplified.get(j).copied().unwrap_or(true) && inside_hole(j, a))
+                {
+                    return;
+                }
                 if a.intersects(b) {
-                    restore.extend([i, j]);
+                    if let Some(flag) = restore.get_mut(i) {
+                        *flag = true;
+                    }
+                    if let Some(flag) = restore.get_mut(j) {
+                        *flag = true;
+                    }
                 }
             }
-        }
+        });
         let mut changed = false;
-        for i in restore {
+        for (i, &restore) in restore.iter().enumerate() {
+            if !restore {
+                continue;
+            }
             if let (Some(o), Some(original)) = (out.get_mut(i), shape.0.get(i)) {
                 if o != original {
                     *o = original.clone();
+                    if let Some(flag) = simplified.get_mut(i) {
+                        *flag = false;
+                    }
                     changed = true;
                 }
             }
@@ -249,7 +373,7 @@ pub fn thin_keeping(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use geo::Area;
+    use geo::{Area, Validation};
 
     fn c(x: f64, y: f64) -> Coord {
         Coord { x, y }
@@ -356,5 +480,194 @@ mod tests {
         let (out, _) = thin(&shape, THIN);
         assert!(!out.0[0].intersects(&out.0[1]));
         assert!(out.is_valid(), "{:?}", out.validation_errors());
+    }
+}
+
+#[cfg(test)]
+mod spatial_tests {
+    use super::*;
+
+    #[test]
+    fn indexed_candidates_match_all_pairs_including_missing_boxes() {
+        let mut boxes: Vec<Option<Rect>> = (0..1200)
+            .map(|i| {
+                Some(Rect::new(
+                    (f64::from(i % 30), f64::from(i / 30)),
+                    (f64::from(i % 30) + 1.0, f64::from(i / 30) + 0.75),
+                ))
+            })
+            .collect();
+        boxes.extend([
+            None,
+            Some(Rect::new((-100.0, -100.0), (100.0, 100.0))),
+            None,
+        ]);
+        let mut expected = Vec::new();
+        for (i, a) in boxes.iter().enumerate() {
+            for (j, b) in boxes.iter().enumerate().skip(i + 1) {
+                if a.zip(*b).is_none_or(|(a, b)| a.intersects(&b)) {
+                    expected.push((i, j));
+                }
+            }
+        }
+        let mut actual = candidate_pairs(&boxes);
+        actual.sort_unstable();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn many_protected_text_areas_keep_exact_outlines() {
+        let areas: Vec<Polygon> = (0..1200)
+            .map(|i| {
+                let x = f64::from(i % 30) * 2.0;
+                let y = f64::from(i / 30) * 2.0;
+                Polygon::new(
+                    LineString::from(vec![
+                        (x, y),
+                        (x + 0.5, y + 0.001),
+                        (x + 1.0, y),
+                        (x + 1.0, y + 1.0),
+                        (x, y + 1.0),
+                        (x, y),
+                    ]),
+                    vec![],
+                )
+            })
+            .collect();
+        let shape = MultiPolygon::new(areas);
+        assert_eq!(thin_keeping(&shape, THIN, &shape), (shape, 0));
+    }
+}
+
+#[cfg(test)]
+mod restoration_tests {
+    use super::*;
+    #[test]
+    fn a_simplified_island_stays_in_one_of_many_holes() {
+        let rect = |x: f64, y: f64| {
+            LineString::from(vec![
+                (x, y),
+                (x + 1.0, y),
+                (x + 1.0, y + 1.0),
+                (x, y + 1.0),
+                (x, y),
+            ])
+        };
+        let holes: Vec<_> = (0..1200)
+            .map(|i| rect(f64::from(i % 40) * 2.0, f64::from(i / 40) * 2.0))
+            .collect();
+        let outer = Polygon::new(
+            LineString::from(vec![
+                (-1.0, -1.0),
+                (100.0, -1.0),
+                (100.0, 100.0),
+                (-1.0, 100.0),
+                (-1.0, -1.0),
+            ]),
+            holes,
+        );
+        let island = Polygon::new(
+            LineString::from(vec![
+                (0.2, 0.2),
+                (0.8, 0.2),
+                (0.8, 0.5),
+                (0.798, 0.501),
+                (0.8, 0.502),
+                (0.8, 0.8),
+                (0.2, 0.8),
+                (0.2, 0.2),
+            ]),
+            vec![],
+        );
+        let before = island.exterior().0.len();
+        let (out, slivers) = thin(&MultiPolygon::new(vec![outer.clone(), island]), THIN);
+        assert_eq!(slivers, 0);
+        assert_eq!(out.0.first(), Some(&outer));
+        assert!(out.0.get(1).unwrap().exterior().0.len() < before);
+    }
+
+    #[test]
+    fn a_simplified_island_crossing_a_hole_notch_is_restored() {
+        let rect = |x: f64, y: f64| {
+            LineString::from(vec![
+                (x, y),
+                (x + 1.0, y),
+                (x + 1.0, y + 1.0),
+                (x, y + 1.0),
+                (x, y),
+            ])
+        };
+        let mut holes: Vec<_> = (0..1200)
+            .map(|i| rect(f64::from(i % 40) * 2.0, f64::from(i / 40) * 2.0))
+            .collect();
+        let notch = LineString::from(vec![
+            (0.0, 0.0),
+            (1.0, 0.0),
+            (1.0, 1.0),
+            (0.51, 1.0),
+            (0.5, 0.996),
+            (0.49, 1.0),
+            (0.0, 1.0),
+            (0.0, 0.0),
+        ]);
+        *holes.first_mut().unwrap() = notch;
+        let island = Polygon::new(
+            LineString::from(vec![
+                (0.0005, 0.0005),
+                (0.9995, 0.0005),
+                (0.9995, 0.9995),
+                (0.51, 0.9995),
+                (0.5, 0.995),
+                (0.49, 0.9995),
+                (0.0005, 0.9995),
+                (0.0005, 0.0005),
+            ]),
+            vec![],
+        );
+        assert!(
+            polygon(&island, THIN).is_some(),
+            "the notch would be simplified without the collision check"
+        );
+        let outer = Polygon::new(
+            LineString::from(vec![
+                (-1.0, -1.0),
+                (100.0, -1.0),
+                (100.0, 100.0),
+                (-1.0, 100.0),
+                (-1.0, -1.0),
+            ]),
+            holes,
+        );
+        let original = MultiPolygon::new(vec![outer, island]);
+        assert_eq!(thin(&original, THIN), (original, 0));
+    }
+
+    #[test]
+    fn unchanged_islands_inside_many_holes_keep_every_coordinate() {
+        let rect = |x: f64, y: f64, side: f64| {
+            LineString::from(vec![
+                (x, y),
+                (x + side, y),
+                (x + side, y + side),
+                (x, y + side),
+                (x, y),
+            ])
+        };
+        let holes: Vec<_> = (0..1200)
+            .map(|i| rect(f64::from(i % 40) * 2.0, f64::from(i / 40) * 2.0, 1.0))
+            .collect();
+        let mut pieces = vec![Polygon::new(rect(-1.0, -1.0, 100.0), holes)];
+        pieces.extend((0..1200).map(|i| {
+            Polygon::new(
+                rect(
+                    f64::from(i % 40) * 2.0 + 0.25,
+                    f64::from(i / 40) * 2.0 + 0.25,
+                    0.5,
+                ),
+                vec![],
+            )
+        }));
+        let original = MultiPolygon::new(pieces);
+        assert_eq!(thin(&original, THIN), (original, 0));
     }
 }

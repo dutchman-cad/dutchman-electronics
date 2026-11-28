@@ -1125,6 +1125,28 @@ struct Pocket {
 }
 
 fn profile(board: &Board, thickness: f64, notes: &mut Vec<Note>) -> Result<Profile, StepError> {
+    // The X-neighbor policy already bounds this slice to at most 64 comparisons.
+    // We scan this bounded slice instead of maintaining a second index.
+    profile_with_filter(board, thickness, notes, |hole, neighbors| {
+        let mut touching = false;
+        let mut mixed = false;
+        for &other in neighbors {
+            match relation(other, hole) {
+                Relation::Clear => {}
+                Relation::Touching => touching = true,
+                Relation::Overlapping => mixed |= !same_kind(other, hole),
+            }
+        }
+        (touching, mixed)
+    })
+}
+
+fn profile_with_filter(
+    board: &Board,
+    thickness: f64,
+    notes: &mut Vec<Note>,
+    mut meets_kept: impl FnMut(Drill, &[Drill]) -> (bool, bool),
+) -> Result<Profile, StepError> {
     if board.outline.outer.segments.is_empty() {
         return Err(StepError::Outline("the board has no outline".into()));
     }
@@ -1205,28 +1227,15 @@ fn profile(board: &Board, thickness: f64, notes: &mut Vec<Note>) -> Result<Profi
         // Kept holes are sorted by their left edge, and none is wider than `widest`, so only
         // those whose left edge is within `widest` of this one can reach it.
         let left = hole.at.x - hole.radius;
-        let mut meets_edge_on = false;
-        let mut meets_other_kind = false;
-        let mut neighbors = 0usize;
-        for k in kept
-            .iter()
-            .rev()
-            .take_while(|k| k.at.x - k.radius >= left - widest - TOLERANCE)
-        {
-            neighbors = neighbors.saturating_add(1);
-            if neighbors > MAX_MERGED_HOLES {
-                break;
-            }
-            match relation(*k, hole) {
-                Relation::Clear => {}
-                Relation::Touching => meets_edge_on = true,
-                Relation::Overlapping => meets_other_kind |= !same_kind(*k, hole),
-            }
-        }
-        if neighbors > MAX_MERGED_HOLES {
+        // We preserve the original X-neighbor budget, including holes far apart in Y.
+        // A binary search counts the same suffix without scanning every hole in a column.
+        let start = kept.partition_point(|k| k.at.x - k.radius < left - widest - TOLERANCE);
+        let neighbors = kept.get(start..).unwrap_or_default();
+        if neighbors.len() > MAX_MERGED_HOLES {
             crowded = crowded.saturating_add(1);
             continue;
         }
+        let (meets_edge_on, meets_other_kind) = meets_kept(hole, neighbors);
         if meets_edge_on {
             touching = touching.saturating_add(1);
             continue;
