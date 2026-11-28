@@ -684,7 +684,11 @@ pub fn build_accepting(
     } else {
         board.name.clone()
     };
+    // A reader that refused the whole file (a KiCad board older than 9) returns no layers and one
+    // note; that note alone is the error, in plain words, rather than "no outline" before it.
+    let refused = board.layers.is_empty() && outcome.notes.len() == 1;
     let step = board_step::write(&board, &name).map_err(|e| match &why {
+        Some(why) if refused => why.clone(),
         Some(why) => format!("{e}: {why}"),
         None => e.to_string(),
     })?;
