@@ -3,7 +3,8 @@
 //! `read <file> --out <dir> --json`. `read` also takes `--param NAME=VALUE` (repeatable) for
 //! the texts that refer to project parameters, `--board NAME` (or the link the project lists)
 //! to choose the board of an Altium project (`.PrjPcb`) that holds several, and
-//! `--project FILE` to use a project's parameters for a board passed on its own, and
+//! `--project FILE` to use a project's parameters (an Altium `.PrjPcb`, or a KiCad `.kicad_pro`
+//! for its text variables) for a board passed on its own, and
 //! `--models <dir>` (repeatable) for folders that hold linked model files, and `--copper all` to
 //! draw inner copper layers too (the default, `--copper outer`, draws the top and bottom only),
 //! and `--bodies standard` to give recognized packages a standard body in place of a plain
@@ -32,7 +33,7 @@ fn read_board_file(path: &str) -> Result<Vec<u8>, String> {
 
 const USAGE: &str = "usage: dutchman-electronics info [--json]
        dutchman-electronics detect <file> [--json]
-       dutchman-electronics read <board.PcbDoc|project.PrjPcb> --out <dir> [--json]
+       dutchman-electronics read <board.PcbDoc|board.kicad_pcb|project.PrjPcb> --out <dir> [--json]
                                 [--param NAME=VALUE]... [--board NAME] [--project FILE]
                                 [--models <dir>]... [--copper outer|all]
                                 [--bodies file|standard]

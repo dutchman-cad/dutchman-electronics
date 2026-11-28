@@ -60,9 +60,31 @@ pub struct BoardStep {
     /// The solid's height in mm: for the board, its thickness (top face at z = thickness, bottom
     /// at z = 0); for a prism, `z1 - z0`.
     pub thickness: f64,
-    /// The drilled holes actually cut into the board solid (the board only; empty for a prism or
-    /// tubes), so a plating can follow what was cut.
+    /// The drilled holes actually cut into the board solid on their own (the board only; empty
+    /// for a prism or tubes), so a plating can follow what was cut.
     pub holes: Vec<CutHole>,
+    /// Overlapping drilled holes cut as one opening each, so a plating can follow the union.
+    pub merged: Vec<MergedHole>,
+}
+
+impl BoardStep {
+    /// How many plated drilled holes the board solid was cut for, the ones cut as part of a
+    /// merged opening and the ones inside another hole (cut with it) included.
+    pub fn plated_holes_cut(&self) -> usize {
+        let single = self
+            .holes
+            .iter()
+            .filter(|h| h.plated)
+            .map(|h| h.also.saturating_add(1))
+            .fold(0usize, usize::saturating_add);
+        let merged = self
+            .merged
+            .iter()
+            .filter(|m| m.plated)
+            .map(|m| m.circles.len().saturating_add(m.also))
+            .fold(0usize, usize::saturating_add);
+        single.saturating_add(merged)
+    }
 }
 
 /// A drilled hole that was cut through the board solid.
@@ -77,6 +99,22 @@ pub struct CutHole {
     /// bottom face is at 0, its top at the thickness), so the plating can follow it. `None` when
     /// the hole runs through the whole board.
     pub span: Option<(f64, f64)>,
+    /// How many other holes lie wholly inside this one, so were cut with it.
+    pub also: usize,
+}
+
+/// Overlapping drilled holes of one kind (same plating, same span) cut as one opening: the union
+/// of their circles, made of exact arcs.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MergedHole {
+    /// The circles that make up the union's wall (center, radius), in mm: a hole wholly inside
+    /// another is not listed, it is counted in `also`.
+    pub circles: Vec<(Point, f64)>,
+    pub plated: bool,
+    /// As [`CutHole::span`].
+    pub span: Option<(f64, f64)>,
+    /// How many holes lie wholly inside one of the `circles`.
+    pub also: usize,
 }
 
 /// Counts of the solid's topology.
@@ -600,6 +638,460 @@ fn drills(board: &Board, thickness: f64, notes: &mut Vec<Note>) -> Result<Vec<Dr
     Ok(out)
 }
 
+// ---------------------------------------------------------------------------------------------
+// Overlapping holes
+// ---------------------------------------------------------------------------------------------
+
+/// The most holes cut as one merged opening.
+const MAX_MERGED_HOLES: usize = 64;
+/// The most edges one merged opening's outline may have.
+const MAX_UNION_EDGES: usize = 512;
+/// The shortest arc (mm) a merged opening's outline may have: shorter ones are slivers where two
+/// circles barely cross, and the plating's rounded corners would run into each other.
+const MIN_UNION_ARC: f64 = 0.1;
+/// Circles whose distance is within this (mm) of the sum of their radii touch at a point.
+const TOUCH_BAND: f64 = 1e-4;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Relation {
+    Clear,
+    /// Touching at a single point (a figure of eight, which no solid can have).
+    Touching,
+    Overlapping,
+}
+
+fn relation(a: Drill, b: Drill) -> Relation {
+    let d = distance(a.at, b.at);
+    let sum = a.radius + b.radius;
+    if d > sum + TOLERANCE {
+        Relation::Clear
+    } else if d >= sum - TOUCH_BAND {
+        Relation::Touching
+    } else {
+        Relation::Overlapping
+    }
+}
+
+/// True when two holes can share an opening: both plated or both not, over the same heights.
+fn same_kind(a: Drill, b: Drill) -> bool {
+    let same_span = match (a.span, b.span) {
+        (None, None) => true,
+        (Some((l0, h0)), Some((l1, h1))) => {
+            (l0 - l1).abs() <= TOLERANCE && (h0 - h1).abs() <= TOLERANCE
+        }
+        _ => false,
+    };
+    a.plated == b.plated && same_span
+}
+
+/// True when `outer` holds `inner` wholly (up to 0.001 mm); of two equal circles, the first.
+fn contains(outer: (usize, Drill), inner: (usize, Drill)) -> bool {
+    let (i, o) = outer;
+    let (j, n) = inner;
+    distance(o.at, n.at) + n.radius <= o.radius + 1e-3 && (o.radius > n.radius + TOLERANCE || i < j)
+}
+
+/// A hole, or overlapping holes of one kind, as it is cut.
+enum Cut {
+    Single {
+        hole: Drill,
+        /// Holes wholly inside it.
+        also: usize,
+        unplaced: usize,
+    },
+    Merged {
+        members: Vec<Drill>,
+        /// The union's outline, counter-clockwise.
+        outline: Vec<Edge2>,
+        also: usize,
+        unplaced: usize,
+    },
+}
+
+impl Cut {
+    fn count(&self) -> usize {
+        match self {
+            Self::Single { also, .. } => also.saturating_add(1),
+            Self::Merged { members, also, .. } => members.len().saturating_add(*also),
+        }
+    }
+
+    fn unplaced(&self) -> usize {
+        match self {
+            Self::Single { unplaced, .. } | Self::Merged { unplaced, .. } => *unplaced,
+        }
+    }
+}
+
+/// Groups holes that overlap (none touches another at a point, and overlapping ones are of one
+/// kind) and gives each group's opening. A group too large or too tangled for one outline is
+/// cut as far as it goes without overlap, and the rest is said to be left out.
+fn merge_overlapping(kept: Vec<Drill>, notes: &mut Vec<Note>) -> Vec<Cut> {
+    let n = kept.len();
+    // Union-find over the holes that overlap; `kept` is sorted by its left edge.
+    let mut parent: Vec<usize> = (0..n).collect();
+    fn root(parent: &mut [usize], mut i: usize) -> usize {
+        while let Some(&p) = parent.get(i) {
+            if p == i {
+                break;
+            }
+            let up = parent.get(p).copied().unwrap_or(p);
+            if let Some(slot) = parent.get_mut(i) {
+                *slot = up;
+            }
+            i = up;
+        }
+        i
+    }
+    for (i, a) in kept.iter().enumerate() {
+        for (j, b) in kept
+            .iter()
+            .enumerate()
+            .skip(i.saturating_add(1))
+            .take(MAX_MERGED_HOLES)
+        {
+            if b.at.x - b.radius > a.at.x + a.radius + TOLERANCE {
+                // Later holes start further right still, so none can reach this one.
+                break;
+            }
+            if relation(*a, *b) == Relation::Overlapping {
+                let (ra, rb) = (root(&mut parent, i), root(&mut parent, j));
+                if let Some(slot) = parent.get_mut(rb.max(ra)) {
+                    *slot = rb.min(ra);
+                }
+            }
+        }
+    }
+    let mut groups: Vec<Vec<Drill>> = Vec::new();
+    let mut slot_of: Vec<Option<usize>> = vec![None; n];
+    for (i, hole) in kept.iter().enumerate() {
+        let r = root(&mut parent, i);
+        let index = match slot_of.get(r).copied().flatten() {
+            Some(g) => g,
+            None => {
+                groups.push(Vec::new());
+                let g = groups.len().saturating_sub(1);
+                if let Some(slot) = slot_of.get_mut(r) {
+                    *slot = Some(g);
+                }
+                g
+            }
+        };
+        if let Some(group) = groups.get_mut(index) {
+            group.push(*hole);
+        }
+    }
+    let mut out = Vec::new();
+    let (mut merged_holes, mut merged_openings, mut left_out) = (0usize, 0usize, 0usize);
+    for group in groups {
+        let [only] = group.as_slice() else {
+            let total = group.len();
+            let unplaced = group.iter().filter(|h| h.unplaced).count();
+            if total > MAX_MERGED_HOLES {
+                keep_clear(group, &mut out, &mut left_out);
+                continue;
+            }
+            // Holes wholly inside another add nothing to the outline.
+            let indexed: Vec<(usize, Drill)> = group.iter().copied().enumerate().collect();
+            let mut rest: Vec<Drill> = Vec::new();
+            let mut also = 0usize;
+            for &candidate in &indexed {
+                if indexed
+                    .iter()
+                    .any(|&other| other.0 != candidate.0 && contains(other, candidate))
+                {
+                    also = also.saturating_add(1);
+                } else {
+                    rest.push(candidate.1);
+                }
+            }
+            let circles: Vec<(Point, f64)> = rest.iter().map(|h| (h.at, h.radius)).collect();
+            if let [hole] = rest.as_slice() {
+                merged_holes = merged_holes.saturating_add(total);
+                merged_openings = merged_openings.saturating_add(1);
+                out.push(Cut::Single {
+                    hole: *hole,
+                    also,
+                    unplaced,
+                });
+                continue;
+            }
+            match union_outline(&circles) {
+                Some(pieces) => {
+                    merged_holes = merged_holes.saturating_add(total);
+                    merged_openings = merged_openings.saturating_add(1);
+                    out.push(Cut::Merged {
+                        members: rest,
+                        outline: pieces.into_iter().map(|(e, _)| e).collect(),
+                        also,
+                        unplaced,
+                    });
+                }
+                None => {
+                    keep_clear(group, &mut out, &mut left_out);
+                }
+            }
+            continue;
+        };
+        out.push(Cut::Single {
+            hole: *only,
+            also: 0,
+            unplaced: usize::from(only.unplaced),
+        });
+    }
+    if merged_openings > 0 {
+        notes.push(Note {
+            severity: Severity::Info,
+            message: format!(
+                "{merged_holes} overlapping drilled hole(s) were cut as {merged_openings} merged opening(s)"
+            ),
+        });
+    }
+    if left_out > 0 {
+        notes.push(Note {
+            severity: Severity::Dropped,
+            message: format!(
+                "{left_out} drilled hole(s) in groups of overlapping holes that are too large \
+                 (more than {MAX_MERGED_HOLES} holes), too tangled or too thin to make one \
+                 opening were not cut"
+            ),
+        });
+    }
+    out
+}
+
+/// Keeps at most one bounded set of disjoint holes; every other drill is counted as lost.
+fn keep_clear(group: Vec<Drill>, out: &mut Vec<Cut>, left_out: &mut usize) {
+    let mut clear: Vec<Drill> = Vec::new();
+    for hole in group {
+        if clear.len() < MAX_MERGED_HOLES
+            && clear.iter().all(|k| relation(*k, hole) == Relation::Clear)
+        {
+            clear.push(hole);
+        } else {
+            *left_out = left_out.saturating_add(1);
+        }
+    }
+    out.extend(clear.into_iter().map(|hole| Cut::Single {
+        hole,
+        also: 0,
+        unplaced: usize::from(hole.unplaced),
+    }));
+}
+
+/// One arc of a union outline, counter-clockwise on its circle.
+struct UnionArc {
+    circle: usize,
+    start: Point,
+    end: Point,
+    from: f64,
+    sweep: f64,
+}
+
+/// The outline of the union of overlapping circles (center, radius), counter-clockwise, as exact
+/// arcs each with the index of its circle (arcs longer than a half circle are split in two).
+/// `None` when it is not one simple loop: too many circles or edges, a circle crossing another
+/// at a hair, three circles through one point, or material left standing inside the union.
+fn union_outline(circles: &[(Point, f64)]) -> Option<Vec<(Edge2, usize)>> {
+    if circles.len() < 2 || circles.len() > MAX_MERGED_HOLES {
+        return None;
+    }
+    // Where each circle is crossed by the others: (angle, point), the same point for both.
+    let mut crossings: Vec<Vec<(f64, Point)>> = vec![Vec::new(); circles.len()];
+    for (i, &(ci, ri)) in circles.iter().enumerate() {
+        for (j, &(cj, rj)) in circles.iter().enumerate().skip(i.saturating_add(1)) {
+            let d = distance(ci, cj);
+            if !(d > (ri - rj).abs() && d < ri + rj) {
+                continue;
+            }
+            let along = (ri * ri - rj * rj + d * d) / (2.0 * d);
+            let h2 = ri * ri - along * along;
+            if h2 <= 0.0 {
+                return None;
+            }
+            let h = h2.sqrt();
+            // Two crossings closer than a short arc leave a neck no lining can follow.
+            if 2.0 * h < MIN_UNION_ARC {
+                return None;
+            }
+            let (ux, uy) = ((cj.x - ci.x) / d, (cj.y - ci.y) / d);
+            let (mx, my) = (ci.x + along * ux, ci.y + along * uy);
+            for p in [
+                Point {
+                    x: mx - h * uy,
+                    y: my + h * ux,
+                },
+                Point {
+                    x: mx + h * uy,
+                    y: my - h * ux,
+                },
+            ] {
+                // A third circle at the same crossing makes an ambiguous junction.
+                if crossings
+                    .get(i)?
+                    .iter()
+                    .chain(crossings.get(j)?.iter())
+                    .any(|(_, old)| distance(*old, p) < 1e-7)
+                {
+                    return None;
+                }
+                let on_i = (p.y - ci.y).atan2(p.x - ci.x);
+                let on_j = (p.y - cj.y).atan2(p.x - cj.x);
+                crossings.get_mut(i)?.push((on_i, p));
+                crossings.get_mut(j)?.push((on_j, p));
+            }
+        }
+    }
+    // The pieces of each circle between its crossings that no other circle covers.
+    let mut arcs: Vec<UnionArc> = Vec::new();
+    for (i, &(c, r)) in circles.iter().enumerate() {
+        let list = crossings.get_mut(i)?;
+        list.sort_by(|a, b| a.0.total_cmp(&b.0));
+        if list.len() < 2 {
+            return None;
+        }
+        for (k, &(from, start)) in list.iter().enumerate() {
+            let (next, end) = *list.get((k + 1) % list.len())?;
+            let sweep = (next - from).rem_euclid(2.0 * PI);
+            if sweep < 1e-9 {
+                continue;
+            }
+            let mid = on_circle(c, r, from + sweep / 2.0);
+            let covered = circles
+                .iter()
+                .enumerate()
+                .any(|(j, &(cj, rj))| j != i && distance(mid, cj) < rj);
+            if covered {
+                continue;
+            }
+            if r * sweep < MIN_UNION_ARC {
+                return None;
+            }
+            arcs.push(UnionArc {
+                circle: i,
+                start,
+                end,
+                from,
+                sweep,
+            });
+            if arcs.len() > MAX_UNION_EDGES / 2 {
+                return None;
+            }
+        }
+    }
+    // Chain them head to tail: exactly one arc starts where another ends.
+    let mut order = vec![0usize];
+    let mut used = vec![false; arcs.len()];
+    *used.first_mut()? = true;
+    loop {
+        let current = *order.last()?;
+        let here = arcs.get(current)?;
+        let mut next = arcs
+            .iter()
+            .enumerate()
+            .filter(|(j, a)| *j != current && distance(a.start, here.end) < 1e-7);
+        let (j, _) = next.next()?;
+        if next.next().is_some() {
+            return None;
+        }
+        if j == 0 {
+            break;
+        }
+        if *used.get(j)? {
+            return None;
+        }
+        *used.get_mut(j)? = true;
+        order.push(j);
+    }
+    if order.len() != arcs.len() {
+        return None;
+    }
+    let mut edges = Vec::new();
+    for &index in &order {
+        let arc = arcs.get(index)?;
+        let &(center, radius) = circles.get(arc.circle)?;
+        let kind = Kind2::Arc {
+            center,
+            radius,
+            ccw: true,
+        };
+        if arc.sweep > PI {
+            let mid = on_circle(center, radius, arc.from + arc.sweep / 2.0);
+            for (start, end) in [(arc.start, mid), (mid, arc.end)] {
+                edges.push((Edge2 { start, end, kind }, arc.circle));
+            }
+        } else {
+            edges.push((
+                Edge2 {
+                    start: arc.start,
+                    end: arc.end,
+                    kind,
+                },
+                arc.circle,
+            ));
+        }
+    }
+    if edges.len() > MAX_UNION_EDGES {
+        return None;
+    }
+    let plain: Vec<Edge2> = edges.iter().map(|(e, _)| *e).collect();
+    (signed_area2(&polygon(&plain)) > 0.0).then_some(edges)
+}
+
+/// The inner wall of a lining `wall` mm thick along a union outline: each arc moves in to the
+/// radius `wall` less on its own circle, and where two circles meet (the wall bends in towards
+/// the opening) the offset turns round the crossing in an arc of radius `wall`. Counter-clockwise
+/// like `outline`. `None` when a circle is too small to line, or an arc too short for the bends.
+fn inset_outline(
+    outline: &[(Edge2, usize)],
+    circles: &[(Point, f64)],
+    wall: f64,
+) -> Option<Vec<Edge2>> {
+    let shrunk = |point: Point, circle: usize| -> Option<Point> {
+        let &(center, radius) = circles.get(circle)?;
+        let inner = radius - wall;
+        (inner > TOLERANCE).then_some(())?;
+        Some(Point {
+            x: center.x + inner * ((point.x - center.x) / radius),
+            y: center.y + inner * ((point.y - center.y) / radius),
+        })
+    };
+    let mut out = Vec::new();
+    for (k, &(edge, circle)) in outline.iter().enumerate() {
+        let &(center, radius) = circles.get(circle)?;
+        let start = shrunk(edge.start, circle)?;
+        let end = shrunk(edge.end, circle)?;
+        // Long union arcs have already been split in half for STEP side faces.
+        // Each half needs only half of the full arc's bend allowance.
+        if radius * sweep(&edge) < 2.0 * wall {
+            return None;
+        }
+        out.push(Edge2 {
+            start,
+            end,
+            kind: Kind2::Arc {
+                center,
+                radius: radius - wall,
+                ccw: true,
+            },
+        });
+        let &(following, next_circle) = outline.get((k + 1) % outline.len())?;
+        if next_circle != circle {
+            // The bend turns the other way round the crossing, clockwise.
+            out.push(Edge2 {
+                start: end,
+                end: shrunk(following.start, next_circle)?,
+                kind: Kind2::Arc {
+                    center: edge.end,
+                    radius: wall,
+                    ccw: false,
+                },
+            });
+        }
+    }
+    Some(out)
+}
+
 /// True when a hole stays clear of one cutout (outside it and not touching its edge).
 fn clear_of_opening(hole: Drill, poly: &(Vec<Point>, (Point, Point)), edges: &[Edge2]) -> bool {
     let (points, (lo, hi)) = poly;
@@ -620,6 +1112,7 @@ struct Profile {
     /// Blind holes, open on one face of the board.
     pockets: Vec<Pocket>,
     holes: Vec<CutHole>,
+    merged: Vec<MergedHole>,
 }
 
 /// A blind hole: a round pocket open on the top or bottom face. `edges` run clockwise.
@@ -683,12 +1176,15 @@ fn profile(board: &Board, thickness: f64, notes: &mut Vec<Note>) -> Result<Profi
         openings.push(edges);
     }
 
-    // Then drilled holes, skipping any that would touch the edge, a cutout or another hole.
+    // Then drilled holes, skipping any that would touch the edge or a cutout. Holes that overlap
+    // are cut as one opening; those that only touch another hole at a point, or overlap one of
+    // another kind, cannot be and are skipped.
     let mut holes = drills(board, thickness, notes)?;
     holes.sort_by(|a, b| (a.at.x - a.radius).total_cmp(&(b.at.x - b.radius)));
     let widest = holes.iter().map(|h| 2.0 * h.radius).fold(0.0, f64::max);
     let mut kept: Vec<Drill> = Vec::new();
-    let (mut at_edge, mut in_cutout, mut overlapping) = (0usize, 0usize, 0usize);
+    let (mut at_edge, mut in_cutout, mut touching, mut mixed) = (0usize, 0usize, 0usize, 0usize);
+    let mut crowded = 0usize;
     for hole in holes {
         let clear_of_edge = inside(&outer_poly, hole.at)
             && outer
@@ -709,21 +1205,50 @@ fn profile(board: &Board, thickness: f64, notes: &mut Vec<Note>) -> Result<Profi
         // Kept holes are sorted by their left edge, and none is wider than `widest`, so only
         // those whose left edge is within `widest` of this one can reach it.
         let left = hole.at.x - hole.radius;
-        let clear_of_holes = kept
+        let mut meets_edge_on = false;
+        let mut meets_other_kind = false;
+        let mut neighbors = 0usize;
+        for k in kept
             .iter()
             .rev()
             .take_while(|k| k.at.x - k.radius >= left - widest - TOLERANCE)
-            .all(|k| distance(k.at, hole.at) > k.radius + hole.radius + TOLERANCE);
-        if !clear_of_holes {
-            overlapping = overlapping.saturating_add(1);
+        {
+            neighbors = neighbors.saturating_add(1);
+            if neighbors > MAX_MERGED_HOLES {
+                break;
+            }
+            match relation(*k, hole) {
+                Relation::Clear => {}
+                Relation::Touching => meets_edge_on = true,
+                Relation::Overlapping => meets_other_kind |= !same_kind(*k, hole),
+            }
+        }
+        if neighbors > MAX_MERGED_HOLES {
+            crowded = crowded.saturating_add(1);
+            continue;
+        }
+        if meets_edge_on {
+            touching = touching.saturating_add(1);
+            continue;
+        }
+        if meets_other_kind {
+            mixed = mixed.saturating_add(1);
             continue;
         }
         kept.push(hole);
     }
     for (count, why) in [
+        (
+            crowded,
+            "exceed the bounded neighboring-hole comparison limit",
+        ),
         (at_edge, "touch or cross the board edge"),
         (in_cutout, "touch or fall inside a cutout"),
-        (overlapping, "overlap another hole"),
+        (touching, "touch another hole at a single point"),
+        (
+            mixed,
+            "overlap a hole with a different layer span or plating",
+        ),
     ] {
         if count > 0 {
             notes.push(Note {
@@ -732,7 +1257,11 @@ fn profile(board: &Board, thickness: f64, notes: &mut Vec<Note>) -> Result<Profi
             });
         }
     }
-    let unplaced = kept.iter().filter(|h| h.unplaced).count();
+    let cuts = merge_overlapping(kept, notes);
+    let unplaced = cuts
+        .iter()
+        .map(Cut::unplaced)
+        .fold(0usize, usize::saturating_add);
     if unplaced > 0 {
         notes.push(Note {
             severity: Severity::Warning,
@@ -743,17 +1272,41 @@ fn profile(board: &Board, thickness: f64, notes: &mut Vec<Note>) -> Result<Profi
         });
     }
     let mut cut = Vec::new();
+    let mut merged = Vec::new();
     let mut pockets = Vec::new();
     let mut buried = 0usize;
-    for hole in kept {
-        cut.push(CutHole {
-            at: hole.at,
-            radius: hole.radius,
-            plated: hole.plated,
-            span: hole.span,
-        });
-        let mut edges = circle_edges(hole.at, hole.radius);
-        match hole.span {
+    for item in cuts {
+        let count = item.count();
+        let (mut edges, kind) = match item {
+            Cut::Single { hole, also, .. } => {
+                cut.push(CutHole {
+                    at: hole.at,
+                    radius: hole.radius,
+                    plated: hole.plated,
+                    span: hole.span,
+                    also,
+                });
+                (circle_edges(hole.at, hole.radius), hole)
+            }
+            Cut::Merged {
+                members,
+                outline,
+                also,
+                ..
+            } => {
+                let Some(first) = members.first().copied() else {
+                    continue;
+                };
+                merged.push(MergedHole {
+                    circles: members.iter().map(|h| (h.at, h.radius)).collect(),
+                    plated: first.plated,
+                    span: first.span,
+                    also,
+                });
+                (outline, first)
+            }
+        };
+        match kind.span {
             None => {
                 reverse(&mut edges);
                 openings.push(edges);
@@ -776,7 +1329,7 @@ fn profile(board: &Board, thickness: f64, notes: &mut Vec<Note>) -> Result<Profi
             }
             // A buried hole is invisible from outside: the body stays solid there. Its plating
             // (a separate part) still follows the span.
-            Some(_) => buried = buried.saturating_add(1),
+            Some(_) => buried = buried.saturating_add(count),
         }
     }
     if buried > 0 {
@@ -792,6 +1345,7 @@ fn profile(board: &Board, thickness: f64, notes: &mut Vec<Note>) -> Result<Profi
         openings,
         pockets,
         holes: cut,
+        merged,
     })
 }
 
@@ -1225,6 +1779,7 @@ pub fn write(board: &Board, name: &str) -> Result<BoardStep, StepError> {
         stats,
         thickness,
         holes: profile.holes,
+        merged: profile.merged,
     })
 }
 
@@ -1273,6 +1828,7 @@ pub fn prism(outline: &Contour, z0: f64, z1: f64, name: &str) -> Result<BoardSte
         stats,
         thickness: z1 - z0,
         holes: Vec::new(),
+        merged: Vec::new(),
     })
 }
 
@@ -1289,21 +1845,46 @@ pub struct Tube {
     pub span: Option<(f64, f64)>,
 }
 
+/// The lining of one merged opening: a tube following the union of overlapping circles.
+#[derive(Clone, Debug, PartialEq)]
+pub struct UnionTube {
+    /// The circles (center, radius) whose union is the opening, as in [`MergedHole::circles`];
+    /// the tube's outside is the union's outline.
+    pub circles: Vec<(Point, f64)>,
+    /// How thick the lining is, in mm, measured in from the wall.
+    pub wall: f64,
+    /// As [`Tube::span`].
+    pub span: Option<(f64, f64)>,
+}
+
 /// Writes tubes as one STEP file with one closed `MANIFOLD_SOLID_BREP` for each, all running from
 /// `z0` up to `z1`. Each is a ring (a circle with a circle cut out of it) extruded, so its sides
 /// are exact cylinders. An error when no tube is given, more than [`MAX_TUBES`], or a tube's
 /// position or radii are unusable (not numbers, an inner radius of 0 or less, or one that is
 /// not smaller than the outer radius). `name` becomes the product name.
 pub fn tubes(list: &[Tube], z0: f64, z1: f64, name: &str) -> Result<BoardStep, StepError> {
+    tubes_and_unions(list, &[], z0, z1, name)
+}
+
+/// As [`tubes`], with a tube for each of `unions` too: its outside is the outline of the union of
+/// its circles (exact arcs), its inside that moved in by `wall`. An error also when a union is
+/// not one simple loop (see [`MAX_MERGED_HOLES`]-bounded circles), or its lining does not fit.
+pub fn tubes_and_unions(
+    list: &[Tube],
+    unions: &[UnionTube],
+    z0: f64,
+    z1: f64,
+    name: &str,
+) -> Result<BoardStep, StepError> {
     if !(z0.is_finite() && z1.is_finite() && z1 - z0 > TOLERANCE) {
         return Err(StepError::Size(format!(
             "tubes need their top above their bottom (from {z0} to {z1})"
         )));
     }
-    if list.is_empty() {
+    if list.is_empty() && unions.is_empty() {
         return Err(StepError::Size("no tubes were given".into()));
     }
-    if list.len() > MAX_TUBES {
+    if list.len().saturating_add(unions.len()) > MAX_TUBES {
         return Err(StepError::TooLarge(format!("more than {MAX_TUBES} tubes")));
     }
     let mut w = Writer::default();
@@ -1348,13 +1929,109 @@ pub fn tubes(list: &[Tube], z0: f64, z1: f64, name: &str) -> Result<BoardStep, S
             &mut stats,
         ));
     }
-    stats.openings = list.len();
+    for u in unions {
+        let usable = u.wall.is_finite()
+            && u.wall > TOLERANCE
+            && u.circles.iter().all(|(at, r)| {
+                finite(*at)
+                    && r.is_finite()
+                    && (at.x.abs() + r).is_finite()
+                    && (at.y.abs() + r).is_finite()
+            });
+        if !usable {
+            return Err(StepError::Size("a merged tube has unusable numbers".into()));
+        }
+        if let Some((lo, hi)) = u.span {
+            if !(lo.is_finite() && hi.is_finite() && hi - lo > TOLERANCE) {
+                return Err(StepError::Size(format!(
+                    "a merged tube spans {lo} to {hi}; its top must be above its bottom"
+                )));
+            }
+        }
+        let too_tangled = || {
+            StepError::Size(
+                "overlapping circles that make no single outline, or too thin to line".into(),
+            )
+        };
+        let pieces = union_outline(&u.circles).ok_or_else(too_tangled)?;
+        let mut inner = inset_outline(&pieces, &u.circles, u.wall).ok_or_else(too_tangled)?;
+        reverse(&mut inner);
+        let outer: Vec<Edge2> = pieces.into_iter().map(|(e, _)| e).collect();
+        let z = u.span.unwrap_or((z0, z1));
+        breps.push(body(
+            &mut w,
+            outer,
+            vec![inner],
+            Vec::new(),
+            z,
+            name,
+            &mut stats,
+        ));
+    }
+    stats.openings = list.len().saturating_add(unions.len());
     Ok(BoardStep {
         text: finish(w, &breps, name, "Plating of plated holes"),
         notes: Vec::new(),
         stats,
         thickness: z1 - z0,
         holes: Vec::new(),
+        merged: Vec::new(),
+    })
+}
+
+/// The largest sphere radius [`sphere`] writes, in mm.
+pub const MAX_SPHERE_RADIUS: f64 = 1.0e6;
+
+/// Writes a ball as a STEP file: one `MANIFOLD_SOLID_BREP` centered on the origin, bounded by
+/// an exact `SPHERICAL_SURFACE` of the given `radius` (mm). It is a closed shell of two
+/// hemispherical faces (north and south, about the Z axis) that share the equator, which is
+/// two half circles, so no face wraps round the sphere and no seam or degenerate pole edge is
+/// needed: 2 vertices, 2 edges and 2 faces. `name` becomes the product name. An error when
+/// the radius is not a finite number above [`TOLERANCE`] and at most [`MAX_SPHERE_RADIUS`].
+pub fn sphere(radius: f64, name: &str) -> Result<BoardStep, StepError> {
+    if !(radius.is_finite() && radius > TOLERANCE && radius <= MAX_SPHERE_RADIUS) {
+        return Err(StepError::Size(format!(
+            "a sphere's radius must be above {TOLERANCE} mm and at most {MAX_SPHERE_RADIUS} mm \
+             (got {radius})"
+        )));
+    }
+    let mut w = Writer::default();
+    let mut stats = Stats::default();
+    let origin = Point { x: 0.0, y: 0.0 };
+    let a = w.point(radius, 0.0, 0.0);
+    let va = w.add(format!("VERTEX_POINT('',#{a})"));
+    let b = w.point(-radius, 0.0, 0.0);
+    let vb = w.add(format!("VERTEX_POINT('',#{b})"));
+    let mut equator = Vec::new();
+    for (from, to) in [(va, vb), (vb, va)] {
+        let curve = w.circle(origin, 0.0, radius);
+        let id = w.add(format!("EDGE_CURVE('',#{from},#{to},#{curve},.T.)"));
+        equator.push(Edge3 { id });
+    }
+    // The equator runs counter-clockwise seen from above, so the northern cap (normal out of
+    // the sphere, up at the pole) is on its left; the southern face walks it the other way.
+    let north_edges: Vec<(Edge3, bool)> = equator.iter().map(|e| (*e, true)).collect();
+    let south_edges: Vec<(Edge3, bool)> = equator.iter().rev().map(|e| (*e, false)).collect();
+    let frame = w.placement([0.0; 3], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]);
+    let surface = w.add(format!("SPHERICAL_SURFACE('',#{frame},{})", real(radius)));
+    let mut faces = Vec::new();
+    for edges in [north_edges, south_edges] {
+        let lp = edge_loop(&mut w, &edges);
+        let bound = w.add(format!("FACE_OUTER_BOUND('',#{lp},.T.)"));
+        faces.push(w.add(format!("ADVANCED_FACE('',(#{bound}),#{surface},.T.)")));
+    }
+    stats.vertices = 2;
+    stats.edges = 2;
+    stats.faces = 2;
+    let shell = w.add(format!("CLOSED_SHELL('',({}))", id_list(&faces)));
+    let brep = w.add(format!("MANIFOLD_SOLID_BREP({},#{shell})", text(name)));
+    Ok(BoardStep {
+        text: finish(w, &[brep], name, "Sphere"),
+        notes: Vec::new(),
+        stats,
+        thickness: 2.0 * radius,
+        holes: Vec::new(),
+        merged: Vec::new(),
     })
 }
 
@@ -1466,6 +2143,7 @@ pub fn solids(list: &[Solid], name: &str, description: &str) -> Result<BoardStep
         stats,
         thickness,
         holes: Vec::new(),
+        merged: Vec::new(),
     })
 }
 

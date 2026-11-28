@@ -76,6 +76,13 @@
 //!   (1.000 + 0.200 - 2.000) / 2 = -0.400), and a note counts the pads whose opening ends up
 //!   smaller than the pad. The paste expansion has no place in the board model and is only
 //!   counted in a note.
+//! - Pad holes that are not round (`pad-hole-shapes`): the hole size at byte 45 of block 4 is a
+//!   slot's width (0.800) or a square's side (1.000), and block 5 has its 651 bytes, with the
+//!   hole type at byte 262 (1 square, 2 slot; a round hole has an empty block 5), the slot's
+//!   length at bytes 263..267 (2.200) and the hole's turn at bytes 267..275 as an `f64` in degrees
+//!   (45.0 on the turned slot, 0.0 on the others). Byte 60 is the plating as on a round hole. The
+//!   board model holds a round drill only, so such a pad is read with a round hole of that width
+//!   or side, and a note names it.
 //! - Pad shapes (`pad-shapes`, checked against the Gerber file Altium wrote for its top copper):
 //!   shape code 3 is an octagon, a rectangle of the pad's size with each corner cut off at 45
 //!   degrees by a quarter of the shorter side (0.25 on a 2.000 x 1.000 pad, 0.375 on 1.500 x
@@ -85,6 +92,22 @@
 //!   shape (byte 640: 9, rounded rectangle), x size, y size (bytes 641..649) and corner percentage
 //!   (byte 649: 50, 25 or 30 as set). The corner radius is that percentage of half the shorter
 //!   side: 0.25 for 50% of a 2.000 x 1.000 pad, 0.125 for 25%, 0.24 for 30% of 1.600 x 1.600.
+//! - Keepouts (`keepouts`): a track, arc, fill and region on the Keep-Out layer (layer byte 56,
+//!   `Keep-Out Layer`), and a track, fill and region on Top Layer with Altium's Keepout box
+//!   ticked. Byte 2 of the record body is 2 on the three ticked ones and 0 on every other track,
+//!   arc, fill, region and via of every test board; the ticked track also has 31 at byte 45, the
+//!   fill 31 at byte 46 and the region `KEEPOUTRESTRICTIONS=31` (Altium's default restrictions).
+//!   A keepout is a rule for placing and routing, not something that is made, so both kinds are
+//!   left out, each kind with an Info note.
+//! - Mechanical layer kinds (`mech-layer-kinds`, one-resistor with four Component Layer Pairs
+//!   added in View Configuration): `/Board6/Data` has `LAYERnMECHKIND` for each typed mechanical
+//!   layer, `3DBodyTop` and `3DBodyBottom` on 58 and 59 (Mechanical 2 and 3, as on one-resistor),
+//!   `CourtyardTop`, `CourtyardBottom`, `AssemblyTop`, `AssemblyBottom`, `ComponentOutlineTop`,
+//!   `ComponentOutlineBottom`, `DesignatorTop` and `DesignatorBottom` on 60 to 67 (Mechanical 4
+//!   to 11; Mechanical k is layer byte 56 + k), and the pairs as `MECHPAIRnL1`/`MECHPAIRnL2` =
+//!   `MECHANICAL4`/`MECHANICAL5` and so on. The reader keeps each layer's kind, side and pair
+//!   (no board model place yet), and the notes for what lies on such a layer name its kind:
+//!   "on Bottom Courtyard (courtyard, bottom)".
 //! - Nets (`one-net`): `/Nets6/Data` is a run of records, each a `u32` length and text with
 //!   `NAME=GND`; the n-th record (from 0) is net n. Bytes 3..5 of a track's body are its net
 //!   index: 0 on `one-net`'s track, `ff ff` for no net.
@@ -148,6 +171,14 @@ const PAD_LAYER_TABLE_BLOCK: usize = 5;
 /// Where in that block the top layer's shape is, and its corner percentage.
 const LAYER_TABLE_TOP_SHAPE: usize = 640;
 const LAYER_TABLE_TOP_CORNER: usize = 649;
+/// Where in that block a hole that is not round keeps its type, a slot's length and its turn.
+const LAYER_TABLE_HOLE_TYPE: usize = 262;
+const LAYER_TABLE_SLOT_LENGTH: usize = 263;
+const LAYER_TABLE_HOLE_ROTATION: usize = 267;
+const SQUARE_HOLE: u8 = 1;
+const SLOT_HOLE: u8 = 2;
+/// The most pads with a hole that is not round named one by one in the notes.
+const MAX_NAMED_HOLES: usize = 20;
 /// The shape code of a rounded rectangle in that block.
 const ROUNDED_RECTANGLE: u8 = 9;
 /// The most records read from one stream before the file is treated as hostile.
@@ -155,6 +186,13 @@ const MAX_RECORDS: usize = 10_000_000;
 /// The most layers named in `/Board6/Data` that are looked at.
 const MAX_LAYER_NUMBER: u8 = u8::MAX;
 const NO_NET: u16 = 0xffff;
+/// Altium's mechanical layers: Mechanical 1 to 16.
+const MAX_MECHANICAL: u8 = 16;
+/// Byte 2 of a track, arc, fill or region body is [`KEEPOUT`] when Altium's Keepout box is ticked.
+pub(crate) const KEEPOUT_AT: usize = 2;
+pub(crate) const KEEPOUT: u8 = 2;
+/// The name of Altium's Keep-Out layer (layer byte 56 on `keepouts`).
+const KEEPOUT_LAYER: &str = "Keep-Out Layer";
 /// The layer bytes of Altium's internal planes (Internal Plane 1 to 16).
 const INTERNAL_PLANES: std::ops::RangeInclusive<u8> = 39..=54;
 
@@ -181,6 +219,76 @@ pub(crate) struct CopperLayers {
     /// Each plane layer's pull-back from the board edge (`PULLBACKDISTANCE` in the V9 stack), by
     /// the layer's name, in mm.
     pull_backs: std::collections::BTreeMap<String, f64>,
+    /// For each layer byte, its mechanical layer kind, when `/Board6/Data` gives one.
+    mech: Vec<Option<MechLayer>>,
+}
+
+/// What a typed mechanical layer is for (`LAYERnMECHKIND`), and its pair.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct MechLayer {
+    /// The kind in words, from Altium's name for it: `CourtyardBottom` is "courtyard",
+    /// `ComponentOutlineTop` "component outline", `3DBodyTop` "3D body".
+    pub kind: String,
+    /// `Top` or `Bottom` at the end of the kind; `None` for a kind with neither.
+    pub side: Option<Side>,
+    /// The layer byte of the other layer of its pair (`MECHPAIRnL1`/`L2`), if it has one.
+    pub pair: Option<u8>,
+}
+
+impl MechLayer {
+    fn parse(value: &str) -> Option<Self> {
+        let value = value.trim();
+        let (base, side) = if let Some(b) = value.strip_suffix("Top") {
+            (b, Some(Side::Top))
+        } else if let Some(b) = value.strip_suffix("Bottom") {
+            (b, Some(Side::Bottom))
+        } else {
+            (value, None)
+        };
+        if base.is_empty() {
+            return None;
+        }
+        Some(Self {
+            kind: kind_words(base),
+            side,
+            pair: None,
+        })
+    }
+}
+
+/// Altium's run-together kind name in words: a new word at each capital that follows a small
+/// letter, or that starts a capitalised word; a word that is all capitals and digits ("3D")
+/// keeps its case, the others are put in small letters.
+fn kind_words(name: &str) -> String {
+    let chars: Vec<char> = name.chars().collect();
+    let mut words: Vec<String> = Vec::new();
+    let mut word = String::new();
+    for (i, &c) in chars.iter().enumerate() {
+        let before = i.checked_sub(1).and_then(|j| chars.get(j)).copied();
+        let after = chars.get(i + 1).copied();
+        let starts = c.is_uppercase()
+            && (before.is_some_and(char::is_lowercase)
+                || (before.is_some_and(|b| b.is_uppercase() || b.is_ascii_digit())
+                    && after.is_some_and(char::is_lowercase)));
+        if starts && !word.is_empty() {
+            words.push(std::mem::take(&mut word));
+        }
+        word.push(c);
+    }
+    if !word.is_empty() {
+        words.push(word);
+    }
+    words
+        .into_iter()
+        .map(|w| {
+            if w.chars().all(|c| c.is_uppercase() || c.is_ascii_digit()) {
+                w
+            } else {
+                w.to_lowercase()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 impl CopperLayers {
@@ -263,13 +371,63 @@ impl CopperLayers {
                 });
             }
         }
+        let mut mech: Vec<Option<MechLayer>> = (0..=MAX_LAYER_NUMBER)
+            .map(|n| {
+                board
+                    .get(&format!("LAYER{n}MECHKIND"))
+                    .and_then(MechLayer::parse)
+            })
+            .collect();
+        // Mechanical k is layer byte 56 + k.
+        let mechanical = |value: Option<&str>| -> Option<u8> {
+            let k: u8 = value?.trim().strip_prefix("MECHANICAL")?.parse().ok()?;
+            (1..=MAX_MECHANICAL).contains(&k).then(|| 56 + k)
+        };
+        for i in 0..=usize::from(MAX_MECHANICAL) {
+            let (Some(a), Some(b)) = (
+                mechanical(board.get(&format!("MECHPAIR{i}L1"))),
+                mechanical(board.get(&format!("MECHPAIR{i}L2"))),
+            ) else {
+                continue;
+            };
+            for (this, other) in [(a, b), (b, a)] {
+                if let Some(Some(m)) = mech.get_mut(usize::from(this)) {
+                    m.pair = Some(other);
+                }
+            }
+        }
         Self {
             layers,
             by_number,
             names,
             nets: Vec::new(),
             pull_backs,
+            mech,
         }
+    }
+
+    /// The mechanical layer kind of a layer byte, when the file gives one.
+    pub(crate) fn mech(&self, number: u8) -> Option<&MechLayer> {
+        self.mech.get(usize::from(number))?.as_ref()
+    }
+
+    /// A layer's name for a note, with its mechanical kind and side when it has one
+    /// ("Bottom Courtyard (courtyard, bottom)"); `None` when it has no kind.
+    pub(crate) fn kind_label(&self, number: u8) -> Option<String> {
+        let m = self.mech(number)?;
+        let side = match m.side {
+            Some(Side::Top) => ", top",
+            Some(Side::Bottom) => ", bottom",
+            None => "",
+        };
+        Some(format!("{} ({}{side})", self.name(number), m.kind))
+    }
+
+    /// A layer's name for a "not read yet" note: with its mechanical kind when it has one, else
+    /// saying that it is neither copper nor overlay.
+    pub(crate) fn off_copper_label(&self, number: u8) -> String {
+        self.kind_label(number)
+            .unwrap_or_else(|| format!("{} (not a copper or overlay layer)", self.name(number)))
     }
 
     /// The pull-back from the board edge of the plane layer at `index` in `layers`, in mm, when
@@ -324,10 +482,6 @@ impl CopperLayers {
             position: None,
         });
         Some(self.layers.len() - 1)
-    }
-
-    pub(crate) fn layer_name(&self, number: u8) -> String {
-        self.name(number)
     }
 
     /// The net of a record whose body holds the net index at bytes 3..5: `Ok(None)` for no net,
@@ -385,6 +539,10 @@ struct Skipped {
     /// Whether the items on a plane are lines, which there mark where copper is left out and are
     /// already in the plane's split-plane regions; anything else on a plane is not read yet.
     plane_lines: bool,
+    /// Items on the Keep-Out layer.
+    keepout_layer: usize,
+    /// Items on a copper layer with the Keepout box ticked, by layer name.
+    keepouts: std::collections::BTreeMap<String, usize>,
 }
 
 impl Skipped {
@@ -397,7 +555,23 @@ impl Skipped {
         true
     }
 
+    /// Counts and skips a keepout: an item on the Keep-Out layer, or one on a copper layer with
+    /// the Keepout box ticked (byte [`KEEPOUT_AT`] of `body`).
+    fn keepout(&mut self, layers: &CopperLayers, number: u8, body: &[u8]) -> bool {
+        let name = layers.name(number);
+        if name == KEEPOUT_LAYER {
+            self.keepout_layer += 1;
+            return true;
+        }
+        if body.get(KEEPOUT_AT) == Some(&KEEPOUT) && layers.copper_index(number).is_some() {
+            *self.keepouts.entry(name).or_default() += 1;
+            return true;
+        }
+        false
+    }
+
     fn into_notes(self, what: &str, notes: &mut Vec<Note>) {
+        keepout_notes(what, self.keepout_layer, self.keepouts, notes);
         for (layer, count) in self.on_plane {
             notes.push(if self.plane_lines {
                 Note {
@@ -418,9 +592,7 @@ impl Skipped {
         for (layer, count) in self.off_copper {
             notes.push(Note {
                 severity: Severity::Dropped,
-                message: format!(
-                    "{count} {what} on {layer} (not a copper or overlay layer) not read yet"
-                ),
+                message: format!("{count} {what} on {layer} not read yet"),
             });
         }
         if self.bad_angle > 0 {
@@ -453,6 +625,34 @@ impl Skipped {
     }
 }
 
+/// The notes for keepouts left out: those on the Keep-Out layer, and those on copper layers by
+/// layer name.
+fn keepout_notes(
+    what: &str,
+    on_layer: usize,
+    flagged: std::collections::BTreeMap<String, usize>,
+    notes: &mut Vec<Note>,
+) {
+    if on_layer > 0 {
+        notes.push(Note {
+            severity: Severity::Info,
+            message: format!(
+                "{on_layer} {what} on {KEEPOUT_LAYER} left out: a keepout is a rule for placing \
+                 and routing, not part of the board"
+            ),
+        });
+    }
+    for (layer, count) in flagged {
+        notes.push(Note {
+            severity: Severity::Info,
+            message: format!(
+                "{count} {what} on {layer} are keepouts (Altium's Keepout box), not copper; left \
+                 out"
+            ),
+        });
+    }
+}
+
 /// Reads the tracks from `/Tracks6/Data`: those on copper layers as copper, those on the overlay
 /// layers into `graphics`.
 pub(crate) fn tracks(
@@ -476,7 +676,7 @@ pub(crate) fn tracks(
             skipped.unnamed_net += 1;
             None
         });
-        if skipped.on_plane(layers, layer_number) {
+        if skipped.keepout(layers, layer_number, body) || skipped.on_plane(layers, layer_number) {
             continue;
         }
         if let Some(layer) = layers.copper_index(layer_number) {
@@ -498,7 +698,7 @@ pub(crate) fn tracks(
         } else {
             *skipped
                 .off_copper
-                .entry(layers.name(layer_number))
+                .entry(layers.off_copper_label(layer_number))
                 .or_default() += 1;
         }
     }
@@ -517,6 +717,7 @@ pub(crate) fn pads(
     let mut items = Vec::new();
     let mut skipped = Skipped::default();
     let mut uneven = 0usize;
+    let mut shaped_holes: Vec<String> = Vec::new();
     let mut own_masks = OwnMasks::default();
     let mut at = 0usize;
     let mut count = 0usize;
@@ -563,7 +764,7 @@ pub(crate) fn pads(
         let Some(layer) = layers.copper_index(layer_number) else {
             *skipped
                 .off_copper
-                .entry(layers.name(layer_number))
+                .entry(layers.off_copper_label(layer_number))
                 .or_default() += 1;
             continue;
         };
@@ -603,6 +804,14 @@ pub(crate) fn pads(
         };
         if middle != top || bottom != top || shapes.iter().any(|s| Some(s) != shapes.first()) {
             uneven += 1;
+        }
+        if hole > 0.0 {
+            if let Some(what) = hole_shape(layer_table, hole) {
+                shaped_holes.push(format!(
+                    "the pad at ({:.3}, {:.3}) has {what}",
+                    at_point.x, at_point.y
+                ));
+            }
         }
         let rounded = (layer_table.get(LAYER_TABLE_TOP_SHAPE) == Some(&ROUNDED_RECTANGLE))
             .then(|| layer_table.get(LAYER_TABLE_TOP_CORNER).copied())
@@ -663,9 +872,47 @@ pub(crate) fn pads(
             ),
         });
     }
+    let more = shaped_holes.len().saturating_sub(MAX_NAMED_HOLES);
+    for what in shaped_holes.iter().take(MAX_NAMED_HOLES) {
+        notes.push(Note {
+            severity: Severity::Warning,
+            message: format!(
+                "{what}; the board model holds round holes only, so it is read as a round hole \
+                 of that width"
+            ),
+        });
+    }
+    if more > 0 {
+        notes.push(Note {
+            severity: Severity::Warning,
+            message: format!(
+                "and {more} more pad(s) with a slot or square hole, read as round holes of their \
+                 width"
+            ),
+        });
+    }
     own_masks.into_note(notes);
     skipped.into_notes("pad(s)", notes);
     Ok(items)
+}
+
+/// What a pad's hole is when it is not round, from its block 5 (see the module notes), e.g.
+/// "a slot hole 0.800 wide and 2.200 long, turned 45 degrees"; `None` for a round hole.
+fn hole_shape(layer_table: &[u8], width: f64) -> Option<String> {
+    let turn = read_f64(layer_table, LAYER_TABLE_HOLE_ROTATION)
+        .filter(|a| a.is_finite() && *a != 0.0)
+        .map(|a| format!(", turned {a} degrees"))
+        .unwrap_or_default();
+    match *layer_table.get(LAYER_TABLE_HOLE_TYPE)? {
+        SQUARE_HOLE => Some(format!("a square hole of side {width:.3}{turn}")),
+        SLOT_HOLE => {
+            let long = length(layer_table, LAYER_TABLE_SLOT_LENGTH).ok()?;
+            Some(format!(
+                "a slot hole {width:.3} wide and {long:.3} long{turn}"
+            ))
+        }
+        _ => None,
+    }
 }
 
 /// A pad's own solder and paste mask settings, from its geometry block (see the module notes).
@@ -777,7 +1024,7 @@ pub(crate) fn arcs(
             skipped.unnamed_net += 1;
             None
         });
-        if skipped.on_plane(layers, layer_number) {
+        if skipped.keepout(layers, layer_number, body) || skipped.on_plane(layers, layer_number) {
             continue;
         }
         let Some(layer) = layers.copper_index(layer_number) else {
@@ -794,7 +1041,7 @@ pub(crate) fn arcs(
                 None => {
                     *skipped
                         .off_copper
-                        .entry(layers.name(layer_number))
+                        .entry(layers.off_copper_label(layer_number))
                         .or_default() += 1;
                 }
             }
@@ -907,6 +1154,7 @@ pub(crate) fn fills(
 ) -> Result<Vec<CopperItem>, String> {
     let mut items = Vec::new();
     let mut skipped = Skipped::default();
+    let mut on_overlay = std::collections::BTreeMap::<String, usize>::new();
     for body in records(data, FILL_RECORD, "/Fills6/Data", notes)? {
         let layer_number = *body.first().ok_or("fill record is empty")?;
         let a = point(body, 13)?;
@@ -918,14 +1166,19 @@ pub(crate) fn fills(
         if read_u16(body, 3) != Some(NO_NET) {
             skipped.with_net += 1;
         }
-        if skipped.on_plane(layers, layer_number) {
+        if skipped.keepout(layers, layer_number, body) || skipped.on_plane(layers, layer_number) {
             continue;
         }
         let Some(layer) = layers.copper_index(layer_number) else {
-            *skipped
-                .off_copper
-                .entry(layers.name(layer_number))
-                .or_default() += 1;
+            let name = layers.name(layer_number);
+            if is_overlay(&name) {
+                *on_overlay.entry(name).or_default() += 1;
+            } else {
+                *skipped
+                    .off_copper
+                    .entry(layers.off_copper_label(layer_number))
+                    .or_default() += 1;
+            }
             continue;
         };
         let center = Point {
@@ -944,6 +1197,7 @@ pub(crate) fn fills(
             holes: Vec::new(),
         });
     }
+    filled_on_overlay("fill(s)", on_overlay, notes);
     skipped.into_notes("fill(s)", notes);
     Ok(items)
 }
@@ -959,8 +1213,20 @@ pub(crate) fn regions(
     let mut items = Vec::new();
     let mut poured = 0usize;
     let mut not_copper: std::collections::BTreeMap<String, usize> = Default::default();
+    let mut on_overlay = std::collections::BTreeMap::<String, usize>::new();
+    let mut on_mask = std::collections::BTreeMap::<String, usize>::new();
+    let (mut keepout_layer, mut keepouts) = (0usize, std::collections::BTreeMap::new());
     for region in others {
         let layer = layers.copper_index(region.layer);
+        let name = layers.name(region.layer);
+        if name == KEEPOUT_LAYER {
+            keepout_layer += 1;
+            continue;
+        }
+        if region.keepout && layer.is_some() {
+            *keepouts.entry(name).or_default() += 1;
+            continue;
+        }
         match (layer, region.kind.as_deref().map(str::trim)) {
             (Some(layer), Some("0")) => {
                 if region.poured {
@@ -972,11 +1238,19 @@ pub(crate) fn regions(
                     holes: region.holes.clone(),
                 });
             }
+            (None, Some("0")) if is_overlay(&layers.name(region.layer)) => {
+                *on_overlay.entry(layers.name(region.layer)).or_default() += 1;
+            }
+            (None, Some("0")) if is_solder_mask(&layers.name(region.layer)) => {
+                *on_mask.entry(layers.name(region.layer)).or_default() += 1;
+            }
             (_, kind) => {
                 let what = format!(
                     "region(s) of KIND {} on {}",
                     kind.unwrap_or("?"),
-                    layers.name(region.layer)
+                    layers
+                        .kind_label(region.layer)
+                        .unwrap_or_else(|| layers.name(region.layer))
                 );
                 *not_copper.entry(what).or_default() += 1;
             }
@@ -994,7 +1268,47 @@ pub(crate) fn regions(
             message: format!("{count} {what} not read yet"),
         });
     }
+    filled_on_overlay("region(s)", on_overlay, notes);
+    keepout_notes("region(s)", keepout_layer, keepouts, notes);
+    // `solder-mask-region`: a solid region on Top Solder is an opening in the mask drawn by hand.
+    for (layer, count) in on_mask {
+        notes.push(Note {
+            severity: Severity::Dropped,
+            message: format!(
+                "{count} region(s) on {layer} left out: a solder mask opening drawn by hand has \
+                 no place in the board model yet"
+            ),
+        });
+    }
     items
+}
+
+/// Whether a layer is one of the solder mask layers, by its name (`Top Solder`, `Bottom Solder`).
+fn is_solder_mask(name: &str) -> bool {
+    name == "Top Solder" || name == "Bottom Solder"
+}
+
+/// Whether a layer is one of the silkscreen layers, by its name.
+fn is_overlay(name: &str) -> bool {
+    name.ends_with("Overlay")
+}
+
+/// A note for each overlay layer with filled shapes (`overlay-region-fill`): the board model
+/// holds silkscreen lines, arcs and texts only, so a filled area there has no place yet.
+fn filled_on_overlay(
+    what: &str,
+    counts: std::collections::BTreeMap<String, usize>,
+    notes: &mut Vec<Note>,
+) {
+    for (layer, count) in counts {
+        notes.push(Note {
+            severity: Severity::Dropped,
+            message: format!(
+                "{count} {what} on {layer} left out: a filled silkscreen shape has no place in \
+                 the board model yet"
+            ),
+        });
+    }
 }
 
 /// An octagonal pad: a `size_x` x `size_y` rectangle about `at` with each corner cut off at 45
@@ -1124,6 +1438,41 @@ mod tests {
              |LAYER1NAME=Top Layer|LAYER74NAME=Multi-Layer|LAYER33NAME=Top Overlay\
              |LAYER57NAME=Mechanical 1",
         ))
+    }
+
+    /// mech-layer-kinds: each typed mechanical layer's kind, side and pair, and the labels the
+    /// notes use.
+    #[test]
+    fn mechanical_layers_keep_their_kind_side_and_pair() {
+        let l = CopperLayers::new(&board(
+            "|LAYER58NAME=Mechanical 2|LAYER58MECHKIND=3DBodyTop\
+             |LAYER59NAME=Mechanical 3|LAYER59MECHKIND=3DBodyBottom\
+             |LAYER60NAME=Top Courtyard|LAYER60MECHKIND=CourtyardTop\
+             |LAYER61NAME=Bottom Courtyard|LAYER61MECHKIND=CourtyardBottom\
+             |LAYER64NAME=Top Component Outline|LAYER64MECHKIND=ComponentOutlineTop\
+             |LAYER65NAME=Bottom Component Outline|LAYER65MECHKIND=ComponentOutlineBottom\
+             |LAYER57NAME=Mechanical 1\
+             |MECHPAIR0L1=MECHANICAL2|MECHPAIR0L2=MECHANICAL3\
+             |MECHPAIR1L1=MECHANICAL4|MECHPAIR1L2=MECHANICAL5\r",
+        ));
+        let mech = |n: u8| l.mech(n).map(|m| (m.kind.as_str(), m.side, m.pair));
+        assert_eq!(mech(58), Some(("3D body", Some(Side::Top), Some(59))));
+        assert_eq!(mech(59), Some(("3D body", Some(Side::Bottom), Some(58))));
+        assert_eq!(mech(60), Some(("courtyard", Some(Side::Top), Some(61))));
+        assert_eq!(mech(61), Some(("courtyard", Some(Side::Bottom), Some(60))));
+        assert_eq!(mech(64), Some(("component outline", Some(Side::Top), None)));
+        assert_eq!(mech(57), None);
+        assert_eq!(
+            l.off_copper_label(61),
+            "Bottom Courtyard (courtyard, bottom)"
+        );
+        assert_eq!(
+            l.off_copper_label(57),
+            "Mechanical 1 (not a copper or overlay layer)"
+        );
+        assert_eq!(kind_words("GoldPlating"), "gold plating");
+        assert_eq!(kind_words("Coating"), "coating");
+        assert_eq!(MechLayer::parse("Top"), None);
     }
 
     #[test]

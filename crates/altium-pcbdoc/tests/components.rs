@@ -28,7 +28,7 @@ fn one_resistor_is_r1_at_25_15_on_top() -> Result<(), Box<dyn std::error::Error>
     assert!(near(r1.rotation_deg, 0.0), "{}", r1.rotation_deg);
     assert_eq!(r1.side, Side::Top);
     // The 3D body is read; tests/models.rs checks it.
-    assert!(r1.model.is_some());
+    assert!(!r1.models.is_empty());
     assert!(
         !out.notes
             .iter()

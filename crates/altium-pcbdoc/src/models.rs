@@ -63,7 +63,23 @@
 //!   and 1.000; `one-colored-body-resistor` (R1's extruded box set to (32, 128, 224) and 0.5)
 //!   has 14712864 and 0.500. The reader hands the color over for extruded bodies only: a STEP
 //!   model brings its own colors, and its body keeps the gray all the same.
-//! - `/ShapeBasedComponentBodies6/Data` repeats the bodies; see `shape_based.rs`.
+//! - `MODEL.MODELTYPE=2` is a cylinder (`body-cylinder`, R1's box changed to Cylinder in the
+//!   panel, radius 0.5, height 1, upright): `MODEL.CYLINDER.RADIUS` (19.685 mil) and
+//!   `MODEL.CYLINDER.HEIGHT` (39.3701 mil), standing on `STANDOFFHEIGHT` (0) with its axis at
+//!   `MODEL.2D.X`/`MODEL.2D.Y` (R1's center); `OVERALLHEIGHT` is standoff plus height. Its outline
+//!   after the text is only its square box, (24.5, 14.5) to (25.5, 15.5). The reader writes it as
+//!   an extruded circle, which is the same solid. One tilted by `MODEL.3D.ROTX` or `ROTY` is not
+//!   read yet (no test board has one), and the body is left out with a note.
+//! - `MODEL.MODELTYPE=3` is a sphere (`body-sphere`, `MODEL.SPHERE.RADIUS`, its center on the top
+//!   face: `STANDOFFHEIGHT` minus and `OVERALLHEIGHT` plus the radius). The board model has no
+//!   sphere, so it is left out with a note.
+//! - `/ShapeBasedComponentBodies6/Data` repeats the bodies; see `shape_based.rs`. Where it has
+//!   arcs, an extruded body's outline is read from there: on `body-arc-outline` R1's body is a
+//!   rounded slot, box (24.2, 14.6) to (25.8, 15.4) with ends of radius 0.4 about (24.6, 15) and
+//!   (25.4, 15), a polygon in `/ComponentBodies6/Data` and two lines and two half circles here.
+//!   Its arcs are brought into the part's frame like its corners: turned back by the part's
+//!   rotation, and on a bottom-side part mirrored (y and the angles negated, which reverses the
+//!   arc, so its start and end swap).
 //! - A linked model (the body's Source set to "Link to Model", `linked-model/` with
 //!   `box-1608.step` next to the board) is not in the file: `/Models/Data` is empty and the body
 //!   has `MODEL.EMBED=FALSE`, `MODEL.MODELSOURCE=File` (`Undefined` when embedded),
@@ -84,7 +100,7 @@ use board_model::{
 };
 
 use crate::appearance::colorref;
-use crate::board::Properties;
+use crate::board::{contour, Arc, Properties, Vertex};
 use crate::components::{text_records, Components, COMPONENT_AT, NO_COMPONENT};
 use crate::copper::{read_u16, read_u32};
 
@@ -121,6 +137,7 @@ static NOT_LISTED: Linked = Linked {
 /// `/ModelsNoEmbed/Data`, the list of linked models.
 pub(crate) fn attach(
     bodies6: &[u8],
+    arcs: &[Option<Vec<Vertex>>],
     models6: Option<&[u8]>,
     linked6: Option<&[u8]>,
     components: &mut Components,
@@ -138,7 +155,8 @@ pub(crate) fn attach(
     let mut free = 0usize;
     let mut unread: BTreeMap<String, usize> = BTreeMap::new();
     let mut no_color = 0usize;
-    for body in records(bodies6, notes)? {
+    for (n, body) in records(bodies6, notes)?.into_iter().enumerate() {
+        let arcs = arcs.get(n).and_then(Option::as_ref);
         let Some(component) = read_u16(body, COMPONENT_AT).filter(|&c| c != NO_COMPONENT) else {
             free += 1;
             continue;
@@ -152,16 +170,16 @@ pub(crate) fn attach(
         let Some(placement) = components.placements.get_mut(index) else {
             continue;
         };
-        if placement.model.is_some() {
+        if !placement.models.is_empty() {
             extra += 1;
             continue;
         }
-        match model(body, placement, &models, &linked) {
+        match model(body, arcs, placement, &models, &linked) {
             Ok((m, color_read)) => {
                 if !color_read {
                     no_color += 1;
                 }
-                placement.model = Some(m);
+                placement.models.push(m);
             }
             Err(why) => *unread.entry(why).or_default() += 1,
         }
@@ -257,15 +275,13 @@ fn unpack_within(
 ) -> Vec<EmbeddedModel> {
     let mut users: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for p in placements.iter() {
-        if let Some(ModelRef {
-            source: ModelSource::Embedded { id },
-            ..
-        }) = &p.model
-        {
-            users
-                .entry(id.clone())
-                .or_default()
-                .push(p.designator.clone());
+        for m in &p.models {
+            if let ModelSource::Embedded { id } = &m.source {
+                users
+                    .entry(id.clone())
+                    .or_default()
+                    .push(p.designator.clone());
+            }
         }
     }
     let limit = budget;
@@ -309,10 +325,8 @@ fn unpack_within(
         }
     }
     for p in placements.iter_mut() {
-        if matches!(&p.model, Some(ModelRef { source: ModelSource::Embedded { id }, .. }) if failed.contains(id))
-        {
-            p.model = None;
-        }
+        p.models
+            .retain(|m| !matches!(&m.source, ModelSource::Embedded { id } if failed.contains(id)));
     }
     models
 }
@@ -321,6 +335,7 @@ fn unpack_within(
 /// file, which has no color here), or why it was left out.
 fn model(
     body: &[u8],
+    arcs: Option<&Vec<Vertex>>,
     placement: &Placement,
     models: &BTreeMap<String, Stored>,
     linked: &BTreeMap<String, Linked>,
@@ -336,6 +351,30 @@ fn model(
     match props.get("MODEL.MODELTYPE").map(str::trim) {
         Some("0") => {
             let points = outline(body, text_end)?;
+            let polygon = closed(
+                &points
+                    .into_iter()
+                    .map(|p| on_part(to_component(p), placement.side))
+                    .collect::<Vec<_>>(),
+            );
+            // With arcs where the shape-based copy has them; should an arc not meet its
+            // corners there, the polygon is kept instead.
+            let outline = match arcs {
+                Some(vertices) => {
+                    let on_part: Vec<Vertex> = vertices
+                        .iter()
+                        .map(|v| vertex_on_part(v, placement))
+                        .collect();
+                    let mut problems = Vec::new();
+                    let with_arcs = contour("an extruded 3D body", &on_part, &mut problems);
+                    if problems.is_empty() {
+                        with_arcs
+                    } else {
+                        polygon
+                    }
+                }
+                None => polygon,
+            };
             let standoff = props.length_mm("STANDOFFHEIGHT")?.unwrap_or(0.0);
             let height = props
                 .length_mm("OVERALLHEIGHT")?
@@ -345,12 +384,7 @@ fn model(
             let model = ModelRef {
                 name: String::new(),
                 source: ModelSource::Extruded {
-                    outline: closed(
-                        &points
-                            .into_iter()
-                            .map(|p| on_part(to_component(p), placement.side))
-                            .collect::<Vec<_>>(),
-                    ),
+                    outline,
                     standoff,
                     height,
                 },
@@ -417,6 +451,48 @@ fn model(
             };
             Ok((model, true))
         }
+        Some("2") => {
+            if angle(&props, "MODEL.3D.ROTX")? != 0.0 || angle(&props, "MODEL.3D.ROTY")? != 0.0 {
+                return Err("a tilted cylinder not read yet".into());
+            }
+            let radius = props
+                .length_mm("MODEL.CYLINDER.RADIUS")?
+                .filter(|r| *r > 0.0)
+                .ok_or("a cylinder with no radius")?;
+            let tall = props
+                .length_mm("MODEL.CYLINDER.HEIGHT")?
+                .filter(|h| *h > 0.0)
+                .ok_or("a cylinder with no height")?;
+            let standoff = props.length_mm("STANDOFFHEIGHT")?.unwrap_or(0.0);
+            let axis = Point {
+                x: props.length_mm("MODEL.2D.X")?.ok_or("no MODEL.2D.X")?,
+                y: props.length_mm("MODEL.2D.Y")?.ok_or("no MODEL.2D.Y")?,
+            };
+            let color = body_color(&props);
+            let color_read = color.is_some() || props.get("BODYCOLOR3D").is_none();
+            let model = ModelRef {
+                name: String::new(),
+                source: ModelSource::Extruded {
+                    // A whole circle: equal start and end angles.
+                    outline: Contour {
+                        segments: vec![Segment::Arc {
+                            center: on_part(to_component(axis), placement.side),
+                            radius,
+                            start_deg: 0.0,
+                            end_deg: 0.0,
+                            clockwise: false,
+                        }],
+                    },
+                    standoff,
+                    height: standoff + tall,
+                },
+                offset: [0.0; 3],
+                rotation_deg: [0.0; 3],
+                color,
+            };
+            Ok((model, color_read))
+        }
+        Some("3") => Err("a sphere has no place in the board model yet".into()),
         other => Err(format!("model type {} not read yet", other.unwrap_or("?"))),
     }
 }
@@ -476,6 +552,30 @@ fn to_component(p: Point, placement: &Placement) -> Point {
         x: dx * cos - dy * sin,
         y: dx * sin + dy * cos,
     }
+}
+
+/// A shape-based outline vertex (and its arc) in the part's own frame, as [`to_component`] and
+/// [`on_part`] bring a corner there.
+fn vertex_on_part(v: &Vertex, placement: &Placement) -> Vertex {
+    let at = on_part(to_component(v.at, placement), placement.side);
+    let arc = v.arc.map(|a| {
+        let (start, end) = (
+            a.start_deg - placement.rotation_deg,
+            a.end_deg - placement.rotation_deg,
+        );
+        let (start_deg, end_deg) = match placement.side {
+            Side::Top => (start, end),
+            // Mirrored, the counter-clockwise arc from s to e runs from -e to -s.
+            Side::Bottom => (-end, -start),
+        };
+        Arc {
+            center: on_part(to_component(a.center, placement), placement.side),
+            radius: a.radius,
+            start_deg,
+            end_deg,
+        }
+    });
+    Vertex { at, arc }
 }
 
 /// A point in the component's coordinates as it lies on the part itself: a bottom-side part is
@@ -656,9 +756,10 @@ mod tests {
     fn hostile_streams_are_errors_or_notes_not_panics() {
         let mut components = Components::default();
         let mut notes = Vec::new();
-        assert!(attach(&[BODY_RECORD], None, None, &mut components, &mut notes).is_err());
+        assert!(attach(&[BODY_RECORD], &[], None, None, &mut components, &mut notes).is_err());
         assert!(attach(
             &[BODY_RECORD, 0xff, 0xff, 0xff, 0x7f],
+            &[],
             None,
             Some(&[0xff, 0xff, 0xff, 0x7f]),
             &mut components,
@@ -671,9 +772,9 @@ mod tests {
         let mut data = vec![BODY_RECORD];
         data.extend_from_slice(&(body.len() as u32).to_le_bytes());
         data.extend_from_slice(&body);
-        assert!(attach(&data, None, None, &mut components, &mut notes).is_ok());
+        assert!(attach(&data, &[], None, None, &mut components, &mut notes).is_ok());
         assert!(notes.iter().any(|n| n.severity == Severity::Dropped));
-        assert!(attach(&[0x42], None, None, &mut components, &mut notes).is_ok());
+        assert!(attach(&[0x42], &[], None, None, &mut components, &mut notes).is_ok());
     }
 
     fn part(designator: &str, id: &str) -> Placement {
@@ -683,13 +784,13 @@ mod tests {
             at: Point::default(),
             rotation_deg: 0.0,
             side: Side::Top,
-            model: Some(ModelRef {
+            models: vec![ModelRef {
                 name: String::new(),
                 source: ModelSource::Embedded { id: id.into() },
                 offset: [0.0; 3],
                 rotation_deg: [0.0; 3],
                 color: None,
-            }),
+            }],
             comment: String::new(),
         }
     }
@@ -737,7 +838,7 @@ mod tests {
             ("good", "good.step")
         );
         assert_eq!(models[0].step, b"ISO-10303-21;");
-        let have_model: Vec<bool> = parts.iter().map(|p| p.model.is_some()).collect();
+        let have_model: Vec<bool> = parts.iter().map(|p| !p.models.is_empty()).collect();
         assert_eq!(have_model, [true, true, false, false]);
         assert_eq!(notes.len(), 2, "{notes:?}");
         assert!(notes.iter().all(|n| n.severity == Severity::Dropped));
@@ -751,7 +852,7 @@ mod tests {
         let mut notes = Vec::new();
         let models = unpack_within(&mut parts, &stored(), streams, 5, &mut notes);
         assert!(models.is_empty());
-        assert!(parts[0].model.is_none());
+        assert!(parts[0].models.is_empty());
         assert!(notes[0].message.contains("more than 5 bytes"), "{notes:?}");
     }
 

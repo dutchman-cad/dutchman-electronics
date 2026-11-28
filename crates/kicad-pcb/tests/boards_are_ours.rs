@@ -53,9 +53,18 @@ fn no_board_names_a_path_an_address_or_a_computer() {
                 || l.contains("/var/");
             assert!(!bad, "{}:{}: {line}", board.display(), n + 1);
         }
-        // The generator is the only program named, and no user name or company is set.
-        assert!(!text.contains("(company"));
-        assert!(!text.contains("(title_block"));
+        // The generator is the only program named, and no user name or company is set. The
+        // exceptions are k10-text-vars and k10-all-features, whose title blocks (made-up values)
+        // are a feature under test.
+        if board.ends_with("k10-text-vars.kicad_pcb")
+            || board.ends_with("k10-all-features.kicad_pcb")
+        {
+            assert_eq!(text.matches("(company").count(), 1);
+            assert!(text.contains("(company \"Dutchman Test\")"));
+        } else {
+            assert!(!text.contains("(company"));
+            assert!(!text.contains("(title_block"));
+        }
     }
 }
 

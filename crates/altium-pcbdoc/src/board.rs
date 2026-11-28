@@ -30,7 +30,10 @@
 //!   board the count is 0. They go into the region's `holes`.
 //! - A cutout with arcs (the round one on `outline-with-arcs`) is only a polygon there (35
 //!   corners); its arcs are in `/ShapeBasedRegions6/Data` (see `shape_based.rs`), which is read
-//!   for it instead.
+//!   for it instead. The same holds for any other region: the rounded slot of `arc-region` (a
+//!   copper region on Top Layer, x 8 to 18, y 13 to 17) is 38 corners here and two lines and two
+//!   half circles of radius 2 (centers (10, 15) and (16, 15)) there, so its outline is read from
+//!   there too. Its holes stay as they are here.
 
 use std::collections::BTreeMap;
 use std::f64::consts::TAU;
@@ -405,6 +408,8 @@ pub(crate) struct OtherRegion {
     /// The holes inside `contour` (clearances, thermal-relief gaps); empty when there are none or
     /// when they could not be read.
     pub holes: Vec<Contour>,
+    /// Altium's Keepout box is ticked (body byte 2 is 2, see `copper.rs`).
+    pub keepout: bool,
 }
 
 /// The regions of `/Regions6/Data`: board cutouts, and every other region for `copper.rs`.
@@ -417,7 +422,7 @@ pub(crate) struct Regions {
 /// Reads `/Regions6/Data`. A board cutout that cannot be read is an error (the board shape would
 /// be wrong); any other region that cannot be read is left out with a Dropped note. `shaped`
 /// holds, by record number, the outline with arcs from `/ShapeBasedRegions6/Data` where that
-/// copy has arcs: a cutout takes it instead of its polygon.
+/// copy has arcs: a region (a cutout or any other) takes it instead of its polygon.
 pub(crate) fn regions(
     data: &[u8],
     shaped: &[Option<Vec<Vertex>>],
@@ -425,7 +430,6 @@ pub(crate) fn regions(
 ) -> Result<Regions, String> {
     let mut found = Regions::default();
     let mut unreadable = 0usize;
-    let mut other_arcs = 0usize;
     let mut bad_holes = 0usize;
     let mut at = 0usize;
     let mut count = 0usize;
@@ -477,9 +481,6 @@ pub(crate) fn regions(
                 )),
             }
         } else {
-            if arcs.is_some() {
-                other_arcs += 1;
-            }
             let mut holes = Vec::new();
             if let Ok(points) = &corners {
                 let after = points
@@ -494,13 +495,17 @@ pub(crate) fn regions(
             }
             match corners {
                 Ok(points) => found.others.push(OtherRegion {
+                    keepout: body.get(crate::copper::KEEPOUT_AT) == Some(&crate::copper::KEEPOUT),
                     layer: body.first().copied().unwrap_or(0),
                     kind: props.get("KIND").map(str::to_string),
                     poured: props
                         .get("SUBPOLYINDEX")
                         .and_then(|v| v.trim().parse::<i64>().ok())
                         .is_some_and(|i| i >= 0),
-                    contour: closed_polygon(&points),
+                    contour: match arcs {
+                        Some(vertices) => contour("a region", vertices, notes),
+                        None => closed_polygon(&points),
+                    },
                     holes,
                 }),
                 Err(_) => unreadable += 1,
@@ -512,15 +517,6 @@ pub(crate) fn regions(
         notes.push(Note {
             severity: Severity::Dropped,
             message: format!("/Regions6/Data: {unreadable} region(s) could not be read"),
-        });
-    }
-    if other_arcs > 0 {
-        notes.push(Note {
-            severity: Severity::Warning,
-            message: format!(
-                "{other_arcs} region(s) that are not board cutouts have arcs (in \
-                 /ShapeBasedRegions6/Data); read as the polygon of /Regions6/Data"
-            ),
         });
     }
     if bad_holes > 0 {
@@ -624,11 +620,13 @@ pub(crate) fn read(
     let origin = (board.length_mm("ORIGINX")?, board.length_mm("ORIGINY")?);
     if let (Some(x), Some(y)) = origin {
         if x != 0.0 || y != 0.0 {
+            // `origin-moved`: moving the origin moves nothing on the board; Altium only shows
+            // positions from there. The stored coordinates are the board's, so they are kept.
             notes.push(Note {
-                severity: Severity::Warning,
+                severity: Severity::Info,
                 message: format!(
-                    "the board's origin is at ({x:.3}, {y:.3}) mm; coordinates are kept as stored, \
-                     not moved to that origin"
+                    "the board's origin is at ({x:.3}, {y:.3}) mm; Altium shows positions from \
+                     there, here they are kept as stored (nothing on the board moves)"
                 ),
             });
         }

@@ -326,7 +326,7 @@ fn j1_is_the_through_hole_header_step_model() -> Result<(), Box<dyn std::error::
         .iter()
         .find(|p| p.designator == "J1")
         .ok_or("no J1")?;
-    let model = j1.model.as_ref().ok_or("J1 has no model")?;
+    let model = j1.models.first().ok_or("J1 has no model")?;
     assert_eq!(model.name, "header-1x4.step");
     let board_model::ModelSource::Embedded { id } = &model.source else {
         return Err(format!("{:?}", model.source).into());
@@ -459,5 +459,150 @@ fn texts_come_in_all_three_stroke_fonts() -> Result<(), Box<dyn std::error::Erro
     }
     let named = |s: &str| out.board.texts.iter().filter(|t| t.content == s).count();
     assert_eq!((named("Sans"), named("Serif")), (1, 1));
+    Ok(())
+}
+
+/// Step 12 (README.txt): four free pads with their own solder mask, set by hand. M1 and M2 are
+/// SMD pads (Top Layer, 1.2 x 0.8): Manual 0.2, and Manual (0.1 kept) with Tented ticked. M3 and
+/// M4 are plated through-hole pads (round 1.6, hole 0.8): top and bottom unlinked, 0.2 / 0.05,
+/// and Manual 0.1 from the hole's edge, which is (0.8 + 0.2 - 1.6) / 2 = -0.3 from the pad's
+/// edge. Every other pad keeps the board's rule.
+#[test]
+fn four_pads_have_their_own_solder_mask() -> Result<(), Box<dyn std::error::Error>> {
+    let out = read()?;
+    type Want = (f64, f64, [Option<bool>; 2], [Option<f64>; 2]);
+    let want: [Want; 4] = [
+        (35.6, 28.15, [None, None], [Some(0.2), Some(0.2)]),
+        (37.6, 28.15, [Some(true), None], [Some(0.1), Some(0.1)]),
+        (43.3, 8.5, [None, None], [Some(0.2), Some(0.05)]),
+        (45.4, 8.5, [None, None], [Some(-0.3), Some(-0.3)]),
+    ];
+    let same = |a: &[Option<f64>; 2], b: &[Option<f64>; 2]| {
+        a.iter().zip(b).all(|(a, b)| match (a, b) {
+            (Some(a), Some(b)) => near(*a, *b),
+            (None, None) => true,
+            _ => false,
+        })
+    };
+    let mut own = 0;
+    for c in &out.board.copper {
+        let (at, tented, expansion) = match c {
+            CopperItem::Pad {
+                at,
+                tented,
+                mask_expansion,
+                ..
+            }
+            | CopperItem::PolygonPad {
+                at,
+                tented,
+                mask_expansion,
+                ..
+            } => (at, tented, mask_expansion),
+            _ => continue,
+        };
+        match want.iter().find(|w| near(at.x, w.0) && near(at.y, w.1)) {
+            Some((_, _, t, e)) => {
+                own += 1;
+                assert_eq!(tented, t, "{c:?}");
+                assert!(same(expansion, e), "{c:?}");
+            }
+            None => {
+                assert_eq!(*tented, [None, None], "{c:?}");
+                assert_eq!(*expansion, [None, None], "{c:?}");
+            }
+        }
+    }
+    assert_eq!(own, want.len());
+    let size = |x: f64, y: f64| {
+        out.board.copper.iter().find_map(|c| match c {
+            CopperItem::Pad {
+                at,
+                size_x,
+                size_y,
+                drill,
+                plated,
+                owner: None,
+                ..
+            } if near(at.x, x) && near(at.y, y) => Some((*size_x, *size_y, *drill, *plated)),
+            _ => None,
+        })
+    };
+    for (x, y, ..) in &want[..2] {
+        let (w, h, drill, _) = size(*x, *y).ok_or(format!("no free pad at ({x}, {y})"))?;
+        assert!(near(w, 1.2) && near(h, 0.8) && drill.is_none());
+    }
+    for (x, y, ..) in &want[2..] {
+        let (w, h, drill, plated) = size(*x, *y).ok_or(format!("no free pad at ({x}, {y})"))?;
+        assert!(near(w, 1.6) && near(h, 1.6) && plated);
+        assert!(drill.is_some_and(|d| near(d, 0.8)));
+    }
+    Ok(())
+}
+
+/// Step 12: quoted special strings. The file keeps them as typed; with the project's parameters
+/// (PCBNumber DN-0001, BoardRevision A) they show what Altium shows, and `'.Designator'` on a
+/// text of R7 shows R7.
+#[test]
+fn quoted_special_strings_show_what_altium_shows() -> Result<(), Box<dyn std::error::Error>> {
+    use altium_pcbdoc::{project, special_strings::resolve_texts};
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/boards");
+    let p = project::read(&std::fs::read(dir.join("all-features.PrjPcb"))?)?;
+    let mut out = read()?;
+    // (stored, shown, x, y, owner)
+    let want = [
+        ("Rev. '.BoardRevision'", "Rev. A", 33.7, 18.5, None),
+        (
+            "'.PCBNumber' / '.BoardRevision'",
+            "DN-0001 / A",
+            5.4,
+            11.7,
+            None,
+        ),
+        ("'.Designator'", "R7", 41.3, 14.5, Some("R7")),
+    ];
+    let find = |out: &ReadOutcome, s: &str, x: f64, y: f64| {
+        out.board
+            .texts
+            .iter()
+            .find(|t| t.content == s && near(t.at.x, x) && near(t.at.y, y))
+            .cloned()
+    };
+    for (stored, _, x, y, owner) in want {
+        let t = find(&out, stored, x, y).ok_or(format!("no {stored:?}"))?;
+        assert!(
+            near(t.height, 0.6) && t.rotation_deg == 0.0 && !t.mirrored,
+            "{t:?}"
+        );
+        assert!(
+            matches!(t.font, TextFont::Stroke { font: StrokeFont::Default, width } if near(width, 0.1)),
+            "{t:?}"
+        );
+        let designator = t
+            .component
+            .and_then(|i| out.board.components.get(i))
+            .map(|c| c.designator.as_str());
+        assert_eq!(designator, owner, "{t:?}");
+    }
+    resolve_texts(&mut out.board, &p.parameters);
+    for (stored, shown, x, y, _) in want {
+        assert!(
+            find(&out, shown, x, y).is_some(),
+            "{stored:?} does not show {shown:?}"
+        );
+    }
+    Ok(())
+}
+
+/// Step 12: an empty text on Top Overlay at (9, 10.6). It shows nothing, so it is left out.
+#[test]
+fn the_empty_text_is_left_out() -> Result<(), Box<dyn std::error::Error>> {
+    let out = read()?;
+    assert!(out.board.texts.iter().all(|t| !t.content.is_empty()));
+    assert!(!out
+        .board
+        .texts
+        .iter()
+        .any(|t| near(t.at.x, 9.0) && near(t.at.y, 10.6)));
     Ok(())
 }

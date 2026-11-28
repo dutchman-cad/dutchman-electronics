@@ -382,8 +382,8 @@ fn read_opens_a_projects_board_with_its_parameters() -> Result<(), Box<dyn std::
 #[cfg(feature = "altium")]
 #[test]
 fn a_project_with_one_board_needs_no_board_option() -> Result<(), Box<dyn std::error::Error>> {
-    // all-features.PrjPcb links only all-features.PcbDoc; its two parameter texts and U1's
-    // .Comment get their values.
+    // all-features.PrjPcb links only all-features.PcbDoc; its four parameter texts (two of
+    // them quoted), U1's .Comment and R7's '.Designator' get their values.
     let out = std::env::temp_dir().join(format!("de-read-prj1-{}", std::process::id()));
     let result = run(&[
         "read",
@@ -404,7 +404,7 @@ fn a_project_with_one_board_needs_no_board_option() -> Result<(), Box<dyn std::e
         .collect();
     assert!(
         notes.contains(
-            &"3 text(s) refer to a project parameter or to .Designator, .Comment or .Layer_Name \
+            &"6 text(s) refer to a project parameter or to .Designator, .Comment or .Layer_Name \
               and show its value, as Altium does"
         ),
         "{notes:?}"
@@ -520,7 +520,7 @@ fn a_project_board_behind_a_symbolic_link_out_of_the_folder_is_not_read(
 }
 
 /// Notes of a read manifest, as text.
-#[cfg(feature = "altium")]
+#[cfg(any(feature = "altium", feature = "kicad"))]
 fn messages(v: &serde_json::Value) -> Vec<String> {
     v["notes"]
         .as_array()
@@ -925,11 +925,11 @@ fn project_text(link: &str, value: &str) -> String {
 }
 
 /// The files of a package: (name, contents), sorted.
-#[cfg(feature = "altium")]
+#[cfg(any(feature = "altium", feature = "kicad"))]
 type Files = Vec<(String, Vec<u8>)>;
 
 /// Reads `board` into a new folder under `dir`; the manifest and every file written.
-#[cfg(feature = "altium")]
+#[cfg(any(feature = "altium", feature = "kicad"))]
 fn read_files(
     board: &std::path::Path,
     dir: &std::path::Path,
@@ -991,7 +991,7 @@ fn a_board_alone_takes_the_parameters_of_the_project_beside_it(
     assert!(
         notes
             .iter()
-            .any(|m| m.starts_with("3 text(s) refer to a project parameter")),
+            .any(|m| m.starts_with("6 text(s) refer to a project parameter")),
         "{notes:?}"
     );
     assert!(!alone_files.is_empty());
@@ -1087,6 +1087,227 @@ fn a_huge_or_broken_project_beside_the_board_is_skipped_with_a_note(
     assert!(
         notes.contains(&"parameters taken from good.PrjPcb next to the board".to_string()),
         "{notes:?}"
+    );
+    Ok(())
+}
+
+/// A new temporary folder `name` holding a copy of k10-text-vars.kicad_pcb, and its project
+/// when `with_project`.
+#[cfg(feature = "kicad")]
+fn folder_with_text_vars(
+    name: &str,
+    with_project: bool,
+) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
+    let dir = std::env::temp_dir().join(format!("{name}-{}", std::process::id()));
+    std::fs::create_dir_all(&dir)?;
+    std::fs::copy(
+        kicad_board("k10-text-vars.kicad_pcb"),
+        dir.join("k10-text-vars.kicad_pcb"),
+    )?;
+    if with_project {
+        std::fs::copy(
+            kicad_board("k10-text-vars.kicad_pro"),
+            dir.join("k10-text-vars.kicad_pro"),
+        )?;
+    }
+    Ok(dir)
+}
+
+#[cfg(feature = "kicad")]
+#[test]
+fn a_kicad_board_takes_the_text_variables_of_its_project_beside_it(
+) -> Result<(), Box<dyn std::error::Error>> {
+    // k10-text-vars.README.txt: ${PCB_NUMBER} and ${BOARD_ID} come from the .kicad_pro of the
+    // board's own name. Read alone, with --project naming it, and from a folder without it.
+    let board = kicad_board("k10-text-vars.kicad_pcb");
+    let bare = folder_with_text_vars("de-read-kicad-vars", false)?;
+    let alone = read_files(&board, &bare, &[]);
+    let with = read_files(
+        &board,
+        &bare,
+        &[
+            "--project",
+            &kicad_board("k10-text-vars.kicad_pro").to_string_lossy(),
+        ],
+    );
+    let without = read_files(&bare.join("k10-text-vars.kicad_pcb"), &bare, &["x"; 0]);
+    let given = read_files(
+        &board,
+        &bare,
+        &["--param", "PCB_NUMBER=X-1", "--param", "pcb_number=lower"],
+    );
+    std::fs::remove_dir_all(&bare).ok();
+    let ((alone_v, alone_files), (with_v, with_files)) = (alone?, with?);
+    let (without_v, without_files) = without?;
+    let (given_v, given_files) = given?;
+    let notes = messages(&alone_v);
+    assert!(
+        notes.contains(
+            &"text variables taken from k10-text-vars.kicad_pro next to the board".to_string()
+        ),
+        "{notes:?}"
+    );
+    assert!(
+        !notes.iter().any(|m| m.contains("${PCB_NUMBER}")),
+        "{notes:?}"
+    );
+    // The texts are drawn in the manifest's overlays.
+    assert_eq!(alone_files, with_files);
+    assert_eq!(alone_v["overlays"], with_v["overlays"]);
+    let mut alone_notes = notes;
+    alone_notes.retain(|m| !m.starts_with("text variables taken from"));
+    assert_eq!(alone_notes, messages(&with_v));
+    // Without the project, the two variables it defines stay as typed.
+    let notes = messages(&without_v);
+    // PCB_NUMBER is in one board text and the two BUILD fields.
+    for (name, n) in [("PCB_NUMBER", 3), ("BOARD_ID", 1)] {
+        assert!(
+            notes.iter().any(|m| m.starts_with(&format!(
+                "{n} text(s) use the text variable ${{{name}}}, which neither"
+            ))),
+            "{notes:?}"
+        );
+    }
+    assert_eq!(without_files, alone_files);
+    assert_ne!(without_v["overlays"], alone_v["overlays"]);
+    // --param wins over the project; names are case-sensitive, so pcb_number is a new one.
+    assert_eq!(given_files, alone_files);
+    assert_ne!(given_v["overlays"], alone_v["overlays"]);
+    assert_eq!(messages(&given_v), messages(&alone_v));
+    Ok(())
+}
+
+#[cfg(feature = "kicad")]
+#[test]
+fn a_kicad_project_beside_the_board_that_is_not_json_gives_a_warning(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let dir = folder_with_text_vars("de-read-kicad-badpro", false)?;
+    std::fs::write(dir.join("k10-text-vars.kicad_pro"), "(not json")?;
+    let result = read_files(&dir.join("k10-text-vars.kicad_pcb"), &dir, &[]);
+    std::fs::remove_dir_all(&dir).ok();
+    let notes = messages(&result?.0);
+    assert!(
+        notes.iter().any(|m| m.starts_with(
+            "the project k10-text-vars.kicad_pro next to the board was not used: not a KiCad project file"
+        )),
+        "{notes:?}"
+    );
+    Ok(())
+}
+
+/// body-arc-outline: R1's extruded body is a rounded slot with ends of radius 0.4, so its STEP
+/// file has two exact half cylinders of that radius, not facets.
+#[cfg(feature = "altium")]
+#[test]
+fn read_writes_an_extruded_body_with_arcs_as_exact_cylinders(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let out = std::env::temp_dir().join(format!("de-arc-body-{}", std::process::id()));
+    let board = test_board("body-arc-outline.PcbDoc");
+    let result = run(&[
+        "read",
+        &board.to_string_lossy(),
+        "--out",
+        &out.to_string_lossy(),
+        "--json",
+    ]);
+    let step = std::fs::read_to_string(out.join("model-1.step"));
+    std::fs::remove_dir_all(&out).ok();
+    let (ok, v) = result?;
+    assert!(ok, "{v}");
+    let r1 = v["parts"]
+        .as_array()
+        .and_then(|p| p.iter().find(|p| p["name"] == "R1"))
+        .ok_or("no R1")?;
+    assert_eq!(r1["model"], "model-1");
+    let step = step?;
+    let radii: Vec<f64> = step
+        .lines()
+        .filter(|l| l.contains("CYLINDRICAL_SURFACE("))
+        .filter_map(|l| l.rsplit(',').next())
+        .filter_map(|r| r.trim_end_matches(");").parse().ok())
+        .collect();
+    assert_eq!(radii.len(), 2, "{radii:?}");
+    assert!(radii.iter().all(|r| (r - 0.4).abs() < 0.001), "{radii:?}");
+    Ok(())
+}
+
+/// pour-modes (tests/boards/README.txt): the Top copper of each 10 x 10 pour, y 10 to 20. Solid
+/// (x 2 to 12) is the whole 100.000 mm2. The 90 degree hatch (x 14 to 24) of 0.300 tracks on a
+/// 1.000 grid leaves 100 open squares of 0.700, 49.000 mm2. The None pour (x 38 to 48) is only
+/// its outline: one ring of 0.300 tracks around a single opening of 9.700 x 9.700, 94.090 mm2,
+/// so nothing inside it is copper. The ring's outer edge has round corners, drawn within the
+/// package's 0.02 mm, so its area is checked to 0.005 mm2 (10.3 x 10.3 less (4 - pi) 0.15^2).
+#[cfg(feature = "altium")]
+#[test]
+fn read_draws_hatched_and_outline_pours_as_altium_pours_them(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let out = std::env::temp_dir().join(format!("de-pours-{}", std::process::id()));
+    let board = test_board("pour-modes.PcbDoc");
+    let result = run(&[
+        "read",
+        &board.to_string_lossy(),
+        "--out",
+        &out.to_string_lossy(),
+        "--json",
+    ]);
+    std::fs::remove_dir_all(&out).ok();
+    let (ok, v) = result?;
+    assert!(ok, "{v}");
+    let ring = |r: &serde_json::Value| -> Vec<(f64, f64)> {
+        r.as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|p| Some((p[0].as_f64()?, p[1].as_f64()?)))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let area = |r: &[(f64, f64)]| {
+        let n = r.len();
+        (0..n)
+            .map(|i| {
+                let (a, b) = (r[i], r[(i + 1) % n]);
+                a.0 * b.1 - b.0 * a.1
+            })
+            .sum::<f64>()
+            .abs()
+            / 2.0
+    };
+    let copper = v["overlays"]
+        .as_array()
+        .and_then(|o| o.iter().find(|o| o["name"] == "Copper top"))
+        .ok_or("no top copper")?;
+    let areas = copper["areas"].as_array().ok_or("no areas")?;
+    assert_eq!(areas.len(), 4, "one copper area per pour");
+    // (left x, outer area, tolerance, hole count, holes' area) by pour.
+    let mut found: Vec<(f64, f64, usize, f64)> = areas
+        .iter()
+        .map(|a| {
+            let outer = ring(&a["outer"]);
+            let holes: Vec<Vec<(f64, f64)>> = a["holes"]
+                .as_array()
+                .map(|h| h.iter().map(ring).collect())
+                .unwrap_or_default();
+            let left = outer.iter().map(|p| p.0).fold(f64::MAX, f64::min);
+            (
+                left,
+                area(&outer),
+                holes.len(),
+                holes.iter().map(|h| area(h)).sum(),
+            )
+        })
+        .collect();
+    found.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let [solid, h90, _h45, none] = found.as_slice() else {
+        return Err(format!("{found:?}").into());
+    };
+    assert!((solid.1 - 100.0).abs() < 0.001 && solid.2 == 0, "{solid:?}");
+    assert!(h90.2 == 100 && (h90.3 - 49.0).abs() < 0.001, "{h90:?}");
+    let outer = 10.3 * 10.3 - (4.0 - std::f64::consts::PI) * 0.15 * 0.15;
+    assert!((none.1 - outer).abs() < 0.005, "{none:?}");
+    assert!(
+        none.2 == 1 && (none.3 - 9.7 * 9.7).abs() < 0.001,
+        "{none:?}"
     );
     Ok(())
 }

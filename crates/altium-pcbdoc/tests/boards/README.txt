@@ -921,6 +921,39 @@ scripts, every scripted change read back and logged:
    Every other via keeps the board's rule (open, 0.1). Then Tools > Polygon Pours > Repour All
    and Tools > Split Planes > Rebuild Split Planes on All Layers, and the board saved; Arial
    was removed again as before.
+12. Later on 2026-11-27, from the board as described so far, opened through a copy of
+   all-features.PrjPcb (so with its parameters PCBNumber DN-0001 and BoardRevision A). Free
+   spots were found from the board's own objects (every object's box as Altium reports it, with
+   tracks and vias by their exact shape). By my own script, read back and logged: four free pads
+   (no component, no net, simple pad stack) and four texts on Top Overlay in the stroke font
+   (Default), height 0.600, stroke 0.100, rotation 0, not mirrored:
+        pad  at              kind
+        M1   35.600, 28.150  SMD, Top Layer, rectangle 1.200 x 0.800, no hole
+        M2   37.600, 28.150  SMD, Top Layer, rectangle 1.200 x 0.800, no hole
+        M3   43.300,  8.500  through-hole, Multi-Layer, round 1.600, hole 0.800, plated
+        M4   45.400,  8.500  through-hole, Multi-Layer, round 1.600, hole 0.800, plated
+
+        Stored text                       At             Owner  Altium shows  Box
+        Rev. '.BoardRevision'             33.700, 18.500 -      Rev. A        33.600, 18.400 to
+                                                                              37.099, 19.200
+        '.PCBNumber' / '.BoardRevision'   5.400, 11.700  -      DN-0001 / A   5.300, 11.600 to
+                                                                              11.798, 12.400
+        '.Designator'                     41.300, 14.500 R7     R7            41.200, 14.400 to
+                                                                              42.400, 15.200
+        (no characters)                   9.000, 10.600  -      (nothing)     the anchor point
+   The file keeps each text as typed (/WideStrings6/Data); the empty text has an entry of length
+   2 with no bytes, as on empty-texts. R7 is the part at (40.500, 16.270).
+   Then by hand, in each pad's Properties panel (Pad Stack > Solder), one setting per pad:
+        M1   Manual Expansion, 0.2mm
+        M2   Manual Expansion (0.1mm kept), Tented ticked
+        M3   Manual Expansion, top and bottom unlinked (the link button in the expanded Top
+             Solder row), top 0.2mm, bottom 0.05mm
+        M4   Manual Expansion, 0.1mm, From Hole Edge ticked (top and bottom linked); from the
+             pad's edge that is (0.8 + 0.2 - 1.6) / 2 = -0.300
+   Paste stays by the rule on every pad. The script read back: M1 0.2, M2 tented on top with
+   0.1, M3 0.2 (the top value), M4 0.1. Then, in the 2D view, Tools > Polygon Pours > Repour
+   All and Tools > Split Planes > Rebuild Split Planes on All Layers, the board saved and closed
+   and the project copy closed. Arial was removed again as before.
 A first try put the TrueType text and the free copper over "DUTCHMAN NODE 1"; a second script
 removed them and placed them as above before the board was first saved with the cutout.
 
@@ -1118,6 +1151,226 @@ an entry of its index and a byte length of 2 but no bytes after it: the stream r
 [1][2] [2][4]"A" ... [4][2] [5][4]"C" [6][2], where every other entry holds its UTF-16 text and a
 closing 0 in its length.
 
+
+Features seen on other people's boards (mask-opacity-100, origin-moved, overlay-region-fill,
+body-two-extruded, body-cylinder, body-sphere, arc-region, pad-stack-tmb, solder-mask-region,
+overlapping-holes, body-arc-outline)
+---------------------------------------------------------------------------------------------
+Made on 2026-11-27, each from a file copy of one of our own boards, one feature per board, so the
+reader can learn features that public sample boards use (only our converter's notes on those
+boards were looked at, never their bytes). Every object was read back and logged; each board was
+saved once and closed.
+
+mask-opacity-100.PcbDoc  (from one-resistor)
+    By hand, in the 3D view's View Configuration panel (View Options, 3D Settings), the
+    Transparency sliders of Top Solder Mask and Bottom Solder Mask dragged to 0. Nothing else
+    changed on purpose. /Board6/Data then reads CFG3D.TOPSOLDERMASKCOLOROPACITY=1.000000 and
+    CFG3D.BOTSOLDERMASKCOLOROPACITY=1.000000 (0.600000 on one-resistor); the colors stay
+    CFG3D.TOPSOLDERMASKCOLOR=3307556 and CFG3D.BOTSOLDERMASKCOLOR=3307556 (36, 120, 50). Altium
+    26.12.2 writes both opacity keys on every save, so a board with a mask color and no opacity
+    key cannot be made by saving here. The board was saved from the 3D view
+    (CURRENT2D3DVIEWSTATE=3D).
+
+origin-moved.PcbDoc  (from one-resistor)
+    By my own script, the board origin (what Edit > Origin > Set changes) moved from the
+    outline's lower-left corner to the point 10.000 right and 5.000 up from it. Nothing moved on
+    the board: /Board6/Data reads ORIGINX=393.7008mil, ORIGINY=196.8504mil (0mil before) and the
+    grid origin GR0_OX and GR0_OY the same, while the outline (VX0 to VY4) and every object keep
+    their stored coordinates. Read back from the new origin:
+        outline     (-10, -5) to (40, 25)
+        R1          center (15, 10); pads at (14.2, 10) and (15.8, 10)
+    So stored coordinates still have the outline's corner at (0, 0); only the origin Altium
+    shows them from moved.
+
+overlay-region-fill.PcbDoc  (from empty-outline)
+    By my own script, solid shapes on both silkscreen layers, no net, no component:
+        Top Overlay      region  (5, 18), (15, 18), (13, 25), (7, 25), KIND 0, no holes
+                         fill    (20, 19) to (26, 23), rotation 0
+                         fill    (32, 19) to (38, 23), rotation 30 (about its center (35, 21));
+                                 Altium's box x 31.402 to 38.598, y 17.768 to 24.232
+        Bottom Overlay   region  (5, 5), (15, 5), (13, 12), (7, 12), KIND 0, no holes
+                         fill    (20, 6) to (26, 10), rotation 0
+                         fill    (32, 6) to (38, 10), rotation 30 (about its center (35, 8));
+                                 Altium's box x 31.402 to 38.598, y 4.768 to 11.232
+
+body-two-extruded.PcbDoc  (from one-resistor)
+    By my own script, a second extruded body added to R1, on the same layer as its first
+    (Mechanical 2, Altium's Top 3D Body), outline (24.6, 14.8), (25.4, 14.8), (25.4, 15.2),
+    (24.6, 15.2), standoff 0.450, overall height 0.750 (so 0.300 tall, sitting on the first box),
+    color red 0, green 160, blue 224 (stored as 14721024), opacity 1. R1's own body stays: the
+    1.600 x 0.800 box of one-resistor, height 0.450, color 128, 128, 128. Both records read
+    MODEL.MODELTYPE=0; the new one MODEL.EXTRUDED.MINZ=17.7165mil and MAXZ=29.5276mil.
+
+body-cylinder.PcbDoc  (from one-resistor)
+    By hand: R1's body selected (by my own script), and in the Properties panel its 3D Model
+    Type changed from Extruded to Cylinder, Height 1mm, Radius 0.5mm; rotations X, Y and Z stay
+    0 (upright) and standoff 0. Location (25, 15), R1's center. Read back: box (24.5, 14.5) to
+    (25.5, 15.5), standoff 0, overall height 1.000, still owned by R1, model type 2. The record
+    reads MODEL.MODELTYPE=2, MODEL.CYLINDER.RADIUS=19.685mil, MODEL.CYLINDER.HEIGHT=39.3701mil,
+    STANDOFFHEIGHT=0mil, OVERALLHEIGHT=39.3701mil, MODEL.2D.X=984.252mil, MODEL.2D.Y=590.5512mil.
+
+body-sphere.PcbDoc  (from one-resistor)
+    The same, with 3D Model Type Sphere, Radius 0.5mm, standoff 0 in the panel. Read back: box
+    (24.5, 14.5) to (25.5, 15.5), model type 3, and standoff -0.500 with overall height 0.500:
+    the sphere's center lies on the board's top face, half of it below. The record reads
+    MODEL.MODELTYPE=3, MODEL.SPHERE.RADIUS=19.685mil, STANDOFFHEIGHT=-19.685mil,
+    OVERALLHEIGHT=19.685mil.
+
+arc-region.PcbDoc  (from empty-outline)
+    By my own script, two closed outlines of a rounded slot (two straight sides and two half
+    circles), each of two tracks and two arcs, width 0.100:
+        tracks (10, 13) to (16, 13) and (10, 17) to (16, 17); arcs center (16, 15) and
+        (10, 15), radius 2.000, 270 to 90 and 90 to 270 degrees
+        the same 20.000 to the right, on Mechanical 1: x 30 to 36, arcs centered (36, 15) and
+        (30, 15)
+    Then by hand: the first outline selected, Tools > Convert > Create Region from Selected
+    Primitives, and its four tracks and arcs deleted; the second selected (by script), Tools >
+    Convert > Create 3D Body From selected primitives. A script removed the second outline's
+    tracks and arcs. Altium made the region on the active layer (Mechanical 1); my script moved
+    it to Top Layer. Read back:
+        region   Top Layer, KIND 0, no net; Altium's script interface lists its outline as 38
+                 points (the half circles as straight pieces), from (8, 13) to (18, 17)
+        3D body  Mechanical 2 (Top 3D Body), no component, extruded, box (28, 13) to (38, 17),
+                 standoff 0, overall height 0.508 (Altium's default, OVERALLHEIGHT=20mil),
+                 MODEL.2D.X=1299.2125mil (33.000), MODEL.2D.Y=590.5512mil (15.000),
+                 ISSHAPEBASED=TRUE
+    Both are stored twice, as the other shapes are: /Regions6 and /ComponentBodies6, and the
+    shape-based copies /ShapeBasedRegions6 and /ShapeBasedComponentBodies6.
+
+pad-stack-tmb.PcbDoc  (from empty-outline)
+    By my own script, one free pad "1" (no component, no net) at (25, 15), Multi-Layer, plated
+    hole 0.800, pad stack mode Top-Middle-Bottom (Altium's mode 1; simple is 0):
+        top      round      2.000 x 2.000
+        middle   round      1.400 x 1.400
+        bottom   rectangle  2.400 x 1.600
+    The board has only Top Layer and Bottom Layer, so the middle size has no layer to show on.
+
+solder-mask-region.PcbDoc  (from one-fill)
+    By my own script, a solid region on Top Solder, KIND 0, no net, corners (22, 12), (28, 12),
+    (28, 18), (22, 18): a mask opening drawn by hand, over the middle of one-fill's copper fill
+    (20, 10) to (30, 20) on Top Layer. Nothing else on Top Solder.
+
+overlapping-holes.PcbDoc  (from empty-outline)
+    By my own script, two free pads (no component, no net), simple pad stack, Multi-Layer, round
+    1.600, plated hole 1.000: "1" at (24.6, 15) and "2" at (25.4, 15). Their centers are 0.800
+    apart, so the two holes overlap by 0.200 and the two pads by 0.800.
+
+body-arc-outline.PcbDoc  (from one-resistor)
+    R1's extruded body replaced by one whose outline has arcs, made as for arc-region's body. By
+    my own script: R1's body removed, and a rounded slot drawn on Mechanical 1 (width 0.100):
+    tracks (24.6, 14.6) to (25.4, 14.6) and (24.6, 15.4) to (25.4, 15.4), arcs center
+    (25.4, 15) and (24.6, 15), radius 0.400, 270 to 90 and 90 to 270 degrees. By hand: Tools >
+    Convert > Create 3D Body From selected primitives. By my own script: the four tracks and
+    arcs removed, and the new body given to R1 with standoff 0 and overall height 0.500. Read
+    back: Mechanical 2 (Top 3D Body), owned by R1, extruded, box (24.2, 14.6) to (25.8, 15.4),
+    color 128, 128, 128, opacity 1. The record reads ISSHAPEBASED=TRUE, MODEL.MODELTYPE=0,
+    STANDOFFHEIGHT=0mil, OVERALLHEIGHT=19.685mil, MODEL.EXTRUDED.MINZ=0mil and
+    MAXZ=19.685mil, MODEL.2D.X=984.2519mil, MODEL.2D.Y=590.5511mil (25.000, 15.000).
+
+Saving embedded Arial in each of them (none of their texts uses it); it was removed as before
+(see "Paths inside the files").
+
+Feature gaps, first batch (pad-hole-shapes, keepouts, pour-modes, mech-layer-kinds)
+-----------------------------------------------------------------------------------
+Made on 2026-11-27, each from a file copy of empty-outline (mech-layer-kinds: of one-resistor),
+one feature per board, by my own scripts and by hand where noted; every object was read back and logged, and each board was saved once and closed. These
+are features Altium offers that no board here had before. "Units" below are the file's own
+1/10000 mil (1 mm = 393700.787 units).
+
+pad-hole-shapes.PcbDoc
+    Five free pads (no component, no net), simple pad stack, Multi-Layer, at y 15.000:
+        pad  x       pad shape and size        hole                                 plated
+        1    8.000   round 2.000 x 2.000       round, 1.000                         yes
+        2    16.000  round 3.000 x 1.600 (oval) slot, width 0.800, length 2.200, 0 deg yes
+        3    25.000  round 3.000 x 3.000       slot, width 0.800, length 2.200, 45 deg yes
+        4    34.000  rectangle 2.000 x 2.000   square, 1.000                        yes
+        5    42.000  round 3.000 x 1.600 (oval) slot, width 0.800, length 2.200, 0 deg no
+    The pads themselves are not turned; pad 3's hole is turned 45 degrees inside its round pad.
+    What the file stores (/Pads6/Data, each pad a record of six blocks):
+        block 4 (geometry), from byte 45: the hole size, which is the slot's width (0.800 on
+            pads 2, 3 and 5) or the square's side (1.000 on pad 4); byte 60 the plating (0 on
+            pad 5)
+        block 5: empty (length 0) on pad 1; 651 bytes on pads 2 to 5. In it, byte 262 is the hole
+            type (1 square, 2 slot), bytes 263..267 the slot's length (866142 units, 2.200, on
+            pads 2, 3 and 5; 0 on pad 4), and bytes 267..275 the hole's rotation as an f64 in
+            degrees (45.0 on pad 3, 0.0 on the others)
+    Altium draws pads 2, 3 and 5 with a rounded slot and pad 4 with a square hole.
+
+keepouts.PcbDoc
+    Objects on the Keep-Out layer (layer byte 56), no net:
+        track   (5, 24) to (15, 24), width 0.300
+        arc     center (22, 24), radius 2.000, 0 to 180 degrees, width 0.300
+        fill    (30, 22) to (36, 26), rotation 0
+        region  (40, 22), (46, 22), (46, 26), (40, 26), KIND 0
+    Objects on Top Layer (layer byte 1) with the keepout flag set (Altium's "Keepout" box), no
+    net, and Altium's default keepout restrictions:
+        track   (5, 8) to (15, 8), width 0.300
+        fill    (30, 6) to (36, 10), rotation 0
+        region  (40, 6), (46, 6), (46, 10), (40, 10), KIND 0
+    And one plain Top Layer track, (5, 15) to (15, 15), width 0.300, to compare with.
+    What the file stores: byte 2 of the track, fill and region record is 2 on the three flagged
+    objects and 0 on every other one. The flagged track has 31 at byte 45 and the flagged fill 31
+    at byte 46 (0 on the plain track); the flagged region's text part has
+    KEEPOUTRESTRICTIONS=31, which no other region has. So a keepout on Top Layer looks like
+    copper unless byte 2 is read: it is not copper on the made board.
+
+pour-modes.PcbDoc
+    One net, GND, and four polygon pours on Top Layer with that net, "remove dead copper" off,
+    each the same 10.000 x 10.000 square, side by side at y 10 to 20:
+        x         fill mode (Altium's Polygon Properties)   track width   grid
+        2 to 12   Solid                                       (0.2032)      (0.508)
+        14 to 24  Hatched, 90 degrees                         0.300         1.000
+        26 to 36  Hatched, 45 degrees                         0.300         1.000
+        38 to 48  None (outline only)                         0.300         1.000
+    (the solid pour keeps Altium's defaults, 8 and 20 mil, which a solid pour does not use).
+    Then by hand Tools > Polygon Pours > Repour All, and the board saved.
+    /Polygons6/Data holds one record per pour, in the order None, 45, 90, Solid, with
+    HATCHSTYLE=None, 45Degree, 90Degree and Solid, TRACKWIDTH=11.811mil and GRIDSIZE=39.3701mil
+    on the three that are not solid, NET=0 (GND) and POURINDEX=3, 2, 1 and 0. What Altium poured:
+        Solid     one region on Top Layer, KIND 0, SUBPOLYINDEX=0
+        90        24 tracks, width 0.300
+        45        34 tracks, width 0.300
+        None      4 tracks, width 0.300, along the outline
+    Bytes 5..7 of each of these tracks hold the index of its pour's record in /Polygons6/Data (2
+    for the 90 degree pour, 1 for 45 degrees, 0 for None).
+    A first try, whose script gave each pour four points and no closing point, left a track from
+    the board origin (0, 0) to each hatched pour's outline; it was thrown away (Altium's pour
+    outline wants its first point repeated after the last).
+
+mech-layer-kinds.PcbDoc  (from one-resistor)
+    By hand, in the View Configuration panel: Component Layer Pairs > right-click > Add
+    Component Layer Pair, four times, each with a Layer Type from Altium's list. one-resistor
+    already had Mechanical 2/3 as its 3D Body pair (LAYER58MECHKIND=3DBodyTop,
+    LAYER59MECHKIND=3DBodyBottom, MECHPAIR0L1=MECHANICAL2, MECHPAIR0L2=MECHANICAL3).
+        pair     layer type          names Altium gave them
+        4 / 5    Courtyard           Top Courtyard / Bottom Courtyard
+        6 / 7    Assembly            Top Assembly / Bottom Assembly
+        8 / 9    Component Outline   Top Component Outline / Bottom Component Outline
+        10 / 11  Designator          Top Designator / Bottom Designator
+    Altium's list also offered Coating, Component Center, Dimensions, Glue Points, Gold Plating,
+    Value, Die and Wire Bonding. Then by my own script, each part of R1 unless noted:
+        Top Courtyard           rectangle (23.2, 14.0) to (26.8, 16.0), four tracks, width 0.050
+        Top Assembly            rectangle (24.2, 14.6) to (25.8, 15.4), four tracks, width 0.100
+        Top Component Outline   rectangle (23.6, 14.4) to (26.4, 15.6), four tracks, width 0.100
+        Bottom Courtyard        one free track (20, 10) to (30, 10), width 0.050
+        Top Designator          text ".Designator" (shows R1), stroke font, at (24.6, 14.75),
+                                height 0.500, stroke 0.080
+    Making the Designator pair, Altium put a second ".Designator" text of R1 on Top Designator
+    by itself: at (23.984, 14.238), height 1.524, stroke 0.254, rotation 0, box (23.730,
+    13.984) to (26.270, 16.016), centred on R1 (both are stored as ".Designator" in
+    /WideStrings6/Data).
+    What the file stores, in /Board6/Data, for each layer of a pair: LAYERnNAME (the name above),
+    LAYERnMECHENABLED=TRUE and LAYERnMECHKIND, with n = 60 to 67 for Mechanical 4 to 11:
+        CourtyardTop, CourtyardBottom, AssemblyTop, AssemblyBottom, ComponentOutlineTop,
+        ComponentOutlineBottom, DesignatorTop, DesignatorBottom
+    The same again in LAYER_V8_14 to LAYER_V8_21 and V9_CACHE_LAYER72 to 79 (with
+    USEDBYPRIMS=TRUE on the layers that have objects), and the pairs in MECHPAIR1L1=MECHANICAL4,
+    MECHPAIR1L2=MECHANICAL5, and so on to MECHPAIR4L1=MECHANICAL10, MECHPAIR4L2=MECHANICAL11. The
+    objects themselves are the usual track and text records with layer bytes 60, 61, 62, 64 and
+    66.
+
+Saving embedded Arial in keepouts (no text uses it); it was removed as before (see "Paths inside
+the files").
 
 Paths inside the files
 ----------------------

@@ -59,7 +59,7 @@ fn pads(out: &ReadOutcome) -> Vec<(String, f64, f64, f64)> {
 fn extruded_corners(part: &Placement) -> Option<(Vec<(f64, f64)>, f64)> {
     let ModelSource::Extruded {
         outline, height, ..
-    } = &part.model.as_ref()?.source
+    } = &part.models.first()?.source
     else {
         return None;
     };

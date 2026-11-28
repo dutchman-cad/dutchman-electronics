@@ -39,7 +39,7 @@ fn check_r1(
         "{name}: {}",
         r1.rotation_deg
     );
-    let model = r1.model.as_ref().ok_or("R1 has no model")?;
+    let model = r1.models.first().ok_or("R1 has no model")?;
     assert_eq!(model.name, "box-offset.step", "{name}");
     assert!(
         matches!(&model.source, ModelSource::Embedded { id }
@@ -168,7 +168,7 @@ fn check_turned_model(
         "{name}: {}",
         r1.rotation_deg
     );
-    let model = r1.model.as_ref().ok_or("R1 has no model")?;
+    let model = r1.models.first().ok_or("R1 has no model")?;
     assert_eq!(model.name, "box-offset.step", "{name}");
     let want = [-0.35, 0.7 * 30f64.to_radians().cos(), 0.0];
     assert!(
@@ -250,7 +250,7 @@ fn check_tilted_model(
         "{name}: {}",
         r1.rotation_deg
     );
-    let model = r1.model.as_ref().ok_or("R1 has no model")?;
+    let model = r1.models.first().ok_or("R1 has no model")?;
     assert_eq!(model.name, "box-offset.step", "{name}");
     assert!(
         near(model.offset[0], offset.0)

@@ -147,7 +147,7 @@ fn a_model_turns_the_other_way_about_each_axis_and_is_not_scaled_silently() {
            (model \"C:\\\\models\\\\box.step\" (offset (xyz 1 2 3)) (scale (xyz 2 1 1)) (rotate (xyz 90 0 -45))))\n)"
     );
     let o = read(&text).unwrap();
-    let m = o.board.components[0].model.as_ref().unwrap();
+    let m = o.board.components[0].models.first().unwrap();
     assert_eq!(m.name, "box.step");
     assert_eq!(m.offset, [1.0, 2.0, 3.0]);
     assert_eq!(m.rotation_deg, [-90.0, 0.0, 45.0]);

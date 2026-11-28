@@ -18,9 +18,17 @@ done
 # The boards made only with KiCad 10 (already named k10-<name>).
 podman run --rm --userns=keep-id -v "$PWD:/work:Z" docker.io/kicad/kicad:10.0 sh -c "
   python3 /work/fixtures/kicad/build_k10_boards.py /work/$out &&
-  python3 /work/fixtures/kicad/fill_zones.py /work/$out/k10-zone-cutout.kicad_pcb"
-# The project files KiCad writes beside each board are not needed.
+  python3 /work/fixtures/kicad/fill_zones.py /work/$out/k10-zone-cutout.kicad_pcb &&
+  python3 /work/fixtures/kicad/fill_zones.py /work/$out/k10-all-features.kicad_pcb &&
+  python3 /work/fixtures/kicad/add_stackup.py /work/$out/k10-all-features.kicad_pcb /work/fixtures/kicad/stackup-all-features.sexp &&
+  python3 /work/fixtures/kicad/add_pad_arcs.py /work/$out/k10-all-features.kicad_pcb 1 &&
+  python3 /work/fixtures/kicad/embed_fonts.py /work/$out/k10-all-features.kicad_pcb \"TrueType 789=DejaVu Sans Mono\""
+# The project files KiCad writes beside each board are not needed, except k10-text-vars's and
+# k10-all-features's, which hold the project's text variables (written afterwards by
+# add_text_vars.py).
 rm -f "$out"/*.kicad_pro "$out"/*.kicad_prl "$out"/k10-work/*.kicad_pro "$out"/k10-work/*.kicad_prl
+python3 fixtures/kicad/add_text_vars.py "$out"/k10-text-vars.kicad_pro
+python3 fixtures/kicad/add_text_vars.py "$out"/k10-all-features.kicad_pro PCB_NUMBER=DN-0100
 for f in "$out"/k10-work/*.kicad_pcb; do
   mv "$f" "$out/k10-$(basename "$f")"
 done
