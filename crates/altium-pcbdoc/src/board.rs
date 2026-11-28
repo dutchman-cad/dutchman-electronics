@@ -410,6 +410,9 @@ pub(crate) struct OtherRegion {
     pub holes: Vec<Contour>,
     /// Altium's Keepout box is ticked (body byte 2 is 2, see `copper.rs`).
     pub keepout: bool,
+    /// The record number in `/Pads6/Data` (from 1) of the pad whose copper this region is
+    /// (`PADINDEX`, see `copper.rs`), if it is one.
+    pub pad_index: Option<usize>,
 }
 
 /// The regions of `/Regions6/Data`: board cutouts, and every other region for `copper.rs`.
@@ -496,6 +499,9 @@ pub(crate) fn regions(
             match corners {
                 Ok(points) => found.others.push(OtherRegion {
                     keepout: body.get(crate::copper::KEEPOUT_AT) == Some(&crate::copper::KEEPOUT),
+                    pad_index: props
+                        .get("PADINDEX")
+                        .and_then(|v| v.trim().parse::<usize>().ok()),
                     layer: body.first().copied().unwrap_or(0),
                     kind: props.get("KIND").map(str::to_string),
                     poured: props

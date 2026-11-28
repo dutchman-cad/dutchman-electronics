@@ -29,14 +29,25 @@
 //! removed, see its README.txt).
 //!
 //! The content is the UTF-16 entry in `/WideStrings6/Data` that bytes 115..119 point to, or the
-//! 8-bit copy in the block after the body. A text with no characters (`empty-texts`) shows
+//! 8-bit copy in the block after the body.
+//!
+//! Frames and inverted texts (`text-kinds`, twelve DejaVu Sans Mono texts): a text frame stores
+//! its location as the frame's lower-left corner (LB at (3, 4), CM at (18, 10.488) of a 10 x 4
+//! frame), and Altium sets the letters inside it by its justification, so the text is placed at
+//! the frame's point for that justification (the corner, the middle of a side or the center) and
+//! anchored there by the same part of its own box. Where inside the frame Altium puts the letters
+//! exactly is not measured; the frame and its point are the file's. An inverted text (its
+//! letters cut out of a filled box) is drawn as plain letters, with a note: the board model has
+//! filled areas, but the letters' shapes come from the font only when the package draws them. A text with no characters (`empty-texts`) shows
 //! nothing in Altium and is left out without a note. A component's designator text is shown only when its
 //! component has `NAMEON=TRUE`, its comment text only with `COMMENTON=TRUE` (`one-resistor`
 //! shows "R1" and hides "10k").
 
 use std::collections::BTreeMap;
 
-use board_model::{Note, Point, Severity, StrokeFont, Text, TextFont};
+use board_model::{
+    HorizontalAnchor, Note, Point, Severity, StrokeFont, Text, TextAnchor, TextFont, VerticalAnchor,
+};
 
 use crate::components::{
     short_string, span, Components, COMMENT_FLAG_AT, COMPONENT_AT, DESIGNATOR_FLAG_AT,
@@ -59,6 +70,21 @@ const ITALIC_AT: usize = 45;
 const FONT_NAME: std::ops::Range<usize> = 46..110;
 /// Rotations beyond this many degrees (either way) are refused as not real.
 const MAX_ROTATION_DEG: f64 = 360.0;
+/// `text-kinds`: byte 110 is 1 on an inverted text, whose letters are cut from a filled box; the
+/// box reaches the margin at bytes 111..115 (0.500 on INV) past the text box, or, when byte 231
+/// is 1 (Border Mode Offset), the offset at bytes 133..137 (0.300 on OFS).
+const INVERTED_AT: usize = 110;
+const INVERT_MARGIN_AT: usize = 111;
+const INVERT_OFFSET_AT: usize = 133;
+const INVERT_BY_OFFSET_AT: usize = 231;
+/// `text-kinds`: byte 230 is 1 on a text frame, whose width and height are at bytes 124..128 and
+/// 128..132 (10.000 and 4.000; on a plain string they hold Altium's own text box), and byte 132
+/// is the justification: 1, 2, 3 left top, middle, bottom; 4, 5, 6 centre; 7, 8, 9 right (3 on
+/// every plain string).
+const FRAME_AT: usize = 230;
+const FRAME_WIDTH_AT: usize = 124;
+const FRAME_HEIGHT_AT: usize = 128;
+const JUSTIFICATION_AT: usize = 132;
 
 /// The texts of `/Texts6/Data`, and each placed component's comment.
 pub(crate) struct Texts {
@@ -81,6 +107,7 @@ pub(crate) fn read(
     let mut texts = Vec::new();
     let mut comments = Vec::new();
     let mut other_layers: BTreeMap<String, usize> = BTreeMap::new();
+    let mut inverted: Vec<String> = Vec::new();
     let mut unreadable = 0usize;
     let mut unknown_fonts = 0usize;
     let mut at = 0usize;
@@ -160,6 +187,26 @@ pub(crate) fn read(
                         font: stroke_font(body.get(STROKE_FONT_AT).copied(), &mut unknown_fonts),
                     }
                 };
+                if body.get(INVERTED_AT) == Some(&1) {
+                    let by_offset = body.get(INVERT_BY_OFFSET_AT) == Some(&1);
+                    let border = i32_mm(
+                        body,
+                        if by_offset {
+                            INVERT_OFFSET_AT
+                        } else {
+                            INVERT_MARGIN_AT
+                        },
+                    );
+                    inverted.push(format!(
+                        "\"{content}\" at ({:.3}, {:.3}), {} {:.3}",
+                        at_point.x,
+                        at_point.y,
+                        if by_offset { "offset" } else { "margin" },
+                        border.unwrap_or_default()
+                    ));
+                }
+                let (at_point, anchor) = framed(body, at_point, rotation_deg, mirrored)
+                    .unwrap_or((at_point, TextAnchor::default()));
                 texts.push(Text {
                     layer,
                     at: at_point,
@@ -167,7 +214,7 @@ pub(crate) fn read(
                     height,
                     rotation_deg,
                     mirrored,
-                    anchor: board_model::TextAnchor::default(),
+                    anchor,
                     line_pitch: None,
                     font,
                     component,
@@ -186,6 +233,15 @@ pub(crate) fn read(
         notes.push(Note {
             severity: Severity::Dropped,
             message: format!("{unreadable} text(s) could not be read"),
+        });
+    }
+    for what in &inverted {
+        notes.push(Note {
+            severity: Severity::Warning,
+            message: format!(
+                "the inverted text {what} is drawn as plain letters: its letters cut out of a \
+                 filled box are not drawn yet"
+            ),
         });
     }
     if unknown_fonts > 0 {
@@ -248,6 +304,57 @@ fn font_name(body: &[u8]) -> String {
 
 /// Position, height, rotation, mirroring and stroke width, or `None` when the body is too short
 /// or the rotation is not a real angle.
+/// An `i32` length in 1/10000 mil at `at`, in mm.
+fn i32_mm(body: &[u8], at: usize) -> Option<f64> {
+    let bytes: [u8; 4] = body.get(at..at + 4)?.try_into().ok()?;
+    Some(f64::from(i32::from_le_bytes(bytes)) * MM_PER_UNIT)
+}
+
+/// A text frame's point for its justification, and the anchor of the text there; `None` for a
+/// text that is not a frame. The frame lies from `corner` (its lower-left corner, the text's
+/// stored location) `width` across and `height` up, in the text's own frame, turned and
+/// mirrored with it.
+fn framed(
+    body: &[u8],
+    corner: Point,
+    rotation_deg: f64,
+    mirrored: bool,
+) -> Option<(Point, TextAnchor)> {
+    if body.get(FRAME_AT) != Some(&1) {
+        return None;
+    }
+    let width = i32_mm(body, FRAME_WIDTH_AT).filter(|w| w.is_finite() && *w > 0.0)?;
+    let height = i32_mm(body, FRAME_HEIGHT_AT).filter(|h| h.is_finite() && *h > 0.0)?;
+    let code = *body.get(JUSTIFICATION_AT)?;
+    if !(1..=9).contains(&code) {
+        return None;
+    }
+    let (column, row) = ((code - 1) / 3, (code - 1) % 3);
+    let (horizontal, dx) = match column {
+        0 => (HorizontalAnchor::Left, 0.0),
+        1 => (HorizontalAnchor::Center, width / 2.0),
+        _ => (HorizontalAnchor::Right, width),
+    };
+    let (vertical, dy) = match row {
+        0 => (VerticalAnchor::Top, height),
+        1 => (VerticalAnchor::Center, height / 2.0),
+        _ => (VerticalAnchor::Bottom, 0.0),
+    };
+    let dx = if mirrored { -dx } else { dx };
+    let (sin, cos) = rotation_deg.to_radians().sin_cos();
+    let at = Point {
+        x: corner.x + dx * cos - dy * sin,
+        y: corner.y + dx * sin + dy * cos,
+    };
+    Some((
+        at,
+        TextAnchor {
+            horizontal,
+            vertical,
+        },
+    ))
+}
+
 fn geometry(body: &[u8]) -> Option<(Point, f64, f64, bool, f64)> {
     let i32_at = |at: usize| -> Option<f64> {
         let bytes: [u8; 4] = body.get(at..at.checked_add(4)?)?.try_into().ok()?;

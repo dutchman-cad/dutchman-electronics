@@ -78,7 +78,10 @@
 //!   reaches `hole / 2 + e` from the center and the pad `size / 2`, so it is
 //!   `(hole + 2 e - size) / 2`, with the shorter side as the size of a pad that is not round (P8:
 //!   (1.000 + 0.200 - 2.000) / 2 = -0.400), and a note counts the pads whose opening ends up
-//!   smaller than the pad. The paste expansion has no place in the board model and is only
+//!   smaller than the pad. On `paste`, pad C has its paste turned off (Enabled unticked): mode
+//!   byte 101 is 2 and bytes 86..90 hold -99999 mil, so a paste expansion below -1000 mm is
+//!   read as no paste, not as an expansion; B has its own 0.100. The paste expansion has no
+//!   place in the board model and is only
 //!   counted in a note.
 //! - Pad holes that are not round (`pad-hole-shapes`): the hole size at byte 45 of block 4 is a
 //!   slot's width (0.800) or a square's side (1.000), and block 5 has its 651 bytes, with the
@@ -87,6 +90,14 @@
 //!   (45.0 on the turned slot, 0.0 on the others). Byte 60 is the plating as on a round hole. The
 //!   board model holds a round drill only, so such a pad is read with a round hole of that width
 //!   or side, and a note names it.
+//! - Chamfered and custom pads (`pad-shapes-custom`): pad 2 (a rectangle with its two upper
+//!   corners cut) and pad 3 (an L, 3 x 3) have a size of only 0.025 x 0.025 (1 mil) in block 4;
+//!   their copper is a region on their layer in `/Regions6/Data` whose text ends in
+//!   `PADINDEX=2` and `PADINDEX=1`: the pad's record number in `/Pads6/Data` counted from 1 (the
+//!   records run pad 3, 2, 1 here, and the L is `PADINDEX=1`, the chamfered outline 2). Such a
+//!   pad is read as a polygon pad of its region's outline, so its finish and mask opening follow
+//!   that outline, not the 1 mil square; the region is not read a second time. A rounded
+//!   rectangle (pad 1) keeps its own shape code, as on `pad-shapes`.
 //! - Pad shapes (`pad-shapes`, checked against the Gerber file Altium wrote for its top copper):
 //!   shape code 3 is an octagon, a rectangle of the pad's size with each corner cut off at 45
 //!   degrees by a quarter of the shorter side (0.25 on a 2.000 x 1.000 pad, 0.375 on 1.500 x
@@ -170,6 +181,11 @@ const MASK_MANUAL: u8 = 2;
 const MAX_ANGLE_DEG: f64 = 360.0;
 const PAD_BLOCKS: usize = 6;
 const PAD_GEOMETRY_BLOCK: usize = 4;
+/// The pad block with its designator: a length byte, then that many bytes (`\x01R` for "R").
+const PAD_NAME_BLOCK: usize = 0;
+/// Geometry bytes 7..9: the component index, `ff ff` for a free pad.
+const COMPONENT_INDEX_AT: usize = 7;
+const NO_COMPONENT_INDEX: u16 = 0xffff;
 /// The pad block with a size, shape and corner per layer (only rounded rectangles have one).
 const PAD_LAYER_TABLE_BLOCK: usize = 5;
 /// Where in that block the top layer's shape is, and its corner percentage.
@@ -208,6 +224,19 @@ pub(crate) struct Drill {
     /// The hole diameter.
     pub hole: f64,
     pub net: Option<String>,
+    /// What the hole is, for the plane rules' scopes.
+    pub of: DrillOf,
+}
+
+/// What a drilled hole belongs to, as a rule's scope sees it.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum DrillOf {
+    Via,
+    /// A pad with the name Altium's queries give it: `Free-` and its designator for a pad of no
+    /// component (`plane-polygon-connect`: `Name = 'Free-D'` matched pad D).
+    Pad(String),
+    /// A pad of a component, whose name in a query no test board shows yet.
+    ComponentPad,
 }
 
 /// The copper layers of a board, built from `/Board6/Data`.
@@ -710,11 +739,19 @@ pub(crate) fn tracks(
     Ok(items)
 }
 
+/// A pad's designator from its name block: a length byte and that many bytes.
+fn pad_designator(block: &[u8]) -> String {
+    let n = block.first().copied().map_or(0, usize::from);
+    String::from_utf8_lossy(block.get(1..1 + n).unwrap_or_default()).into_owned()
+}
+
 /// Reads the pads from `/Pads6/Data`. Each through-hole pad's hole also goes into `drills`.
 pub(crate) fn pads(
     data: &[u8],
     layers: &CopperLayers,
     components: &Components,
+    pad_regions: &[OtherRegion],
+    used_regions: &mut std::collections::BTreeSet<usize>,
     drills: &mut Vec<Drill>,
     notes: &mut Vec<Note>,
 ) -> Result<Vec<CopperItem>, String> {
@@ -745,6 +782,7 @@ pub(crate) fn pads(
         let mut cursor = at + 1;
         let mut geometry: Option<&[u8]> = None;
         let mut layer_table: &[u8] = &[];
+        let mut name_block: &[u8] = &[];
         for block in 0..PAD_BLOCKS {
             let len = read_u32(data, cursor).ok_or("pad block length cut short")?;
             let start = cursor + 4;
@@ -752,7 +790,9 @@ pub(crate) fn pads(
                 .checked_add(len)
                 .filter(|&e| e <= data.len())
                 .ok_or("pad block is longer than the stream")?;
-            if block == PAD_GEOMETRY_BLOCK {
+            if block == PAD_NAME_BLOCK {
+                name_block = data.get(start..end).unwrap_or_default();
+            } else if block == PAD_GEOMETRY_BLOCK {
                 geometry = data.get(start..end);
             } else if block == PAD_LAYER_TABLE_BLOCK {
                 layer_table = data.get(start..end).unwrap_or_default();
@@ -785,6 +825,10 @@ pub(crate) fn pads(
                 at: at_point,
                 hole,
                 net: layers.net(g).ok().flatten(),
+                of: match read_u16(g, COMPONENT_INDEX_AT) {
+                    Some(c) if c != NO_COMPONENT_INDEX => DrillOf::ComponentPad,
+                    _ => DrillOf::Pad(format!("Free-{}", pad_designator(name_block))),
+                },
             });
         }
         let shapes = g.get(49..52).ok_or("pad shapes cut short")?;
@@ -818,6 +862,29 @@ pub(crate) fn pads(
                     at_point.x, at_point.y
                 ));
             }
+        }
+        // A chamfered or custom pad: its copper is the regions that name this pad.
+        let own_regions: Vec<(usize, &OtherRegion)> = pad_regions
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| {
+                r.pad_index == Some(count) && layers.copper_index(r.layer) == Some(layer)
+            })
+            .collect();
+        if !own_regions.is_empty() {
+            used_regions.extend(own_regions.iter().map(|(i, _)| *i));
+            items.push(CopperItem::PolygonPad {
+                bottom: None,
+                layer,
+                at: at_point,
+                shapes: own_regions.iter().map(|(_, r)| r.contour.clone()).collect(),
+                drill: (hole > 0.0).then_some(hole),
+                plated,
+                owner: components.owner(g),
+                tented,
+                mask_expansion,
+            });
+            continue;
         }
         let rounded = (layer_table.get(LAYER_TABLE_TOP_SHAPE) == Some(&ROUNDED_RECTANGLE))
             .then(|| layer_table.get(LAYER_TABLE_TOP_CORNER).copied())
@@ -1012,11 +1079,19 @@ fn from_hole_edge(e: f64, hole: f64, size_x: f64, size_y: f64) -> f64 {
 struct OwnMasks {
     inside_pad: usize,
     paste: usize,
+    paste_off: usize,
 }
+
+/// A paste expansion below this many mm is Altium's "no paste" (-99999 mil on `paste`'s pad C).
+const PASTE_OFF_BELOW_MM: f64 = -1000.0;
 
 impl OwnMasks {
     fn count(&mut self, mask: &PadMask) {
-        self.paste += usize::from(mask.paste.is_some());
+        match mask.paste {
+            Some(e) if e < PASTE_OFF_BELOW_MM => self.paste_off += 1,
+            Some(_) => self.paste += 1,
+            None => {}
+        }
     }
 
     fn into_note(self, notes: &mut Vec<Note>) {
@@ -1038,6 +1113,15 @@ impl OwnMasks {
                     "{} pad(s) have a paste mask expansion of their own; the paste mask is not \
                      drawn",
                     self.paste
+                ),
+            });
+        }
+        if self.paste_off > 0 {
+            notes.push(Note {
+                severity: Severity::Info,
+                message: format!(
+                    "{} pad(s) have their paste turned off; the paste mask is not drawn",
+                    self.paste_off
                 ),
             });
         }
@@ -1158,6 +1242,7 @@ pub(crate) fn vias(
             at,
             hole: drill,
             net: layers.net(body).ok().flatten(),
+            of: DrillOf::Via,
         });
         items.push(CopperItem::Via {
             at,
@@ -1257,6 +1342,7 @@ pub(crate) fn fills(
 /// a filled silkscreen area (`overlay-region-fill`). Any other region is left out with a note.
 pub(crate) fn regions(
     others: &[OtherRegion],
+    used_by_pads: &std::collections::BTreeSet<usize>,
     layers: &mut CopperLayers,
     graphics: &mut Vec<Graphic>,
     mask_openings: &mut Vec<board_model::MaskOpening>,
@@ -1265,8 +1351,12 @@ pub(crate) fn regions(
     let mut items = Vec::new();
     let mut poured = 0usize;
     let mut not_copper: std::collections::BTreeMap<String, usize> = Default::default();
+    let mut on_paste = std::collections::BTreeMap::<String, usize>::new();
     let (mut keepout_layer, mut keepouts) = (0usize, std::collections::BTreeMap::new());
-    for region in others {
+    for (n, region) in others.iter().enumerate() {
+        if used_by_pads.contains(&n) {
+            continue;
+        }
         let layer = layers.copper_index(region.layer);
         let name = layers.name(region.layer);
         if name == KEEPOUT_LAYER {
@@ -1309,6 +1399,9 @@ pub(crate) fn regions(
                     });
                 }
             }
+            (None, Some("0")) if is_paste(&layers.name(region.layer)) => {
+                *on_paste.entry(layers.name(region.layer)).or_default() += 1;
+            }
             (_, kind) => {
                 let what = format!(
                     "region(s) of KIND {} on {}",
@@ -1334,7 +1427,21 @@ pub(crate) fn regions(
         });
     }
     keepout_notes("region(s)", keepout_layer, keepouts, notes);
+    // `paste`: a solid region on Top Paste is an opening in the paste stencil.
+    for (layer, count) in on_paste {
+        notes.push(Note {
+            severity: Severity::Info,
+            message: format!(
+                "{count} region(s) on {layer} left out: the paste mask (the stencil) is not drawn"
+            ),
+        });
+    }
     items
+}
+
+/// Whether a layer is one of the paste layers, by its name (`Top Paste`, `Bottom Paste`).
+fn is_paste(name: &str) -> bool {
+    name == "Top Paste" || name == "Bottom Paste"
 }
 
 /// The side of a solder mask layer, by its name (`Top Solder`, `Bottom Solder`).
@@ -1643,13 +1750,24 @@ mod tests {
             &[PAD_RECORD, 0xff, 0xff, 0xff, 0x7f],
             &l,
             &none,
+            &[],
+            &mut Default::default(),
             &mut Vec::new(),
             &mut notes
         )
         .is_err());
         let mut few_blocks = vec![PAD_RECORD];
         few_blocks.extend_from_slice(&0u32.to_le_bytes());
-        assert!(pads(&few_blocks, &l, &none, &mut Vec::new(), &mut notes).is_err());
+        assert!(pads(
+            &few_blocks,
+            &l,
+            &none,
+            &[],
+            &mut Default::default(),
+            &mut Vec::new(),
+            &mut notes
+        )
+        .is_err());
         assert!(arcs(
             &record(ARC_RECORD, 40, |_| ()),
             &mut m,

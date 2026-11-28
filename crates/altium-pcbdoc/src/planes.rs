@@ -27,14 +27,32 @@
 //!   inside the ring; the copper between it and the ring is the plane's.
 //!
 //! Each region becomes a [`CopperItem::Region`] on its plane layer, its holes the clearances and
-//! the four pieces of air of each relief. Only board-wide rules are read: a rule for some objects
-//! only, or an override on one via or pad, is left out with a note.
+//! the four pieces of air of each relief.
+//!
+//! Rules for some objects (`plane-polygon-connect`, from `four-layer-planes`: free GND pads R, D
+//! and N at (6, 25), (12, 25) and (18, 25) on the GND plane Layer 1): `PlaneConnect_N` with
+//! `SCOPE1EXPRESSION=IsPad And (Name = 'Free-N')`, `PLANECONNECTSTYLE=NoConnect` and
+//! `PRIORITY=1`, `PlaneConnect_D` the same for `Free-D` with `Direct` and 2, and the board's
+//! own `All` rule (Relief) at 3. As everywhere in Altium the rule with the lowest priority
+//! number that takes an object wins. `Direct` joins the pad to the plane with no relief, so the
+//! plane keeps only the drill; `NoConnect` keeps the plane away as from another net's pad, a
+//! round clearance of the hole plus twice `CLEARANCE` (1.400 across with 0.3); our Layer 2,
+//! another net, has exactly that round all three pads. Altium's own Gerber of Layer 1
+//! (`tests/gerber/plane-polygon-connect.GP1`) confirms all three: a thermal of 2.324 / 1.816 with
+//! 0.254 spokes at 45 degrees round R, no flash at D, a 1.400 circle round N. Altium's Top Layer
+//! pour shows the same
+//! three joins poured in (four relief gaps round R, none round D, a round clearance round N),
+//! and is read as poured (see `board.rs`).
+//!
+//! The scopes read exactly: `All`, and `IsPad And (Name = '…')` for a free pad (`Free-` and its
+//! designator). Any other scope, or a name scope on a component's pad, whose query name no test
+//! board shows yet, is not read, and a note names the rule.
 
 use board_model::{Contour, CopperItem, Note, Point, Segment, Severity};
 
 use crate::board::{vertex_contour, Properties};
 use crate::components::text_records;
-use crate::copper::{CopperLayers, Drill};
+use crate::copper::{CopperLayers, Drill, DrillOf};
 
 /// The most rule records read before the file is treated as hostile.
 const MAX_RULES: usize = 100_000;
@@ -64,14 +82,57 @@ pub(crate) enum Connect {
         air_gap: f64,
         width: f64,
     },
+    /// Solid copper up to the hole.
+    Direct,
+    /// Not joined: kept away as from another net's via or pad.
+    Isolated,
 }
 
-/// The board-wide plane rules.
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// A `PlaneConnect` rule for some objects only, in a scope that is read exactly.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ObjectRule {
+    pub name: String,
+    pub priority: i64,
+    /// The free pad's query name the rule takes (`Free-D`).
+    pub pad: String,
+    pub connect: Connect,
+}
+
+/// The plane rules: the board-wide ones, and the connect rules for single pads.
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Rules {
     /// How far a plane keeps from the hole of a via or pad of another net.
     pub clearance: f64,
     pub connect: Connect,
+    /// The board-wide connect rule's priority (`i64::MAX` when the file has none).
+    pub connect_priority: i64,
+    /// Connect rules for single pads, by priority, best first.
+    pub for_pads: Vec<ObjectRule>,
+}
+
+impl Rules {
+    /// How a via or pad joins its own net's plane: the best of the rules that take it.
+    fn connect_for(&self, of: &DrillOf) -> Connect {
+        if let DrillOf::Pad(name) = of {
+            if let Some(rule) = self
+                .for_pads
+                .iter()
+                .find(|r| &r.pad == name && r.priority < self.connect_priority)
+            {
+                return rule.connect;
+            }
+        }
+        self.connect
+    }
+}
+
+/// The free pad a scope takes, for the one form read exactly: `IsPad And (Name = 'X')`.
+fn pad_scope(scope: &str) -> Option<String> {
+    let rest = scope.trim().strip_prefix("IsPad And (Name = '")?;
+    let name = rest.strip_suffix("')")?;
+    // Only a free pad's query name is known; one for a component's pad is not read yet.
+    (name.len() > "Free-".len() && name.starts_with("Free-") && !name.contains('\''))
+        .then(|| name.to_string())
 }
 
 /// Reads the board-wide `PlaneClearance` and `PlaneConnect` rules from `/Rules6/Data`, with the
@@ -81,8 +142,9 @@ pub(crate) fn rules(data: Option<&[u8]>, notes: &mut Vec<Note>) -> Result<Rules,
         Some(data) => rule_records(data)?,
         None => Vec::new(),
     };
-    let mut narrower = 0usize;
-    let mut pick = |kind: &str| -> Option<&Properties> {
+    let mut narrower: Vec<String> = Vec::new();
+    let mut for_pads = Vec::new();
+    let mut pick = |kind: &str| -> Option<(i64, &Properties)> {
         let mut best: Option<(i64, &Properties)> = None;
         for rule in &records {
             if rule.get("RULEKIND").map(str::trim) != Some(kind)
@@ -91,22 +153,31 @@ pub(crate) fn rules(data: Option<&[u8]>, notes: &mut Vec<Note>) -> Result<Rules,
                 continue;
             }
             let all = |key: &str| rule.get(key).is_none_or(|v| v.trim() == "All");
-            if !(all("SCOPE1EXPRESSION") && all("SCOPE2EXPRESSION")) {
-                narrower += 1;
-                continue;
-            }
             let priority = rule
                 .get("PRIORITY")
                 .and_then(|p| p.trim().parse().ok())
                 .unwrap_or(i64::MAX);
+            if !(all("SCOPE1EXPRESSION") && all("SCOPE2EXPRESSION")) {
+                let pad = rule.get("SCOPE1EXPRESSION").and_then(pad_scope);
+                match pad.filter(|_| kind == "PlaneConnect" && all("SCOPE2EXPRESSION")) {
+                    Some(pad) => for_pads.push((priority, pad, rule)),
+                    None => narrower.push(
+                        rule.get("NAME")
+                            .map_or_else(|| kind.to_string(), |n| n.trim().to_string()),
+                    ),
+                }
+                continue;
+            }
             if best.is_none_or(|(p, _)| priority < p) {
                 best = Some((priority, rule));
             }
         }
-        best.map(|(_, rule)| rule)
+        best
     };
-    let clearance_rule = pick("PlaneClearance");
-    let connect_rule = pick("PlaneConnect");
+    let clearance_rule = pick("PlaneClearance").map(|(_, r)| r);
+    let connect_pick = pick("PlaneConnect");
+    let connect_priority = connect_pick.map_or(i64::MAX, |(p, _)| p);
+    let connect_rule = connect_pick.map(|(_, r)| r);
     let mut missing = Vec::new();
     let clearance = match clearance_rule {
         Some(rule) => rule.length_mm("CLEARANCE")?,
@@ -132,21 +203,43 @@ pub(crate) fn rules(data: Option<&[u8]>, notes: &mut Vec<Note>) -> Result<Rules,
             ),
         });
     }
-    if narrower > 0 {
+    if !narrower.is_empty() {
         notes.push(Note {
             severity: Severity::Warning,
             message: format!(
-                "{narrower} plane rule(s) for some objects only are not read; the board-wide \
-                 rule is used for every via and pad"
+                "{} plane rule(s) for some objects only are not read ({}); the board-wide rule \
+                 is used for the vias and pads they name",
+                narrower.len(),
+                narrower.join(", ")
             ),
         });
     }
-    Ok(Rules { clearance, connect })
+    let mut pads = Vec::new();
+    for (priority, pad, rule) in for_pads {
+        pads.push(ObjectRule {
+            name: rule.get("NAME").unwrap_or_default().trim().to_string(),
+            priority,
+            pad,
+            connect: connect_of(rule, notes)?,
+        });
+    }
+    pads.sort_by_key(|r| r.priority);
+    Ok(Rules {
+        clearance,
+        connect,
+        connect_priority,
+        for_pads: pads,
+    })
 }
 
 /// The connection a `PlaneConnect` rule gives.
 fn connect_of(rule: &Properties, notes: &mut Vec<Note>) -> Result<Connect, String> {
     let style = rule.get("PLANECONNECTSTYLE").map(str::trim).unwrap_or("");
+    match style {
+        "Direct" => return Ok(Connect::Direct),
+        "NoConnect" => return Ok(Connect::Isolated),
+        _ => {}
+    }
     if style != "Relief" {
         notes.push(Note {
             severity: Severity::Warning,
@@ -169,11 +262,7 @@ fn connect_of(rule: &Properties, notes: &mut Vec<Note>) -> Result<Connect, Strin
     let length = |key: &str, default: f64| -> Result<f64, String> {
         Ok(rule.length_mm(key)?.unwrap_or(default))
     };
-    let Connect::Relief {
-        expansion,
-        air_gap,
-        width,
-    } = DEFAULT_CONNECT;
+    let (expansion, air_gap, width) = (0.508, 0.254, 0.254);
     Ok(Connect::Relief {
         expansion: length("RELIEFEXPANSION", expansion)?,
         air_gap: length("RELIEFAIRGAP", air_gap)?,
@@ -263,14 +352,21 @@ pub(crate) fn read(
         for drill in drills {
             let inside = contains(&edge, drill.at);
             let own = inside && net.is_some() && drill.net.as_deref() == net;
-            if own {
-                let Connect::Relief {
-                    expansion,
-                    air_gap,
-                    width,
-                } = rules.connect;
+            let connect = if own {
+                rules.connect_for(&drill.of)
+            } else {
+                Connect::Isolated
+            };
+            if let Connect::Relief {
+                expansion,
+                air_gap,
+                width,
+            } = connect
+            {
                 let inner = drill.hole / 2.0 + expansion;
                 holes.extend(relief(drill.at, inner, inner + air_gap, width));
+            } else if connect == Connect::Direct {
+                // Solid copper up to the hole, which every overlay has cut anyway.
             } else {
                 let radius = drill.hole / 2.0 + rules.clearance;
                 if inside || distance(&edge, drill.at) < radius {
@@ -340,8 +436,7 @@ pub(crate) fn read(
             severity: Severity::Info,
             message: format!(
                 "{} split-plane region(s) read as plane copper, with clearances and thermal \
-                 reliefs from the board-wide plane rules (overrides on single vias or pads are \
-                 not read)",
+                 reliefs from the plane rules",
                 planes.copper.len()
             ),
         });
@@ -676,6 +771,97 @@ mod tests {
         assert!(notes[0]
             .message
             .contains("1 plane rule(s) for some objects"));
+    }
+
+    /// plane-polygon-connect's rules: Direct for Free-D (priority 2), NoConnect for Free-N (1)
+    /// and the board-wide Relief (3); a pad takes the best rule that names it. A scope that is
+    /// not read exactly (a net, a component's pad) is named in a note.
+    #[test]
+    fn connect_rules_for_single_free_pads_win_by_priority() {
+        let connect = |priority: u32, scope: &str, style: &str, name: &str| {
+            rule(
+                0x32,
+                &format!(
+                    "|RULEKIND=PlaneConnect|NAME={name}|ENABLED=TRUE|PRIORITY={priority}\
+                     |SCOPE1EXPRESSION={scope}|SCOPE2EXPRESSION=All|PLANECONNECTSTYLE={style}\
+                     |RELIEFEXPANSION=20mil|RELIEFENTRIES=4|RELIEFCONDUCTORWIDTH=10mil\
+                     |RELIEFAIRGAP=10mil"
+                ),
+            )
+        };
+        let mut data = connect(
+            1,
+            "IsPad And (Name = 'Free-N')",
+            "NoConnect",
+            "PlaneConnect_N",
+        );
+        data.extend(connect(
+            2,
+            "IsPad And (Name = 'Free-D')",
+            "Direct",
+            "PlaneConnect_D",
+        ));
+        data.extend(connect(3, "All", "Relief", "PlaneConnect"));
+        data.extend(connect(1, "InNet('GND')", "Direct", "ByNet"));
+        data.extend(connect(
+            1,
+            "IsPad And (Name = 'R1-1')",
+            "Direct",
+            "ByComponentPad",
+        ));
+        let mut notes = Vec::new();
+        let r = rules(Some(&data), &mut notes).unwrap();
+        let pad = |name: &str| r.connect_for(&DrillOf::Pad(name.into()));
+        assert_eq!(pad("Free-N"), Connect::Isolated);
+        assert_eq!(pad("Free-D"), Connect::Direct);
+        assert!(matches!(pad("Free-R"), Connect::Relief { .. }));
+        assert!(matches!(
+            r.connect_for(&DrillOf::Via),
+            Connect::Relief { .. }
+        ));
+        assert!(matches!(
+            r.connect_for(&DrillOf::ComponentPad),
+            Connect::Relief { .. }
+        ));
+        let warnings: Vec<&str> = notes
+            .iter()
+            .map(|n| n.message.as_str())
+            .filter(|m| m.contains("for some objects"))
+            .collect();
+        assert_eq!(
+            warnings,
+            [
+                "2 plane rule(s) for some objects only are not read (ByNet, ByComponentPad); the \
+              board-wide rule is used for the vias and pads they name"
+            ]
+        );
+        assert_eq!(pad_scope("IsPad And (Name = 'Free-')"), None);
+        assert_eq!(
+            pad_scope("IsPad And (Name = 'Free-1')").as_deref(),
+            Some("Free-1")
+        );
+    }
+
+    /// A rule for one pad with a worse priority than the board-wide rule loses to it.
+    #[test]
+    fn a_board_wide_rule_of_better_priority_wins() {
+        let mut data = rule(
+            0x32,
+            "|RULEKIND=PlaneConnect|NAME=D|ENABLED=TRUE|PRIORITY=2\
+             |SCOPE1EXPRESSION=IsPad And (Name = 'Free-D')|SCOPE2EXPRESSION=All\
+             |PLANECONNECTSTYLE=Direct",
+        );
+        data.extend(rule(
+            0x32,
+            "|RULEKIND=PlaneConnect|NAME=All|ENABLED=TRUE|PRIORITY=1|SCOPE1EXPRESSION=All\
+             |SCOPE2EXPRESSION=All|PLANECONNECTSTYLE=Relief",
+        ));
+        let mut notes = Vec::new();
+        let r = rules(Some(&data), &mut notes).unwrap();
+        assert!(matches!(
+            r.connect_for(&DrillOf::Pad("Free-D".into())),
+            Connect::Relief { .. }
+        ));
     }
 
     #[test]

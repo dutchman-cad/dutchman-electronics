@@ -65,9 +65,11 @@ fn no_other_board_has_a_pad_with_its_own_mask() -> Result<(), Box<dyn std::error
                 continue;
             }
             if path.extension().is_none_or(|e| e != "PcbDoc")
-                || path
-                    .file_name()
-                    .is_some_and(|n| n == "pad-mask-overrides.PcbDoc" || n == "all-features.PcbDoc")
+                || path.file_name().is_some_and(|n| {
+                    n == "pad-mask-overrides.PcbDoc"
+                        || n == "all-features.PcbDoc"
+                        || n == "paste.PcbDoc"
+                })
             {
                 continue;
             }

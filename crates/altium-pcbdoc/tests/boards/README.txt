@@ -1,5 +1,5 @@
 Original test board made for Dutchman Electronics. Released under CC0 1.0 (public domain): https://creativecommons.org/publicdomain/zero/1.0/
-Exception: the TrueType font files embedded in one-dejavu-text, one-dejavu-bold-text, one-dejavu-italic-text and all-features are not CC0; they keep the DejaVu / Bitstream Vera license (LICENSE-DejaVu.txt). Everything else in those four boards is CC0.
+Exception: the TrueType font files embedded in one-dejavu-text, one-dejavu-bold-text, one-dejavu-italic-text, all-features and text-kinds are not CC0; they keep the DejaVu / Bitstream Vera license (LICENSE-DejaVu.txt). Everything else in those five boards is CC0.
 
 (The first line covers every board in this folder: empty-outline, outline-with-hole, one-track,
 one-resistor, one-via, one-plated-pad, one-rotated-pad, one-oval-pad, one-bottom-track,
@@ -1371,6 +1371,134 @@ mech-layer-kinds.PcbDoc  (from one-resistor)
 
 Saving embedded Arial in keepouts (no text uses it); it was removed as before (see "Paths inside
 the files").
+
+Feature gaps, second batch (teardrops, plane-polygon-connect, text-kinds, pad-shapes-custom,
+paste)
+---------------------------------------------------------------------------------------------
+Made on 2026-11-27, one feature per board, by my own scripts and by hand where noted; every
+object was read back and logged, and each board was saved and closed. Saving embedded Arial in
+each (no text uses it); it was removed as before (see "Paths inside the files"); text-kinds keeps
+only its DejaVu Sans Mono file, byte for byte the one of one-dejavu-text.
+
+teardrops.PcbDoc  (from empty-outline)
+    By my own script, net SIG and on it, all on Top Layer unless noted:
+        pad "1"   (10, 15), Multi-Layer, round 1.600, plated hole 0.800
+        via       (20, 15), diameter 0.600, hole 0.300, Top Layer to Bottom Layer
+        pad "2"   (30, 15), SMD, rectangle 1.500 x 1.000
+        via       (40, 15), diameter 0.600, hole 0.300
+        tracks    (10, 15) to (20, 15), (20, 15) to (30, 15), (30, 15) to (40, 15) and
+                  (40, 15) to (40, 22), width 0.254
+    Then by hand Tools > Teardrops with Altium's settings (Add, All, style Curved, Via/TH pad
+    30 % long and 70 % wide, SMD pad 100 % and 200 %, tracks and T-junctions on, Adjust
+    teardrop size on) and Force teardrops ticked: without it Altium made none here, though its
+    report said none failed. (A first try with tracks 0.250 wide, under the board's 0.254 width
+    rule, got none either and was thrown away.) Altium made seven teardrops, each a region on
+    Top Layer, KIND 0, net SIG, no polygon, with its teardrop flag set; their boxes:
+        via (20, 15)   x 19.548 to 19.786, y 14.790 to 15.210 (left)
+                       x 20.214 to 20.452, y 14.790 to 15.210 (right)
+        via (40, 15)   x 39.548 to 39.786, y 14.790 to 15.210 (left)
+                       x 39.790 to 40.210, y 15.214 to 15.452 (up)
+        pad "2"        x 28.999 to 29.253, y 14.746 to 15.254 (left)
+                       x 30.747 to 31.001, y 14.746 to 15.254 (right)
+        pad "1"        x 10.571 to 11.270, y 14.440 to 15.560
+    What the file stores: seven ordinary records in /Regions6/Data (and their copies in
+    /ShapeBasedRegions6/Data), text part KIND=0, SUBPOLYINDEX=-1, ISSHAPEBASED=FALSE; byte 1 of
+    each record is 28 (0x1C), where the other regions we looked at (keepouts, arc-region) have 12
+    (0x0C), so 0x10 marks a teardrop. Altium also saves the tool's settings in /Board6/Data:
+    TEARDROPPARAM_PERCENTFORVIAS_LENGTH=30, ..._WIDTH=70, ...PADS 100 / 200, ...TRACKS 100 / -1,
+    ...TJUNCTIONS 100 / 300 and TEARDROPPARAM_FLAGSEX=1004.
+
+plane-polygon-connect.PcbDoc  (from four-layer-planes)
+    Everything of four-layer-planes stays. By my own script: three free pads on net GND,
+    Multi-Layer, round 1.600, plated hole 0.800, named R, D and N, at (6, 25), (12, 25) and
+    (18, 25); a solid polygon pour on Top Layer, net GND, "remove dead copper" off, outline
+    (2, 22), (24, 22), (24, 28), (2, 28); and four rules:
+        name              kind             scope                            style      priority
+        PlaneConnect_N    PlaneConnect     IsPad And (Name = 'Free-N')      NoConnect  1
+        PlaneConnect_D    PlaneConnect     IsPad And (Name = 'Free-D')      Direct     2
+        PolygonConnect_N  PolygonConnect   IsPad And (Name = 'Free-N')      NoConnect  1
+        PolygonConnect_D  PolygonConnect   IsPad And (Name = 'Free-D')      Direct     2
+    The board's own rules stay last (priority 3): PlaneConnect, All, Relief (expansion 20mil,
+    conductor 10mil, 4 entries) and PolygonConnect, All, Relief (air gap 10mil, conductor 10mil,
+    4 entries, 90 Angle). Altium calls a free pad "Free-" and its name in a query (its teardrop
+    report says "Pad Free-1" too); Test Queries matched one pad each. Then by hand Repour All and
+    Rebuild Split Planes on All Layers in 2D. What Altium made on Top Layer: around R the relief
+    of the board rule (four air gaps), around D only the drill (the pour runs into the pad), and
+    around N a round clearance 2.120 across with no spoke; on Layer 1 (GND plane) the same three
+    kinds as Altium draws them (relief, direct, isolated).
+
+text-kinds.PcbDoc  (from empty-outline)
+    By my own script, twelve texts on Top Overlay, TrueType DejaVu Sans Mono (not bold, not
+    italic), height 1.000, rotation 0, no component; then by hand in each text's Properties
+    panel (String or Frame, Font Type, Justification, Inverted, Border Mode):
+        text    at (script)   setting by hand
+        INV     (3, 25)       String, Inverted, Border Mode Margin, Margin Border 0.5mm
+        OFS     (18, 25)      String, Inverted, Border Mode Offset, Text Offset 0.3mm
+        PLAIN   (33, 25)      none: a plain TrueType string for comparison
+        LT CT RT  y 17        Frame 10mm x 4mm; horizontal left / centre / right; vertical top
+        LM CM RM  y 10.5      the same, vertical middle
+        LB CB RB  y 4         the same, vertical bottom (Altium's default)
+    with x 3, 18 and 33 for the left, centre and right column (the frame's lower-left corner).
+    Altium offers Inverted only for TrueType (and barcode) texts, not for the stroke font, so
+    there is no inverted stroke text. The same three horizontal and three vertical justification
+    buttons are offered for a plain string too. Read back after the hand edits (TextKind 1, the
+    TrueType kind, on all twelve; location and box as Altium reports them):
+        INV     at (3, 25), box (2.5, 24.5) to (4.942, 26.126): the text plus the 0.5 margin
+        OFS     at (18, 25), box (17.7, 24.688) to (19.445, 25.637)
+        PLAIN   at (33, 25), box (33, 25) to (35.444, 25.626)
+        frames  location = the frame's lower-left corner, box = the frame, 10.000 x 4.000:
+                LT (3, 17), CT (18, 16.988), RT (33, 17), LM (3, 10.5), CM (18, 10.488),
+                RM (33, 10.5), LB (3, 4), CB (18, 3.988), RB (33, 4)
+    (The script placed the centre column at y 4, 10.5 and 17 like the others; Altium reports it
+    0.012 lower, from the moment the texts were made.) While a frame is
+    selected, Altium's panel shows the point its justification refers to (x 23 for the centre
+    column, 43 for the right one).
+
+pad-shapes-custom.PcbDoc  (from empty-outline)
+    By my own script, three free SMD pads on Top Layer (no net, simple pad stack) and an
+    L-shaped region; then by hand:
+        pad  at          made as                     by hand
+        1    (10, 15)    rectangle 2.000 x 1.000     Shape Rounded Rectangle: Altium's default
+                                                     corner radius 50% (0.25mm), all four corners
+        2    (20, 15)    rectangle 2.000 x 1.000     Shape Chamfered Rectangle, corner 50%
+                                                     (0.25mm); Lower Left and Lower Right
+                                                     unticked, so only the two upper corners are
+                                                     cut
+        3    (30.5, 14.5) rectangle 1.000 x 1.000    with the region selected too: Tools >
+                                                     Convert > Add Selected Region to Custom Pad
+    The region, KIND 0, Top Layer: (30, 14), (33, 14), (33, 15), (31, 15), (31, 17), (30, 17).
+    After the conversion pad 3's panel shows Shape Custom Shape and a size of 3mm x 3mm (the L's
+    box), center offset 0. (Tools > Convert > Create Custom Pad from Selected Outline did nothing
+    with the region selected.)
+    What the file stores: pads 2 and 3 have a size of 0.025 x 0.025 (10000 units, 1 mil) in
+    their geometry block (block 4, bytes 21..29); pad 1 keeps its 2.000 x 1.000. Block 5 is 651
+    bytes on pad 1, 666 bytes on pad 2 and empty (length 0) on pad 3. /Regions6/Data holds two regions on Top Layer, KIND 0, whose text part ends in
+    PADINDEX=1 and PADINDEX=2: the copper of pads 2 and 3 (pad 2 cut at its upper corners, pad 3
+    the L); their copies are in /ShapeBasedRegions6/Data, and a new stream, /CustomShapes/Data
+    (186 bytes), appears. Our reader at origin/main c825c14 draws all three on the top copper
+    without a note: pad 1 rounded, pad 2 a six-cornered outline from (19, 14.5) to (21, 15.5),
+    pad 3 the L from (30, 14) to (33, 17).
+
+paste.PcbDoc  (from one-resistor)
+    By my own script, the board's paste mask expansion rule (Altium's PasteMaskExpansion, scope
+    All, 0 before) set to -0.050; /Rules6/Data then reads EXPANSION=-1.9685mil. Three free SMD pads
+    on Top Layer, rectangle 2.000 x 1.000, no net, at y 22 and x 15 (A), 25 (B) and 35 (C), and a
+    region on Top Paste, KIND 0: (20, 5), (30, 5), (30, 9), (20, 9). Then by hand, in the pad's
+    Properties panel (Pad Stack > Paste):
+        A   nothing: paste by the rule (-0.05mm, Altium shows -14.5%)
+        B   Manual Expansion, 0.1mm (Altium shows 32%)
+        C   Manual Expansion (-0.05mm kept), Enabled unticked: no paste. Altium greys out
+            Enabled while the paste follows the rule.
+    R1's two pads keep the rule (-0.05). What the file stores in each pad's geometry block
+    (block 4): bytes 86..90 the paste expansion (-0.050 on A and R1's pads, 0.100 on B, and
+    -999990000 units, -99999 mil, on C), byte 101 the paste mode (1 by the rule, 2 Manual: B
+    and C), byte 1 12 (0x0C) except 13 (0x0D) on C, and byte 185 3 except 1 on C. The region
+    is an ordinary record in /Regions6/Data on layer byte 35 (Top Paste).
+
+A variants project (one-resistor-based, with a part Not Fitted) was tried and not made: in a
+project with only a board and no schematic, Altium 26.12.2's Project > Variants answered "Project
+must be compiled first" even after Project > Validate PCB Project. The project was closed
+without saving.
 
 Paths inside the files
 ----------------------

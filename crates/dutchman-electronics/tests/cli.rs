@@ -1326,6 +1326,116 @@ fn read_draws_hatched_and_outline_pours_as_altium_pours_them(
     Ok(())
 }
 
+/// teardrops: the seven teardrops join their pads, vias and tracks into one area of top copper,
+/// from pad "1" (round 1.600 at (10, 15)) to the track's end at (40, 22) and its round cap.
+#[cfg(feature = "altium")]
+#[test]
+fn read_unites_teardrops_with_their_copper() -> Result<(), Box<dyn std::error::Error>> {
+    let out = std::env::temp_dir().join(format!("de-teardrops-{}", std::process::id()));
+    let board = test_board("teardrops.PcbDoc");
+    let result = run(&[
+        "read",
+        &board.to_string_lossy(),
+        "--out",
+        &out.to_string_lossy(),
+        "--json",
+    ]);
+    std::fs::remove_dir_all(&out).ok();
+    let (ok, v) = result?;
+    assert!(ok, "{v}");
+    let copper = v["overlays"]
+        .as_array()
+        .and_then(|o| o.iter().find(|o| o["name"] == "Copper top"))
+        .ok_or("no top copper")?;
+    let areas = copper["areas"].as_array().ok_or("no areas")?;
+    assert_eq!(areas.len(), 1, "one united area");
+    let outer: Vec<(f64, f64)> = areas[0]["outer"]
+        .as_array()
+        .ok_or("no outer ring")?
+        .iter()
+        .filter_map(|p| Some((p[0].as_f64()?, p[1].as_f64()?)))
+        .collect();
+    let lo = |f: fn(&(f64, f64)) -> f64| outer.iter().map(f).fold(f64::MAX, f64::min);
+    let hi = |f: fn(&(f64, f64)) -> f64| outer.iter().map(f).fold(f64::MIN, f64::max);
+    let b = [lo(|p| p.0), hi(|p| p.0), lo(|p| p.1), hi(|p| p.1)];
+    // x from the pad's left edge 9.2 to the track's right edge 40.127 (the via ring 40.3), y from
+    // the pad's bottom 14.2 to the cap at 22.127.
+    let want = [9.2, 40.3, 14.2, 22.127];
+    assert!(
+        b.iter().zip(want).all(|(g, w)| (g - w).abs() < 0.001),
+        "{b:?}"
+    );
+    Ok(())
+}
+
+/// pad-shapes-custom: the finish and the mask opening of each pad follow its real outline, not
+/// the 1 mil square pads 2 and 3 store: each opening is the pad grown by the board's 0.1 mask
+/// expansion on every side.
+#[cfg(feature = "altium")]
+#[test]
+fn read_opens_the_mask_round_chamfered_and_custom_pads() -> Result<(), Box<dyn std::error::Error>> {
+    let out = std::env::temp_dir().join(format!("de-custom-pads-{}", std::process::id()));
+    let board = test_board("pad-shapes-custom.PcbDoc");
+    let result = run(&[
+        "read",
+        &board.to_string_lossy(),
+        "--out",
+        &out.to_string_lossy(),
+        "--json",
+    ]);
+    std::fs::remove_dir_all(&out).ok();
+    let (ok, v) = result?;
+    assert!(ok, "{v}");
+    let ring_box = |r: &serde_json::Value| -> Option<[f64; 4]> {
+        let pts: Vec<(f64, f64)> = r
+            .as_array()?
+            .iter()
+            .filter_map(|p| Some((p[0].as_f64()?, p[1].as_f64()?)))
+            .collect();
+        Some([
+            pts.iter().map(|p| p.0).fold(f64::MAX, f64::min),
+            pts.iter().map(|p| p.0).fold(f64::MIN, f64::max),
+            pts.iter().map(|p| p.1).fold(f64::MAX, f64::min),
+            pts.iter().map(|p| p.1).fold(f64::MIN, f64::max),
+        ])
+    };
+    let overlay = |name: &str| {
+        v["overlays"]
+            .as_array()
+            .and_then(|o| o.iter().find(|o| o["name"] == name))
+            .cloned()
+    };
+    let near = |a: &[f64; 4], b: &[f64; 4]| a.iter().zip(b).all(|(x, y)| (x - y).abs() < 0.001);
+    let mut openings: Vec<[f64; 4]> = overlay("Solder mask top").ok_or("no top mask")?["areas"][0]
+        ["holes"]
+        .as_array()
+        .ok_or("no openings")?
+        .iter()
+        .filter_map(ring_box)
+        .collect();
+    openings.sort_by(|a, b| a[0].total_cmp(&b[0]));
+    let want = [
+        [8.9, 11.1, 14.4, 15.6],
+        [18.9, 21.1, 14.4, 15.6],
+        [29.9, 33.1, 13.9, 17.1],
+    ];
+    assert_eq!(openings.len(), 3, "{openings:?}");
+    for (o, w) in openings.iter().zip(&want) {
+        assert!(near(o, w), "{o:?}, want {w:?}");
+    }
+    let mut finish: Vec<[f64; 4]> = overlay("Finish top").ok_or("no top finish")?["areas"]
+        .as_array()
+        .ok_or("no finish")?
+        .iter()
+        .filter_map(|a| ring_box(&a["outer"]))
+        .collect();
+    finish.sort_by(|a, b| a[0].total_cmp(&b[0]));
+    assert_eq!(finish.len(), 3, "{finish:?}");
+    assert!(near(&finish[1], &[19.0, 21.0, 14.5, 15.5]), "{finish:?}");
+    assert!(near(&finish[2], &[30.0, 33.0, 14.0, 17.0]), "{finish:?}");
+    Ok(())
+}
+
 /// pad-stack-tmb: the pad's top copper is its round 2.000, its bottom copper its 2.400 x 1.600
 /// rectangle, both at (25, 15).
 #[cfg(feature = "altium")]

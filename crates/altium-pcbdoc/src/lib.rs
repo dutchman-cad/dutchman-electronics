@@ -230,10 +230,19 @@ impl InputFormat for Altium {
                     .map_err(ReadError::Invalid)?,
             );
         }
+        let mut pad_regions = std::collections::BTreeSet::new();
         if let Some(data) = &pads6 {
             copper.extend(
-                copper::pads(data, &layers, &components, &mut drills, &mut notes)
-                    .map_err(ReadError::Invalid)?,
+                copper::pads(
+                    data,
+                    &layers,
+                    &components,
+                    &shape.other_regions,
+                    &mut pad_regions,
+                    &mut drills,
+                    &mut notes,
+                )
+                .map_err(ReadError::Invalid)?,
             );
         }
         if let Some(data) = &vias6 {
@@ -250,6 +259,7 @@ impl InputFormat for Altium {
         let mut mask_openings = Vec::new();
         copper.extend(copper::regions(
             &shape.other_regions,
+            &pad_regions,
             &mut layers,
             &mut graphics,
             &mut mask_openings,
