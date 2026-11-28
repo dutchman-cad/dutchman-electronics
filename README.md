@@ -14,6 +14,10 @@ Reads circuit boards into [SolidCraft](https://github.com/tangency-labs/solidcra
 
 It is an optional add-on. Dutchman works without it, and installing Dutchman does not install it. It is not part of cadmpeg: cadmpeg reads mechanical CAD, this reads electronics.
 
+## Install
+
+We provide ready-to-run downloads for Windows, macOS and Linux. We need Dutchman 0.4.0 or later. Follow [INSTALL.md](INSTALL.md) to install the electronics module.
+
 ## The goal
 
 Open an Altium board in SolidCraft and see what SolidCraft already shows for a KiCad board:
