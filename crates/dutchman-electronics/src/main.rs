@@ -36,7 +36,7 @@ const USAGE: &str = "usage: dutchman-electronics info [--json]
        dutchman-electronics read <board.PcbDoc|board.kicad_pcb|project.PrjPcb> --out <dir> [--json]
                                 [--param NAME=VALUE]... [--board NAME] [--project FILE]
                                 [--models <dir>]... [--copper outer|all]
-                                [--bodies file|standard]
+                                [--bodies file|standard] [--variant NAME]
                                 [--accept-overlay laminate]...
        dutchman-electronics --version
        dutchman-electronics formats
@@ -193,6 +193,7 @@ struct ReadArgs {
     parameters: Vec<(String, String)>,
     board: Option<String>,
     project: Option<String>,
+    variant: Option<String>,
     /// Folders to look for linked model files in, after the board's own.
     models: Vec<std::path::PathBuf>,
     /// Which copper layers get overlays.
@@ -214,6 +215,9 @@ fn read_args(words: &[&str]) -> Result<ReadArgs, String> {
             "--out" => out = Some(rest.next().ok_or("--out needs a folder")?.to_string()),
             "--board" => {
                 args.board = Some(rest.next().ok_or("--board needs a name")?.to_string());
+            }
+            "--variant" => {
+                args.variant = Some(rest.next().ok_or("--variant needs a name")?.to_string());
             }
             "--project" => {
                 args.project = Some(rest.next().ok_or("--project needs a file")?.to_string());
@@ -285,14 +289,18 @@ fn read(args: &ReadArgs) -> ExitCode {
     };
     let built = package::open(path, &with).and_then(|input| {
         let opened = input.notes.clone();
-        let mut built = package::build_accepting(
+        let mut built = package::build_selected(
             &input.path,
             &input.bytes,
             &input.parameters,
             &args.models,
-            args.copper,
-            args.bodies,
-            args.accept,
+            &package::Selection {
+                copper: args.copper,
+                bodies: args.bodies,
+                accept: args.accept,
+                variant: args.variant.as_deref(),
+                variants: &input.variants,
+            },
         )?;
         built.add_notes(opened);
         Ok(built)
@@ -393,6 +401,8 @@ mod tests {
             "Note=a=b",
             "--project",
             "q.PrjPcb",
+            "--variant",
+            "Lite",
             "--models",
             "lib",
             "--models",
@@ -418,6 +428,7 @@ mod tests {
                 ],
                 board: Some("b2".into()),
                 project: Some("q.PrjPcb".into()),
+                variant: Some("Lite".into()),
                 models: vec!["lib".into(), "more".into()],
                 copper: dutchman_electronics::overlay::Copper::All,
                 bodies: dutchman_electronics::package::Bodies::Standard,
@@ -443,6 +454,7 @@ mod tests {
             &["b.PcbDoc", "c.PcbDoc", "--out", "d"],
             &["b.PcbDoc", "--out"],
             &["b.PcbDoc", "--out", "d", "--project"],
+            &["b.PcbDoc", "--out", "d", "--variant"],
             &["b.PcbDoc", "--out", "d", "--models"],
             &["b.PcbDoc", "--out", "d", "--copper"],
             &["b.PcbDoc", "--out", "d", "--copper", "inner"],

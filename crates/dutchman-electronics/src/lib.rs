@@ -83,3 +83,5 @@ mod tests {
         assert_eq!(picked, Some("kicad_pcb"));
     }
 }
+
+mod variant;

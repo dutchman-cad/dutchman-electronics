@@ -117,6 +117,8 @@ pub struct Input {
     pub bytes: Vec<u8>,
     /// (name, value), each name once in any case.
     pub parameters: Vec<(String, String)>,
+    /// Assembly variants supplied by the Altium project.
+    pub variants: Vec<board_model::Variant>,
     /// Notes on how the input was opened (manifest notes), to add to the package's.
     pub notes: Vec<Value>,
 }
@@ -150,18 +152,22 @@ pub fn open(path: &Path, with: &Open<'_>) -> Result<Input, String> {
             path.display()
         ));
     } else {
-        let (parameters, notes) = match with.project {
+        let (parameters, variants, notes) = match with.project {
             Some(project) if is_kicad_project(project) => {
-                (kicad_project_variables(project)?, Vec::new())
+                (kicad_project_variables(project)?, Vec::new(), Vec::new())
             }
-            Some(project) => (project_parameters(project)?, Vec::new()),
-            None if is_kicad_board(path) => variables_next_to(path),
+            Some(project) => project_details(project)?,
+            None if is_kicad_board(path) => {
+                let (parameters, notes) = variables_next_to(path);
+                (parameters, Vec::new(), notes)
+            }
             None => parameters_next_to(path),
         };
         Input {
             path: path.to_path_buf(),
             bytes,
             parameters,
+            variants,
             notes,
         }
     };
@@ -183,17 +189,23 @@ pub fn open(path: &Path, with: &Open<'_>) -> Result<Input, String> {
     Ok(input)
 }
 
-/// The parameters of a project file, for a board passed on its own.
+/// Project data passed to the package, without learning format details here.
+type ProjectDetails = (Vec<(String, String)>, Vec<board_model::Variant>, Vec<Value>);
+
 #[cfg(feature = "altium")]
-fn project_parameters(project: &Path) -> Result<Vec<(String, String)>, String> {
+fn project_details(project: &Path) -> Result<ProjectDetails, String> {
     let bytes = read_input(project)?;
-    altium_pcbdoc::project::read(&bytes)
-        .map(|p| p.parameters)
-        .map_err(|e| format!("{}: {e}", project.display()))
+    let project =
+        altium_pcbdoc::project::read(&bytes).map_err(|e| format!("{}: {e}", project.display()))?;
+    Ok((
+        project.parameters,
+        project.variants,
+        project.notes.iter().map(note).collect(),
+    ))
 }
 
 #[cfg(not(feature = "altium"))]
-fn project_parameters(project: &Path) -> Result<Vec<(String, String)>, String> {
+fn project_details(project: &Path) -> Result<ProjectDetails, String> {
     Err(format!(
         "{}: this build does not read Altium projects",
         project.display()
@@ -211,23 +223,23 @@ const MAX_PROJECTS_NEXT_TO_BOARD: usize = 64;
 /// give none (a warning names them); none gives none, silently. A project that is a symbolic
 /// link leading out of the folder is not read.
 #[cfg(feature = "altium")]
-fn parameters_next_to(board: &Path) -> (Vec<(String, String)>, Vec<Value>) {
+fn parameters_next_to(board: &Path) -> ProjectDetails {
     let is_board = board
         .extension()
         .and_then(|e| e.to_str())
         .is_some_and(|e| e.eq_ignore_ascii_case("pcbdoc"));
     let (Some(file), true) = (board.file_name().and_then(|f| f.to_str()), is_board) else {
-        return (Vec::new(), Vec::new());
+        return (Vec::new(), Vec::new(), Vec::new());
     };
     let folder = match board.parent() {
         Some(p) if !p.as_os_str().is_empty() => p,
         _ => Path::new("."),
     };
     let Ok(real_folder) = folder.canonicalize() else {
-        return (Vec::new(), Vec::new());
+        return (Vec::new(), Vec::new(), Vec::new());
     };
     let Ok(entries) = std::fs::read_dir(folder) else {
-        return (Vec::new(), Vec::new());
+        return (Vec::new(), Vec::new(), Vec::new());
     };
     let mut found: Vec<PathBuf> = Vec::new();
     let mut too_many = false;
@@ -255,7 +267,7 @@ fn parameters_next_to(board: &Path) -> (Vec<(String, String)>, Vec<Value>) {
              only {MAX_PROJECTS_NEXT_TO_BOARD} were looked at. Use --project to name the project"
         )));
     }
-    let mut linking: Vec<(String, Vec<(String, String)>)> = Vec::new();
+    let mut linking: Vec<(String, altium_pcbdoc::project::Project)> = Vec::new();
     for path in &found {
         let name = path
             .file_name()
@@ -293,18 +305,19 @@ fn parameters_next_to(board: &Path) -> (Vec<(String, String)>, Vec<Value>) {
             }
         };
         if project.boards.iter().any(|link| links_to(link, file)) {
-            linking.push((name, project.parameters));
+            linking.push((name, project));
         }
     }
     match linking.len() {
-        0 => (Vec::new(), notes),
+        0 => (Vec::new(), Vec::new(), notes),
         1 => {
-            let (name, parameters) = linking.remove(0);
+            let (name, project) = linking.remove(0);
+            notes.extend(project.notes.iter().map(note));
             notes.push(json!({
                 "severity": "Info",
                 "message": format!("parameters taken from {name} next to the board"),
             }));
-            (parameters, notes)
+            (project.parameters, project.variants, notes)
         }
         n => {
             let names: Vec<String> = linking.into_iter().map(|(name, _)| name).collect();
@@ -313,14 +326,14 @@ fn parameters_next_to(board: &Path) -> (Vec<(String, String)>, Vec<Value>) {
              used. Use --project to name the one to take them from",
                 names.join(", ")
             )));
-            (Vec::new(), notes)
+            (Vec::new(), Vec::new(), notes)
         }
     }
 }
 
 #[cfg(not(feature = "altium"))]
-fn parameters_next_to(_: &Path) -> (Vec<(String, String)>, Vec<Value>) {
-    (Vec::new(), Vec::new())
+fn parameters_next_to(_: &Path) -> ProjectDetails {
+    (Vec::new(), Vec::new(), Vec::new())
 }
 
 /// True when a project's link (`\` or `/`, any case, a leading `.\` allowed) names the file
@@ -535,7 +548,8 @@ fn project_board(path: &Path, bytes: &[u8], choice: Option<&str>) -> Result<Inpu
         path: board_path,
         bytes,
         parameters: project.parameters,
-        notes: Vec::new(),
+        variants: project.variants,
+        notes: project.notes.iter().map(note).collect(),
     })
 }
 
@@ -644,11 +658,48 @@ pub fn build_accepting(
     bodies: Bodies,
     accept: Accept,
 ) -> Result<Package, String> {
+    build_selected(
+        path,
+        bytes,
+        parameters,
+        model_folders,
+        &Selection {
+            copper,
+            bodies,
+            accept,
+            ..Selection::default()
+        },
+    )
+}
+
+/// Package choices, including the project's variants when opening an Altium input.
+#[derive(Default)]
+pub struct Selection<'a> {
+    pub copper: crate::overlay::Copper,
+    pub bodies: Bodies,
+    pub accept: Accept,
+    pub variant: Option<&'a str>,
+    pub variants: &'a [board_model::Variant],
+}
+
+/// Builds a package with an explicit assembly choice.
+pub fn build_selected(
+    path: &Path,
+    bytes: &[u8],
+    parameters: &[(String, String)],
+    model_folders: &[PathBuf],
+    selection: &Selection<'_>,
+) -> Result<Package, String> {
     let extension = path.extension().and_then(|e| e.to_str());
     let head = bytes.get(..bytes.len().min(4096)).unwrap_or_default();
     let format = crate::detect(head, extension)
         .ok_or_else(|| "not a board file this module reads".to_string())?;
     let mut outcome = read_board(format.as_ref(), path, bytes, parameters)?;
+    if !selection.variants.is_empty() {
+        outcome.board.variants = selection.variants.to_vec();
+    }
+    let selected_notes = crate::variant::apply(&mut outcome.board, selection.variant)?;
+    outcome.notes.extend(selected_notes);
     #[cfg(feature = "altium")]
     if format.id() == board_model::InputFormat::id(&altium_pcbdoc::Altium) {
         let notes = altium_pcbdoc::special_strings::resolve_texts(&mut outcome.board, parameters);
@@ -671,7 +722,18 @@ pub fn build_accepting(
     } else {
         outcome.board.name.clone()
     };
-    build_outcome(outcome, format.as_ref(), &name, copper, bodies, accept)
+    let mut package = build_outcome(
+        outcome,
+        format.as_ref(),
+        &name,
+        selection.copper,
+        selection.bodies,
+        selection.accept,
+    )?;
+    if let (Some(variant), Some(manifest)) = (selection.variant, package.manifest.as_object_mut()) {
+        manifest.insert("variant".into(), json!(variant));
+    }
+    Ok(package)
 }
 
 /// Builds a package from an already read board, including its notes, models and fonts.
@@ -793,6 +855,7 @@ pub fn build_outcome(
             "ok": true,
             "name": name,
             "units": "mm",
+            "variants": board.variants.iter().map(|v| &v.name).collect::<Vec<_>>(),
             "source": { "format": format.id(), "format_name": format.name() },
         });
         if let Some(map) = manifest.as_object_mut() {
