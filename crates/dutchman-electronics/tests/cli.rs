@@ -11,6 +11,20 @@ fn run(args: &[&str]) -> Result<(bool, serde_json::Value), Box<dyn std::error::E
 }
 
 #[test]
+fn version_is_one_line_for_the_launcher() -> Result<(), Box<dyn std::error::Error>> {
+    let out = Command::new(env!("CARGO_BIN_EXE_dutchman-electronics"))
+        .arg("--version")
+        .output()?;
+    assert!(out.status.success());
+    assert!(out.stderr.is_empty());
+    assert_eq!(
+        String::from_utf8(out.stdout)?,
+        format!("dutchman-electronics {}\n", env!("CARGO_PKG_VERSION"))
+    );
+    Ok(())
+}
+
+#[test]
 fn info_json_is_one_module_info_object() -> Result<(), Box<dyn std::error::Error>> {
     let (ok, v) = run(&["info", "--json"])?;
     assert!(ok);
