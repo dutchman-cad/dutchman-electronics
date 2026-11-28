@@ -2458,7 +2458,10 @@ fn filled_graphics_keep_holes_and_follow_the_conformal_split() {
         laminate_ink > 23.94 - 0.001 && laminate_ink < 23.94 + 6.0 * thin::THIN + 0.001,
         "{laminate_ink}"
     );
-    assert!((laminate_ink + copper_ink - 46.0).abs() < 0.001, "{copper_ink}");
+    assert!(
+        (laminate_ink + copper_ink - 46.0).abs() < 0.001,
+        "{copper_ink}"
+    );
     // The same area on copper draws its holes too, through the shared graphics path.
     b.copper.clear();
     if let Graphic::Area { layer, .. } = &mut b.graphics[0] {
