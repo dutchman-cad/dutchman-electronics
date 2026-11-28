@@ -1348,6 +1348,7 @@ fn overlays_within(
         let all_drilled = holes.union();
         let face = outline.map(|o| o.difference(&cutouts.union()));
         let mut built = Vec::new();
+        let mut slivers = Vec::new();
         for (side, f, sign) in [("top", &top, 1.0), ("bottom", &bottom, -1.0)] {
             // The top side stacks up from the face at z = thickness, the bottom down from z = 0.
             let base = if sign > 0.0 { thickness } else { 0.0 };
@@ -1382,15 +1383,24 @@ fn overlays_within(
             let opening_all = f.opening.union();
             let finish = copper_all.intersection(&opening_all);
             // Silkscreen is not printed over holes, via caps, or the mask openings.
-            let silk = f
-                .silk
-                .union()
+            // We thin ink before clipping, then remove any extra points the cuts leave.
+            // Both passes precede the split, so its shared mask edges stay exact.
+            let text = f.silk.outlined_union();
+            let (silk, before) = thin::thin_keeping(&f.silk.union(), thin::THIN, &text);
+            let silk = silk
                 .difference(&drilled)
                 .difference(&f.via_drill.union())
                 .difference(&opening_all);
+            let (silk, after) = thin::thin_keeping(&silk, thin::THIN, &text);
+            let n = before.saturating_add(after);
+            if n > 0 {
+                slivers.push((format!("Silkscreen {side}"), n));
+            }
             // It lies on the mask coat, so over copper it sits higher than over bare laminate.
             // "Over copper" means over the copper and the skirt of coat round it.
-            let skirt = copper_all.buffer(MASK_COAT);
+            // We include copper explicitly: a buffer must never leave a hole over a thin
+            // track. Mask and silk use the same region and its exact complement.
+            let skirt = copper_all.union(&copper_all.buffer(MASK_COAT));
             let silk_over_copper = silk.intersection(&skirt);
             let silk_over_laminate = silk.difference(&skirt);
             let plain = |name: String,
@@ -1548,8 +1558,13 @@ fn overlays_within(
         }
         // Fewer points, the same outlines within THIN, and no slivers without surface (#126);
         // letter outlines of TrueType texts are left as fine as they were drawn.
-        let mut slivers = Vec::new();
         for b in &mut built {
+            // We keep the complementary mask and silk pieces exactly as split. Dropping a
+            // small piece exposes copper; moving either shared edge independently can make
+            // the pieces overlap or leave a gap. The face budget still bounds extrusion.
+            if matches!(b.kind, "mask" | "silkscreen") {
+                continue;
+            }
             let (shape, n) = thin::thin_keeping(&b.shape, thin::THIN, &b.text);
             b.shape = shape;
             if n > 0 {
