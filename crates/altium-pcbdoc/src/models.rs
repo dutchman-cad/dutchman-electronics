@@ -70,9 +70,20 @@
 //!   after the text is only its square box, (24.5, 14.5) to (25.5, 15.5). The reader writes it as
 //!   an extruded circle, which is the same solid. One tilted by `MODEL.3D.ROTX` or `ROTY` is not
 //!   read yet (no test board has one), and the body is left out with a note.
-//! - `MODEL.MODELTYPE=3` is a sphere (`body-sphere`, `MODEL.SPHERE.RADIUS`, its center on the top
-//!   face: `STANDOFFHEIGHT` minus and `OVERALLHEIGHT` plus the radius). The board model has no
-//!   sphere, so it is left out with a note.
+//! - `MODEL.MODELTYPE=3` is a sphere (`body-sphere`, `MODEL.SPHERE.RADIUS` 19.685 mil, 0.5, its
+//!   center at `MODEL.2D.X`/`MODEL.2D.Y`, R1's center, and on the top face: `STANDOFFHEIGHT` is
+//!   minus and `OVERALLHEIGHT` plus the radius). It is read as a sphere whose center lies
+//!   `STANDOFFHEIGHT` plus the radius above the part's seating plane.
+//! - A part may have several bodies (`body-two-extruded`: R1's 1.600 x 0.800 box, standoff 0 and
+//!   height 0.450, gray, and a 0.800 x 0.400 box on top of it, standoff 0.450 and height 0.750,
+//!   (0, 160, 224)). Every body is kept. `/ComponentBodies6/Data` lists the added box first, so
+//!   the bodies are put in order of how high they start (an extruded body's standoff, a sphere's
+//!   bottom, a model file's `MODEL.3D.DZ`), the file's order where that is the same: the body
+//!   that sits on the board comes first, as the part's main body.
+//! - A body with no component (component index `ff ff`; `arc-region`'s rounded slot on Mechanical
+//!   2, box (28, 13) to (38, 17), standoff 0, height 0.508) is a free body, read the same way in
+//!   board coordinates (from the board's top face up). One projected onto the bottom
+//!   (`BODYPROJECTION=1`) has no test board yet and is left out with a note.
 //! - `/ShapeBasedComponentBodies6/Data` repeats the bodies; see `shape_based.rs`. Where it has
 //!   arcs, an extruded body's outline is read from there: on `body-arc-outline` R1's body is a
 //!   rounded slot, box (24.2, 14.6) to (25.8, 15.4) with ends of radius 0.4 about (24.6, 15) and
@@ -132,7 +143,31 @@ static NOT_LISTED: Linked = Linked {
     checksum: None,
 };
 
-/// Reads the component bodies and gives each placed component the model of its first body.
+/// Where a free body (one that belongs to no part) is read: board coordinates, as for a part at
+/// the board's origin, not turned, on top.
+fn board_frame() -> Placement {
+    Placement {
+        designator: String::new(),
+        footprint: String::new(),
+        at: Point::default(),
+        rotation_deg: 0.0,
+        side: Side::Top,
+        models: Vec::new(),
+        comment: String::new(),
+    }
+}
+
+/// How high a body starts above its seating plane, to put a part's bodies in order.
+fn seat(m: &ModelRef) -> f64 {
+    match &m.source {
+        ModelSource::Extruded { standoff, .. } => *standoff,
+        ModelSource::Sphere { z, radius, .. } => z - radius,
+        _ => m.offset[2],
+    }
+}
+
+/// Reads the component bodies: every body of a placed component goes on it, and every body of
+/// no component into `components.free_models`.
 /// Returns the embedded models `/Models/Data` lists, by ID, for [`unpack`]. `linked6` is
 /// `/ModelsNoEmbed/Data`, the list of linked models.
 pub(crate) fn attach(
@@ -151,14 +186,25 @@ pub(crate) fn attach(
         Some(data) => linked_models(data)?,
         None => BTreeMap::new(),
     };
-    let mut extra = 0usize;
-    let mut free = 0usize;
+    let mut free_bottom = 0usize;
     let mut unread: BTreeMap<String, usize> = BTreeMap::new();
     let mut no_color = 0usize;
     for (n, body) in records(bodies6, notes)?.into_iter().enumerate() {
         let arcs = arcs.get(n).and_then(Option::as_ref);
         let Some(component) = read_u16(body, COMPONENT_AT).filter(|&c| c != NO_COMPONENT) else {
-            free += 1;
+            if body_props(body)?.0.get("BODYPROJECTION").map(str::trim) == Some("1") {
+                free_bottom += 1;
+                continue;
+            }
+            match model(body, arcs, &board_frame(), &models, &linked) {
+                Ok((m, color_read)) => {
+                    if !color_read {
+                        no_color += 1;
+                    }
+                    components.free_models.push(m);
+                }
+                Err(why) => *unread.entry(why).or_default() += 1,
+            }
             continue;
         };
         let Some(&Some(index)) = components.placement_of.get(usize::from(component)) else {
@@ -170,10 +216,6 @@ pub(crate) fn attach(
         let Some(placement) = components.placements.get_mut(index) else {
             continue;
         };
-        if !placement.models.is_empty() {
-            extra += 1;
-            continue;
-        }
         match model(body, arcs, placement, &models, &linked) {
             Ok((m, color_read)) => {
                 if !color_read {
@@ -184,18 +226,16 @@ pub(crate) fn attach(
             Err(why) => *unread.entry(why).or_default() += 1,
         }
     }
-    if extra > 0 {
+    for p in &mut components.placements {
+        p.models.sort_by(|a, b| seat(a).total_cmp(&seat(b)));
+    }
+    if free_bottom > 0 {
         notes.push(Note {
             severity: Severity::Dropped,
             message: format!(
-                "{extra} more 3D bod(ies) of components that already have one not read"
+                "{free_bottom} 3D bod(ies) that belong to no component and are projected onto the \
+                 bottom not read yet"
             ),
-        });
-    }
-    if free > 0 {
-        notes.push(Note {
-            severity: Severity::Dropped,
-            message: format!("{free} 3D bod(ies) that belong to no component not read"),
         });
     }
     if no_color > 0 {
@@ -258,16 +298,18 @@ fn linked_models(data: &[u8]) -> Result<BTreeMap<String, Linked>, String> {
 /// note naming the parts that use it, and those parts get no model.
 pub(crate) fn unpack(
     placements: &mut [Placement],
+    free: &mut Vec<ModelRef>,
     stored: &BTreeMap<String, Stored>,
     read: impl FnMut(&str) -> Result<Option<Vec<u8>>, String>,
     notes: &mut Vec<Note>,
 ) -> Vec<EmbeddedModel> {
-    unpack_within(placements, stored, read, MAX_INPUT_BYTES, notes)
+    unpack_within(placements, free, stored, read, MAX_INPUT_BYTES, notes)
 }
 
 /// [`unpack`] with all models together allowed to unpack to at most `budget` bytes.
 fn unpack_within(
     placements: &mut [Placement],
+    free: &mut Vec<ModelRef>,
     stored: &BTreeMap<String, Stored>,
     mut read: impl FnMut(&str) -> Result<Option<Vec<u8>>, String>,
     mut budget: usize,
@@ -282,6 +324,14 @@ fn unpack_within(
                     .or_default()
                     .push(p.designator.clone());
             }
+        }
+    }
+    for m in free.iter() {
+        if let ModelSource::Embedded { id } = &m.source {
+            users
+                .entry(id.clone())
+                .or_default()
+                .push("a free body".into());
         }
     }
     let limit = budget;
@@ -324,11 +374,24 @@ fn unpack_within(
             }
         }
     }
+    let usable =
+        |m: &ModelRef| !matches!(&m.source, ModelSource::Embedded { id } if failed.contains(id));
     for p in placements.iter_mut() {
-        p.models
-            .retain(|m| !matches!(&m.source, ModelSource::Embedded { id } if failed.contains(id)));
+        p.models.retain(usable);
     }
+    free.retain(usable);
     models
+}
+
+/// A body record's properties, and where its text ends (the outline follows).
+fn body_props(body: &[u8]) -> Result<(Properties, usize), String> {
+    let text_len = read_u32(body, BODY_SKIPPED).ok_or("record cut short")?;
+    let text_start = BODY_SKIPPED + 4;
+    let text_end = text_start
+        .checked_add(text_len)
+        .ok_or("record out of range")?;
+    let text = body.get(text_start..text_end).ok_or("record cut short")?;
+    Ok((Properties::parse(text), text_end))
 }
 
 /// The model of one body record and whether its color could be read (always true for a model
@@ -340,13 +403,7 @@ fn model(
     models: &BTreeMap<String, Stored>,
     linked: &BTreeMap<String, Linked>,
 ) -> Result<(ModelRef, bool), String> {
-    let text_len = read_u32(body, BODY_SKIPPED).ok_or("record cut short")?;
-    let text_start = BODY_SKIPPED + 4;
-    let text_end = text_start
-        .checked_add(text_len)
-        .ok_or("record out of range")?;
-    let text = body.get(text_start..text_end).ok_or("record cut short")?;
-    let props = Properties::parse(text);
+    let (props, text_end) = body_props(body)?;
     let to_component = |p: Point| to_component(p, placement);
     match props.get("MODEL.MODELTYPE").map(str::trim) {
         Some("0") => {
@@ -492,7 +549,31 @@ fn model(
             };
             Ok((model, color_read))
         }
-        Some("3") => Err("a sphere has no place in the board model yet".into()),
+        Some("3") => {
+            let radius = props
+                .length_mm("MODEL.SPHERE.RADIUS")?
+                .filter(|r| *r > 0.0)
+                .ok_or("a sphere with no radius")?;
+            let standoff = props.length_mm("STANDOFFHEIGHT")?.unwrap_or(0.0);
+            let center = Point {
+                x: props.length_mm("MODEL.2D.X")?.ok_or("no MODEL.2D.X")?,
+                y: props.length_mm("MODEL.2D.Y")?.ok_or("no MODEL.2D.Y")?,
+            };
+            let color = body_color(&props);
+            let color_read = color.is_some() || props.get("BODYCOLOR3D").is_none();
+            let model = ModelRef {
+                name: String::new(),
+                source: ModelSource::Sphere {
+                    center: on_part(to_component(center), placement.side),
+                    z: standoff + radius,
+                    radius,
+                },
+                offset: [0.0; 3],
+                rotation_deg: [0.0; 3],
+                color,
+            };
+            Ok((model, color_read))
+        }
         other => Err(format!("model type {} not read yet", other.unwrap_or("?"))),
     }
 }
@@ -831,7 +912,7 @@ mod tests {
             part("U2", "gone"),
         ];
         let mut notes = Vec::new();
-        let models = unpack(&mut parts, &stored(), streams, &mut notes);
+        let models = unpack(&mut parts, &mut Vec::new(), &stored(), streams, &mut notes);
         assert_eq!(models.len(), 1, "{models:?}");
         assert_eq!(
             (models[0].id.as_str(), models[0].name.as_str()),
@@ -850,7 +931,14 @@ mod tests {
     fn unpacking_stops_at_the_size_cap() {
         let mut parts = vec![part("R1", "good")];
         let mut notes = Vec::new();
-        let models = unpack_within(&mut parts, &stored(), streams, 5, &mut notes);
+        let models = unpack_within(
+            &mut parts,
+            &mut Vec::new(),
+            &stored(),
+            streams,
+            5,
+            &mut notes,
+        );
         assert!(models.is_empty());
         assert!(parts[0].models.is_empty());
         assert!(notes[0].message.contains("more than 5 bytes"), "{notes:?}");

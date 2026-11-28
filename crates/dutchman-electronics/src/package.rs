@@ -2225,10 +2225,11 @@ mod tests {
                 .into_iter()
                 .fold(f64::MIN, f64::max);
             for p in package.manifest["parts"].as_array().unwrap() {
-                // The board and plating stay at the top level; each component is in its side's folder.
+                // The board and plating stay at the top level; each component is in its side's
+                // folder, and a body of no part in the free bodies' folder.
                 let want = match p["name"].as_str().unwrap() {
                     BOARD_PART | PLATING_PART => None,
-                    _ => Some([GROUP_TOP, GROUP_BOTTOM]),
+                    _ => Some([GROUP_TOP, GROUP_BOTTOM, GROUP_FREE]),
                 };
                 match want {
                     None => assert!(p.get("group").is_none(), "{}: {p}", path.display()),

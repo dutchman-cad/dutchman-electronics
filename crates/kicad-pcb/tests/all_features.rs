@@ -94,7 +94,7 @@ fn area(c: &Contour) -> f64 {
 fn only_the_known_gaps_are_warned_about() {
     let o = read();
     let known = [
-        "3 text(s) on layer F.Fab (only silkscreen and copper texts are read)",
+        "4 text(s) on layer F.Fab (only silkscreen and copper texts are read)",
         "1 text(s) on layer B.Fab (only silkscreen and copper texts are read)",
     ];
     let unexpected: Vec<&str> = o
@@ -301,8 +301,12 @@ fn the_zone_fill_keeps_clear_of_the_via_and_relieves_the_pad() {
             _ => None,
         })
         .collect();
-    assert_eq!(regions.len(), 1);
-    let (l, contour, holes) = regions[0];
+    // The board's zone, the filled trapezoid and U3's zone (each in its own test below).
+    assert_eq!(regions.len(), 3);
+    let (l, contour, holes) = *regions
+        .iter()
+        .find(|(_, contour, _)| (area(contour) - 800.0).abs() < 0.05)
+        .unwrap();
     assert_eq!(l, top);
     assert_eq!(holes.len(), 2);
     let copper = area(contour) - holes.iter().map(area).sum::<f64>();
@@ -339,10 +343,11 @@ fn tracks_and_an_arc_on_both_sides() {
                 to,
                 width,
                 net,
-            } => Some((*layer, *from, *to, *width, net.as_deref())),
+            } if net.is_some() => Some((*layer, *from, *to, *width, net.as_deref())),
             _ => None,
         })
         .collect();
+    // The two SIG tracks (the filled trapezoid's stroke is four tracks without a net).
     assert_eq!(tracks.len(), 2);
     assert!(tracks.iter().any(|(l, f, t, w, n)| *l == top
         && at(*f, 5.0, 45.0)
@@ -530,7 +535,7 @@ fn r1_and_r2_on_both_sides_with_models_and_shown_fields() {
     let r2 = part("R2");
     assert!(at(r1.at, 15.0, 58.0) && near(r1.rotation_deg, 0.0) && r1.side == Side::Top);
     assert!(at(r2.at, 35.0, 58.0) && near(r2.rotation_deg, 90.0) && r2.side == Side::Bottom);
-    assert_eq!(o.board.components.len(), 4, "U1, J1, R1, R2");
+    assert_eq!(o.board.components.len(), 5, "U1, J1, R1, R2, U3");
     for r in [r1, r2] {
         let m = r.models.first().unwrap();
         assert!(matches!(&m.source, ModelSource::External { file, .. } if file == "R_0603.step"));
@@ -589,4 +594,72 @@ fn r1_and_r2_on_both_sides_with_models_and_shown_fields() {
             "{content}: {t:?}"
         );
     }
+}
+
+/// The region on F.Cu whose outer contour covers about `outer` mm2.
+fn region_near(o: &ReadOutcome, outer: f64, within: f64) -> (&Contour, &Vec<Contour>) {
+    let top = layer(o, "F.Cu");
+    o.board
+        .copper
+        .iter()
+        .find_map(|c| match c {
+            CopperItem::Region {
+                layer,
+                contour,
+                holes,
+            } if *layer == top && (area(contour) - outer).abs() < within => Some((contour, holes)),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("no F.Cu region of {outer} mm2"))
+}
+
+#[test]
+fn a_filled_copper_shape_is_a_region_with_its_stroke() {
+    // The trapezoid (50,45) (58,45) (56,52) (52,52) on F.Cu, filled, stroke 0.2: a region of
+    // (8 + 4) / 2 * 7 = 42 mm2 and its four edges as 0.2 tracks without a net.
+    let o = read();
+    let (contour, holes) = region_near(&o, 42.0, 0.01);
+    assert!(holes.is_empty());
+    let pts: Vec<Point> = contour
+        .segments
+        .iter()
+        .map(|s| match *s {
+            Segment::Line { from, .. } => from,
+            Segment::Arc { .. } => panic!("a polygon has straight sides"),
+        })
+        .collect();
+    assert_eq!(pts.len(), 4);
+    for (x, y) in [(50.0, 45.0), (58.0, 45.0), (56.0, 52.0), (52.0, 52.0)] {
+        assert!(pts.iter().any(|p| at(*p, x, y)), "({x}, {y})");
+    }
+    let strokes = o
+        .board
+        .copper
+        .iter()
+        .filter(|c| matches!(c, CopperItem::Track { net: None, width, .. } if near(*width, 0.2)))
+        .count();
+    assert_eq!(strokes, 4);
+}
+
+#[test]
+fn a_zone_inside_a_footprint_is_copper() {
+    // U3's zone, (75,46) to (85,54) in board coordinates, round its plain hole of 1.0 at (80,50):
+    // KiCad's fill covers 78.2093 mm2, its corners nearest the hole 0.7509 to 0.7541 from it.
+    let o = read();
+    let (contour, holes) = region_near(&o, 80.0, 0.1);
+    assert_eq!(holes.len(), 1);
+    let copper = area(contour) - area(&holes[0]);
+    assert!((copper - 78.2093).abs() < 0.001, "{copper}");
+    for s in &holes[0].segments {
+        let Segment::Line { from, .. } = *s else {
+            panic!("fills are polygons")
+        };
+        let d = (from.x - 180.0).hypot(from.y + 150.0);
+        assert!((0.7509 - 0.001..=0.7541 + 0.001).contains(&d), "{d}");
+    }
+    assert!(o
+        .board
+        .components
+        .iter()
+        .any(|c| c.designator == "U3" && at(c.at, 80.0, 50.0)));
 }

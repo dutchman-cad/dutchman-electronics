@@ -1435,3 +1435,100 @@ fn read_opens_the_mask_round_chamfered_and_custom_pads() -> Result<(), Box<dyn s
     assert!(near(&finish[2], &[30.0, 33.0, 14.0, 17.0]), "{finish:?}");
     Ok(())
 }
+
+/// Each model file of a package: its id and its text.
+#[cfg(feature = "altium")]
+type ModelFiles = Vec<(String, String)>;
+
+/// Reads an Altium test board into a package and returns the manifest and each model file's text.
+#[cfg(feature = "altium")]
+fn package_of(name: &str) -> Result<(serde_json::Value, ModelFiles), Box<dyn std::error::Error>> {
+    let out = std::env::temp_dir().join(format!(
+        "de-{}-{}",
+        name.replace('.', "-"),
+        std::process::id()
+    ));
+    let board = test_board(name);
+    let result = run(&[
+        "read",
+        &board.to_string_lossy(),
+        "--out",
+        &out.to_string_lossy(),
+        "--json",
+    ]);
+    let mut files = Vec::new();
+    if let Ok((_, v)) = &result {
+        for m in v["models"].as_array().into_iter().flatten() {
+            let (Some(id), Some(file)) = (m["id"].as_str(), m["file"].as_str()) else {
+                continue;
+            };
+            if let Ok(text) = std::fs::read_to_string(out.join(file)) {
+                files.push((id.to_string(), text));
+            }
+        }
+    }
+    std::fs::remove_dir_all(&out).ok();
+    let (ok, v) = result?;
+    assert!(ok, "{v}");
+    Ok((v, files))
+}
+
+/// The radii of a STEP file's surfaces of one kind (`SPHERICAL_SURFACE(`, `CYLINDRICAL_SURFACE(`).
+#[cfg(feature = "altium")]
+fn surface_radii(step: &str, kind: &str) -> Vec<f64> {
+    step.lines()
+        .filter(|l| l.contains(kind))
+        .filter_map(|l| l.rsplit(',').next())
+        .filter_map(|r| r.trim_end_matches(");").parse().ok())
+        .collect()
+}
+
+/// body-sphere, body-two-extruded and arc-region: one model per body. R1's sphere is one exact
+/// sphere of radius 0.5; R1's two boxes are two parts with their own models and colors; the
+/// free rounded slot is "Free body 1" in "Free bodies", with two exact half cylinders of radius
+/// 2.
+#[cfg(feature = "altium")]
+#[test]
+fn read_writes_spheres_further_bodies_and_free_bodies() -> Result<(), Box<dyn std::error::Error>> {
+    let part = |v: &serde_json::Value, name: &str| -> Option<serde_json::Value> {
+        v["parts"]
+            .as_array()?
+            .iter()
+            .find(|p| p["name"] == name)
+            .cloned()
+    };
+    let file = |files: &[(String, String)], id: &serde_json::Value| -> Option<String> {
+        files
+            .iter()
+            .find(|(i, _)| Some(i.as_str()) == id.as_str())
+            .map(|(_, t)| t.clone())
+    };
+
+    let (v, files) = package_of("body-sphere.PcbDoc")?;
+    let r1 = part(&v, "R1").ok_or("no R1")?;
+    let step = file(&files, &r1["model"]).ok_or("no sphere file")?;
+    let radii = surface_radii(&step, "SPHERICAL_SURFACE(");
+    assert!(
+        radii.len() == 1 && (radii[0] - 0.5).abs() < 0.001,
+        "{radii:?}"
+    );
+
+    let (v, files) = package_of("body-two-extruded.PcbDoc")?;
+    let main = part(&v, "R1").ok_or("no R1")?;
+    let second = part(&v, "R1 body 2").ok_or("no R1 body 2")?;
+    assert_ne!(main["model"], second["model"], "one model per body");
+    assert_eq!(
+        (main["color"].as_str(), second["color"].as_str()),
+        (Some("#808080"), Some("#00a0e0"))
+    );
+    assert!(file(&files, &main["model"]).is_some() && file(&files, &second["model"]).is_some());
+
+    let (v, files) = package_of("arc-region.PcbDoc")?;
+    let free = part(&v, "Free body 1").ok_or("no free body")?;
+    assert_eq!(free["group"], "Free bodies");
+    let step = file(&files, &free["model"]).ok_or("no free body file")?;
+    let radii = surface_radii(&step, "CYLINDRICAL_SURFACE(");
+    assert_eq!(radii.len(), 2, "{radii:?}");
+    assert!(radii.iter().all(|r| (r - 2.0).abs() < 0.001), "{radii:?}");
+    Ok(())
+}

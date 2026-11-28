@@ -201,6 +201,7 @@ impl InputFormat for Altium {
             .map_err(ReadError::Invalid)?;
             embedded = models::unpack(
                 &mut components.placements,
+                &mut components.free_models,
                 &stored,
                 |path| read_stream(&mut container, path).map_err(|e| e.to_string()),
                 &mut notes,
@@ -332,6 +333,7 @@ impl InputFormat for Altium {
                 graphics,
                 texts,
                 components: components.placements,
+                free_models: components.free_models,
                 appearance,
                 solder_mask_expansion,
                 ..Board::default()
