@@ -49,6 +49,5 @@ The variant LITE
 
 What the reader does with this board:
 - all five parts are read and placed, with their pads and models, whatever their flags; R2 is not fitted (`dnp`), the other four are;
-- the variant LITE is read: R1 not fitted, R1's value 1k;
-- R2's `(dnp no)` in LITE gets a warning, "R2 is fitted in variant LITE but marked DNP on the board; the variant's fitting is not carried", since the board model cannot say that a variant fits a part the board leaves out;
+- the variant LITE is read: R1 not fitted, R1's value 1k, and R2 fitted (its `(dnp no)`), with no note;
 - the five Value fields are on F.Fab, which is not drawn (a note, as on other boards).

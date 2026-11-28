@@ -1600,14 +1600,10 @@ fn place_copper(root: &Node, layers: &mut [Layer], thickness: Option<f64>, tally
 /// Reads a parsed `.kicad_pcb`.
 /// `variables` is what the texts' text variables may use besides the board file.
 /// The board's variants (`(variants (variant (name "LITE")))`, KiCad 10, `k10-dnp`) with what
-/// each footprint's entries change in them: `(dnp yes)` leaves the part out, a `Value` field
-/// changes its comment. A part the board marks do-not-populate that a variant fits (`(dnp no)`)
-/// has no place in the model and gets a warning naming it.
-fn board_variants(
-    root: &Node,
-    entries: &[FootprintVariant],
-    tally: &mut Tally,
-) -> (Vec<Variant>, Vec<Note>) {
+/// each footprint's entries change in them: `(dnp yes)` leaves the part out, `(dnp no)` fits a
+/// part the board marks do-not-populate (R2 in LITE), a `Value` field changes its comment. A
+/// part is never in both lists: when two entries of one variant disagree, the first is kept.
+fn board_variants(root: &Node, entries: &[FootprintVariant], tally: &mut Tally) -> Vec<Variant> {
     let mut variants: Vec<Variant> = Vec::new();
     for v in root
         .child("variants")
@@ -1631,7 +1627,6 @@ fn board_variants(
             ),
         }
     }
-    let mut notes = Vec::new();
     for e in entries {
         let Some(variant) = variants.iter_mut().find(|v| v.name == e.variant) else {
             tally.add(
@@ -1644,18 +1639,24 @@ fn board_variants(
             );
             continue;
         };
+        let d = &e.designator;
+        let both = || {
+            format!(
+                "footprint variant entr(ies) that both fit and leave out a part in {} (the first \
+                 is kept)",
+                e.variant
+            )
+        };
         match e.dnp {
-            Some(true) if !variant.not_fitted.contains(&e.designator) => {
-                variant.not_fitted.push(e.designator.clone());
+            Some(true) if variant.fitted.contains(d) => tally.add(Severity::Warning, both()),
+            Some(true) if !variant.not_fitted.contains(d) => variant.not_fitted.push(d.clone()),
+            // Fitting a part the board fits changes nothing; only a DNP part is listed.
+            Some(false) if e.board_dnp && variant.not_fitted.contains(d) => {
+                tally.add(Severity::Warning, both());
             }
-            Some(false) if e.board_dnp => notes.push(Note {
-                severity: Severity::Warning,
-                message: format!(
-                    "{} is fitted in variant {} but marked DNP on the board; the variant's \
-                     fitting is not carried",
-                    e.designator, e.variant
-                ),
-            }),
+            Some(false) if e.board_dnp && !variant.fitted.contains(d) => {
+                variant.fitted.push(d.clone());
+            }
             _ => {}
         }
         if let Some(comment) = &e.value {
@@ -1665,7 +1666,7 @@ fn board_variants(
             });
         }
     }
-    (variants, notes)
+    variants
 }
 
 pub fn read(mut root: Node, variables: &Variables) -> ReadOutcome {
@@ -1860,9 +1861,8 @@ pub fn read(mut root: Node, variables: &Variables) -> ReadOutcome {
     for (text, (raw, owner, layer)) in r.texts.iter_mut().zip(&r.sources) {
         text.content = resolver.resolve(raw, *owner, layer);
     }
-    let (variants, variant_notes) = board_variants(root, &r.variant_entries, &mut r.tally);
+    let variants = board_variants(root, &r.variant_entries, &mut r.tally);
     let mut notes = r.tally.into_notes();
-    notes.extend(variant_notes);
     notes.extend(resolver.notes());
     notes.sort_by_key(|n| match n.severity {
         Severity::Dropped => 0,

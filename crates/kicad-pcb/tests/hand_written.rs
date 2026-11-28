@@ -689,3 +689,23 @@ fn a_do_not_populate_footprint_is_not_fitted() {
         .collect();
     assert_eq!(fitted, [("R1", false), ("R2", true), ("R3", true)]);
 }
+
+/// Two entries of one variant that disagree about a DNP part: the first is kept, so the part is
+/// in one list only, and a warning says so.
+#[test]
+fn a_part_is_never_both_fitted_and_left_out_in_one_variant() {
+    let text = format!(
+        "{HEAD}(variants (variant (name \"V\")))\n\
+         (footprint \"R_0603\" (layer \"F.Cu\") (at 10 10) (attr smd dnp)\n\
+           (property \"Reference\" \"R1\" (at 0 0) (layer \"F.SilkS\"))\n\
+           (variant (name \"V\") (dnp no)) (variant (name \"V\") (dnp yes)))\n)"
+    );
+    let o = read(&text).unwrap();
+    let [v] = o.board.variants.as_slice() else {
+        panic!("{:?}", o.board.variants)
+    };
+    assert_eq!(v.fitted, ["R1"]);
+    assert!(v.not_fitted.is_empty());
+    assert!(o.notes.iter().any(|n| n.severity == Severity::Warning
+        && n.message.contains("both fit and leave out a part in V")));
+}

@@ -9,7 +9,7 @@
     clippy::indexing_slicing
 )]
 
-use board_model::{InputFormat, ReadOutcome, Severity, Side, Variant, VariantValue};
+use board_model::{InputFormat, ReadOutcome, Side, Variant, VariantValue};
 use kicad_pcb::KiCad;
 
 fn board() -> ReadOutcome {
@@ -55,40 +55,28 @@ fn only_the_do_not_populate_part_is_not_fitted() {
     }
 }
 
-/// LITE leaves R1 out and gives it the value 1k. R2 is fitted in LITE although the board marks
-/// it DNP, which the model cannot say: a warning names it. The variants list is read, so the
-/// note that it was not is gone.
+/// LITE leaves R1 out and gives it the value 1k, and fits R2, which the board marks DNP. R3 to
+/// R5 have no entry. The variants list is read, so the note that it was not is gone, and no note
+/// mentions a variant.
 #[test]
-fn the_lite_variant_leaves_r1_out_with_its_value() {
+fn the_lite_variant_leaves_r1_out_with_its_value_and_fits_r2() {
     let o = board();
     assert_eq!(
         o.board.variants,
         [Variant {
             name: "LITE".into(),
             not_fitted: vec!["R1".into()],
-            fitted: Vec::new(),
+            fitted: vec!["R2".into()],
             values: vec![VariantValue {
                 designator: "R1".into(),
                 comment: "1k".into(),
             }],
         }]
     );
-    let r2: Vec<_> = o
-        .notes
-        .iter()
-        .filter(|n| n.message.contains("R2"))
-        .collect();
-    assert_eq!(r2.len(), 1, "{:?}", o.notes);
-    assert_eq!(r2[0].severity, Severity::Warning);
-    assert_eq!(
-        r2[0].message,
-        "R2 is fitted in variant LITE but marked DNP on the board; the variant's fitting is not \
-         carried"
-    );
     assert!(
         !o.notes
             .iter()
-            .any(|n| n.message.contains("variant") && !n.message.starts_with("R2 is fitted")),
+            .any(|n| n.message.contains("variant") || n.message.contains("R2")),
         "{:?}",
         o.notes
     );
