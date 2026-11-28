@@ -47,8 +47,8 @@ The variant LITE
 | R4 | yes | yes | 10k |
 | R5 | yes | yes | 10k |
 
-What the reader does with this board today (no reader change in this commit):
-- all five parts are read and placed, with their pads and models, whatever their flags;
-- the board's `(variants ...)` list gets the note "1 board item(s) of kind "variants" (not read)" (Dropped);
-- the footprints' `(variant ...)` entries are passed over without a note;
+What the reader does with this board:
+- all five parts are read and placed, with their pads and models, whatever their flags; R2 is not fitted (`dnp`), the other four are;
+- the variant LITE is read: R1 not fitted, R1's value 1k;
+- R2's `(dnp no)` in LITE gets a warning, "R2 is fitted in variant LITE but marked DNP on the board; the variant's fitting is not carried", since the board model cannot say that a variant fits a part the board leaves out;
 - the five Value fields are on F.Fab, which is not drawn (a note, as on other boards).
