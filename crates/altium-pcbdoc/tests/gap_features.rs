@@ -580,3 +580,78 @@ fn paste_settings_and_paste_regions_are_only_notes() -> Result<(), Box<dyn std::
     assert!(out.board.mask_openings.is_empty());
     Ok(())
 }
+
+/// plane-polygon-connect against Altium's own Gerber of Layer 1 (tests/gerber/
+/// plane-polygon-connect.GP1, README.txt there): round R a thermal relief of outer diameter
+/// 2.324 and inner 1.816 (a ring from 0.908 to 1.162 about (6, 25)) crossed by four spokes 0.254
+/// wide at 45 degrees; at D nothing, the plane runs into the hole; round N a plain clearance
+/// circle of 1.400 (radius 0.700 about (18, 25)). Each to 0.001.
+#[test]
+fn the_gnd_plane_matches_altiums_gerber() -> Result<(), Box<dyn std::error::Error>> {
+    let out = read("plane-polygon-connect.PcbDoc")?;
+    let near = |a: f64, b: f64| (a - b).abs() <= TOLERANCE;
+    let holes: Vec<&board_model::Contour> = out
+        .board
+        .copper
+        .iter()
+        .filter_map(|c| match c {
+            CopperItem::Region { layer, holes, .. }
+                if out.board.layers.get(*layer).map(|l| l.name.as_str()) == Some("Layer 1") =>
+            {
+                Some(holes)
+            }
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    let about = |h: &board_model::Contour, x: f64| {
+        let b = contour_box(h);
+        ((b.0 + b.1) / 2.0 - x).abs() < 1.5 && ((b.2 + b.3) / 2.0 - 25.0).abs() < 1.5
+    };
+
+    // R: four pieces of air, each between arcs of radius 0.908 and 1.162 about (6, 25), whose
+    // straight sides lie 0.127 (half a 0.254 spoke) from the spokes' center lines at 45 degrees.
+    let r: Vec<_> = holes.iter().filter(|h| about(h, 6.0)).collect();
+    assert_eq!(r.len(), 4, "{r:?}");
+    for piece in &r {
+        let mut radii = Vec::new();
+        for s in &piece.segments {
+            match s {
+                board_model::Segment::Arc { center, radius, .. } => {
+                    assert!(near(center.x, 6.0) && near(center.y, 25.0), "{s:?}");
+                    radii.push(*radius);
+                }
+                board_model::Segment::Line { from, to } => {
+                    for p in [from, to] {
+                        let (dx, dy) = (p.x - 6.0, p.y - 25.0);
+                        // Distance to the nearer spoke line, y = x or y = -x through the center.
+                        let d = ((dx - dy).abs()).min((dx + dy).abs()) / 2f64.sqrt();
+                        assert!(near(d, 0.127), "{s:?}: {d}");
+                    }
+                }
+            }
+        }
+        radii.sort_by(f64::total_cmp);
+        assert!(
+            radii.len() == 2 && near(radii[0], 0.908) && near(radii[1], 1.162),
+            "{radii:?}"
+        );
+    }
+    // D: no hole at all.
+    assert!(!holes.iter().any(|h| about(h, 12.0)));
+    // N: one whole circle of radius 0.700 about (18, 25).
+    let n: Vec<_> = holes.iter().filter(|h| about(h, 18.0)).collect();
+    let [circle] = n.as_slice() else {
+        return Err(format!("{n:?}").into());
+    };
+    for s in &circle.segments {
+        let board_model::Segment::Arc { center, radius, .. } = s else {
+            return Err(format!("{s:?}").into());
+        };
+        assert!(
+            near(center.x, 18.0) && near(center.y, 25.0) && near(*radius, 0.7),
+            "{s:?}"
+        );
+    }
+    Ok(())
+}

@@ -37,7 +37,10 @@
 //! number that takes an object wins. `Direct` joins the pad to the plane with no relief, so the
 //! plane keeps only the drill; `NoConnect` keeps the plane away as from another net's pad, a
 //! round clearance of the hole plus twice `CLEARANCE` (1.400 across with 0.3); our Layer 2,
-//! another net, has exactly that round all three pads. Altium's Top Layer pour shows the same
+//! another net, has exactly that round all three pads. Altium's own Gerber of Layer 1
+//! (`tests/gerber/plane-polygon-connect.GP1`) confirms all three: a thermal of 2.324 / 1.816 with
+//! 0.254 spokes at 45 degrees round R, no flash at D, a 1.400 circle round N. Altium's Top Layer
+//! pour shows the same
 //! three joins poured in (four relief gaps round R, none round D, a round clearance round N),
 //! and is read as poured (see `board.rs`).
 //!
