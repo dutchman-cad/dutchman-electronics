@@ -103,6 +103,8 @@ fn complexity(shape: &MultiPolygon) -> usize {
 
 /// Batch nearby pieces rather than invoking the boolean solver once per tiny via.
 /// The batches partition polygons, not their geometry: no artificial tile edges are added.
+/// We require already united subjects (disjoint, non-touching polygons), so solving each
+/// batch independently cannot leave overlaps or shared edges between batches.
 fn batches(shape: &MultiPolygon) -> Vec<MultiPolygon> {
     if shape.0.len() < LOCAL_THRESHOLD {
         return vec![shape.clone()];
@@ -159,6 +161,8 @@ fn contains_ring(outer: &Polygon, inner: &geo::LineString) -> bool {
     })
 }
 
+/// We require an already united clip set (disjoint, non-touching polygons), so we
+/// can attach its rings as independent holes without another union.
 fn simple_difference(p: &Polygon, clip: &MultiPolygon) -> Option<Polygon> {
     if !p.interiors().is_empty() {
         return None;
@@ -211,6 +215,10 @@ fn union_group(g: MultiPolygon) -> Vec<Polygon> {
     geo::unary_union(&g).0
 }
 
+/// We reuse translated unions only within the exact-subtraction, exponent-band and
+/// origin-parity guards in `validity`. We checked the exactness argument against
+/// geo 0.33.1 / i_overlay 4.5.2; the randomized differential test below guards it
+/// on upgrades by comparing every output coordinate with the uncached solver.
 #[derive(Default)]
 struct UnionMemo {
     entries: std::collections::HashMap<Vec<u64>, (geo::Coord, Vec<Polygon>)>,
@@ -271,6 +279,8 @@ impl UnionMemo {
 
 pub trait LocalOps {
     fn union_fast(&self, other: &Self) -> Self;
+    /// We require an already united clip set (`other`): disjoint, non-touching polygons.
+    /// The subject must also be united for independent batching.
     fn difference_fast(&self, other: &Self) -> Self;
     fn intersection_fast(&self, other: &Self) -> Self;
 }
@@ -538,6 +548,84 @@ mod tests {
             assert_eq!(memo.union(shape.clone()), union_group(shape));
         }
         assert!(memo.hits > 0);
+    }
+
+    #[test]
+    fn randomized_translated_unions_match_the_uncached_solver() {
+        // We keep the seed and generator local so dependency upgrades cannot change cases.
+        struct Random(u64);
+        impl Random {
+            fn next(&mut self) -> u32 {
+                self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1);
+                (self.0 >> 32) as u32
+            }
+            fn decimal(&mut self) -> f64 {
+                f64::from(self.next() % 1000) / 1000.0
+            }
+        }
+        let mut random = Random(0x71a9_36c2_0fbd_8425);
+        let mut hits = 0;
+        for case in 0..248 {
+            let count = 2 + case % 31;
+            let sign_x = if case % 2 == 0 { 1.0 } else { -1.0 };
+            let sign_y = if case % 3 == 0 { -1.0 } else { 1.0 };
+            let x = sign_x * (80.1 + random.decimal());
+            let y = sign_y * (700.3 + random.decimal());
+            let mut pieces = Vec::new();
+            for i in 0..count {
+                let px = x + 3.0 * random.decimal();
+                let py = y + 3.0 * random.decimal();
+                let size = 0.3 + random.decimal();
+                let point = board_model::Point { x: px, y: py };
+                let p = match i {
+                    0 if case % 2 == 0 => super::super::circle(point, size / 2.0).unwrap(),
+                    1 if case % 3 == 0 => super::super::stroke(
+                        point,
+                        board_model::Point {
+                            x: px + size,
+                            y: py + 0.37,
+                        },
+                        0.19,
+                    )
+                    .unwrap(),
+                    2 | 3 if case % 4 == 0 => Polygon::new(
+                        square(px, py, size).exterior().clone(),
+                        vec![square(px + size * 0.2, py + size * 0.2, size * 0.3)
+                            .exterior()
+                            .clone()],
+                    ),
+                    _ => square(px, py, size),
+                };
+                pieces.push(p);
+            }
+            let shape = MultiPolygon::new(pieces);
+            let mut memo = UnionMemo::default();
+            assert_eq!(memo.union(shape.clone()), union_group(shape.clone()));
+            // Odd whole offsets exercise reuse; decimal offsets and a single ULP
+            // also exercise the exactness guards and their solver fallback.
+            let odd = f64::from(1 + 2 * (random.next() % 7));
+            let ulp = f64::from_bits(x.to_bits() + 1) - x;
+            let (dx, dy) = match case % 4 {
+                0 => (odd, -odd),
+                1 => (-odd, odd),
+                2 => (0.137, -0.319),
+                _ => (ulp, 0.0),
+            };
+            let shifted = shape.map_coords(|p| geo::Coord {
+                x: p.x + dx,
+                y: p.y + dy,
+            });
+            assert_eq!(
+                memo.union(shifted.clone()),
+                union_group(shifted),
+                "case {case}, count {count}, offset ({dx}, {dy})"
+            );
+            hits += memo.hits;
+        }
+        assert!(
+            hits > 0,
+            "we exercise translated cache hits as well as fallback"
+        );
     }
 
     #[test]

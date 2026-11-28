@@ -720,7 +720,10 @@ pub fn build_outcome(
         };
         // We start only after STEP succeeds. Plating and components read the same board
         // independently; failed worker creation uses the serial path.
-        let worker = std::thread::Builder::new().spawn_scoped(scope, render).ok();
+        let worker = std::thread::Builder::new()
+            .stack_size(16 << 20)
+            .spawn_scoped(scope, render)
+            .ok();
         let mut notes: Vec<Value> = outcome.notes.iter().map(note).collect();
         let board_notes: Vec<Value> = step.notes.iter().map(note).collect();
         // What was left out of the board solid is said in the package's own notes too, not only on

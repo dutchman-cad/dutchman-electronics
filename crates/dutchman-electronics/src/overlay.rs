@@ -1789,6 +1789,7 @@ fn overlays_within(
         let ((mut built, mut slivers), (bottom_built, bottom_slivers)) =
             std::thread::scope(|scope| {
                 let worker = std::thread::Builder::new()
+                    .stack_size(16 << 20)
                     .spawn_scoped(scope, || process_side("bottom", &bottom, -1.0));
                 let top_result = process_side("top", &top, 1.0);
                 let bottom_result = match worker {
