@@ -32,7 +32,7 @@ use board_model::{
 };
 use geo::buffer::Buffer;
 use geo::orient::{Direction, Orient};
-use geo::{BooleanOps, Coord, LineString, MultiPolygon, Polygon};
+use geo::{Area, BooleanOps, Coord, Intersects, LineString, MultiPolygon, Polygon, Validation};
 use serde_json::{json, Value};
 
 use crate::colors::{
@@ -780,6 +780,84 @@ fn areas(shape: &MultiPolygon) -> Vec<Value> {
         .collect()
 }
 
+/// Use the package's coordinate precision before shared boundaries are clipped.
+fn rounded_ring(r: &LineString) -> LineString {
+    let mut coords: Vec<Coord> = r
+        .coords()
+        .map(|c| Coord {
+            x: (c.x * 1e6).round() / 1e6,
+            y: (c.y * 1e6).round() / 1e6,
+        })
+        .collect();
+    coords.dedup();
+    LineString::new(coords)
+}
+
+/// Thin the shared boundary once, then restore any copper the simplification left outside.
+/// The coat is wider than THIN, but the containment check also protects narrow features.
+fn mask_skirt(copper: &MultiPolygon) -> MultiPolygon {
+    let buffered = copper.union(&copper.buffer(MASK_COAT));
+    let (skirt, _) = thin::thin_keeping(&buffered, thin::THIN, &MultiPolygon::new(Vec::new()));
+    let skirt = MultiPolygon::new(
+        skirt
+            .iter()
+            .map(|p| {
+                Polygon::new(
+                    rounded_ring(p.exterior()),
+                    p.interiors().iter().map(rounded_ring).collect(),
+                )
+            })
+            .collect(),
+    );
+    if copper.difference(&skirt).0.is_empty() {
+        skirt
+    } else {
+        skirt.union(copper)
+    }
+}
+
+/// Remove unusable split pieces without simplifying their shared edges. Small usable pieces
+/// touching copper stay: removing them could uncover a track or a pad.
+fn split_pieces(shape: MultiPolygon, copper: &MultiPolygon) -> (MultiPolygon, usize) {
+    let ring_ok = |r: &LineString| {
+        r.0.len() >= 4
+            && Polygon::new(r.clone(), vec![]).unsigned_area() >= 1e-6
+            && Polygon::new(r.clone(), vec![]).is_valid()
+    };
+    let mut dropped = 0usize;
+    let mut kept = Vec::new();
+    for p in shape {
+        // Validate at the package's 1 nm precision, so rounding cannot introduce an
+        // unchecked duplicate vertex or crossing after this filter.
+        let p = Polygon::new(
+            rounded_ring(p.exterior()),
+            p.interiors().iter().map(rounded_ring).collect(),
+        );
+        // Removing an unusable hole fills it, so it cannot uncover copper or discard the
+        // surrounding usable piece. Count each removed ring in the same sliver note.
+        let holes = p
+            .interiors()
+            .iter()
+            .filter(|h| {
+                if ring_ok(h) {
+                    true
+                } else {
+                    dropped = dropped.saturating_add(1);
+                    false
+                }
+            })
+            .cloned()
+            .collect();
+        let p = Polygon::new(p.exterior().clone(), holes);
+        if ring_ok(p.exterior()) && (p.unsigned_area() >= thin::MIN_AREA || p.intersects(copper)) {
+            kept.push(p);
+        } else {
+            dropped = dropped.saturating_add(1);
+        }
+    }
+    (MultiPolygon::new(kept), dropped)
+}
+
 /// One overlay before it is written into the manifest.
 struct Built {
     name: String,
@@ -1488,6 +1566,7 @@ fn overlays_within(
         let all_drilled = holes.union();
         let face = outline.map(|o| o.difference(&cutouts.union()));
         let mut built = Vec::new();
+        let mut slivers = Vec::new();
         for (side, f, sign) in [("top", &top, 1.0), ("bottom", &bottom, -1.0)] {
             // The top side stacks up from the face at z = thickness, the bottom down from z = 0.
             let base = if sign > 0.0 { thickness } else { 0.0 };
@@ -1522,17 +1601,28 @@ fn overlays_within(
             let opening_all = f.opening.union();
             let finish = copper_all.intersection(&opening_all);
             // Silkscreen is not printed over holes, via caps, or the mask openings.
-            let silk = f
-                .silk
-                .union()
+            // We thin ink before clipping, then remove any extra points the cuts leave.
+            // Both passes precede the split, so its shared mask edges stay exact.
+            let text = f.silk.outlined_union();
+            let (silk, before) = thin::thin_keeping(&f.silk.union(), thin::THIN, &text);
+            let silk = silk
                 .difference(&drilled)
                 .difference(&f.via_drill.union())
                 .difference(&opening_all);
+            let (silk, after) = thin::thin_keeping(&silk, thin::THIN, &text);
+            let mut silk_slivers = before.saturating_add(after);
             // It lies on the mask coat, so over copper it sits higher than over bare laminate.
             // "Over copper" means over the copper and the skirt of coat round it.
-            let skirt = copper_all.buffer(MASK_COAT);
-            let silk_over_copper = silk.intersection(&skirt);
-            let silk_over_laminate = silk.difference(&skirt);
+            // We include copper explicitly: a buffer must never leave a hole over a thin
+            // track. Mask and silk use the same region and its exact complement.
+            let skirt = mask_skirt(&copper_all);
+            let (silk_over_copper, n) = split_pieces(silk.intersection(&skirt), &copper_all);
+            silk_slivers = silk_slivers.saturating_add(n);
+            let (silk_over_laminate, n) = split_pieces(silk.difference(&skirt), &copper_all);
+            silk_slivers = silk_slivers.saturating_add(n);
+            if silk_slivers > 0 {
+                slivers.push((format!("Silkscreen {side}"), silk_slivers));
+            }
             let plain = |name: String,
                          kind,
                          finish,
@@ -1561,8 +1651,17 @@ fn overlays_within(
             let mask = face
                 .as_ref()
                 .map(|face| face.difference(&drilled.union(&opening_all)));
-            let mask_over_copper = mask.as_ref().map(|m| m.intersection(&skirt));
-            let mask_over_laminate = mask.as_ref().map(|m| m.difference(&skirt));
+            let mut mask_slivers = 0usize;
+            let mut mask_piece = |shape| {
+                let (shape, n) = split_pieces(shape, &copper_all);
+                mask_slivers = mask_slivers.saturating_add(n);
+                shape
+            };
+            let mask_over_copper = mask.as_ref().map(|m| mask_piece(m.intersection(&skirt)));
+            let mask_over_laminate = mask.as_ref().map(|m| mask_piece(m.difference(&skirt)));
+            if mask_slivers > 0 {
+                slivers.push((format!("Solder mask {side}"), mask_slivers));
+            }
             if let Some(face) = &face {
                 built.push(plain(
                     format!("Laminate {side}"),
@@ -1688,8 +1787,12 @@ fn overlays_within(
         }
         // Fewer points, the same outlines within THIN, and no slivers without surface (#126);
         // letter outlines of TrueType texts are left as fine as they were drawn.
-        let mut slivers = Vec::new();
         for b in &mut built {
+            // The split pieces were filtered above. We keep their shared edges exact;
+            // the skirt was already thinned once before splitting.
+            if matches!(b.kind, "mask" | "silkscreen") {
+                continue;
+            }
             let (shape, n) = thin::thin_keeping(&b.shape, thin::THIN, &b.text);
             b.shape = shape;
             if n > 0 {
@@ -1704,7 +1807,7 @@ fn overlays_within(
                 notes.push(json!({
                     "severity": "Info",
                     "message": format!(
-                        "{name}: {n} sliver(s) under {} mm2, with no surface to draw, are left out",
+                        "{name}: {n} degenerate ring(s) or sliver(s) under {} mm2 are left out",
                         thin::MIN_AREA
                     ),
                 }));

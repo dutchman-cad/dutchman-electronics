@@ -2452,8 +2452,16 @@ fn filled_graphics_keep_holes_and_follow_the_conformal_split() {
     assert!(notes.is_empty(), "{notes:?}");
     let laminate_ink = area(named(&list, "Silkscreen top"));
     let copper_ink = area(named(&list, "Silkscreen top over copper"));
-    assert!((laminate_ink - 23.94).abs() < 0.001, "{laminate_ink}");
-    assert!((copper_ink - 22.06).abs() < 0.001, "{copper_ink}");
+    // The shared skirt is thinned once, so its edge may sit up to THIN inside x=5.010
+    // (never inside the copper): the 6 mm of crossing ink moves by at most 6*THIN.
+    assert!(
+        laminate_ink > 23.94 - 0.001 && laminate_ink < 23.94 + 6.0 * thin::THIN + 0.001,
+        "{laminate_ink}"
+    );
+    assert!(
+        (laminate_ink + copper_ink - 46.0).abs() < 0.001,
+        "{copper_ink}"
+    );
     // The same area on copper draws its holes too, through the shared graphics path.
     b.copper.clear();
     if let Graphic::Area { layer, .. } = &mut b.graphics[0] {
@@ -2494,14 +2502,16 @@ fn hand_drawn_openings_cut_both_coats_and_ink_on_only_their_side() {
     });
     let (list, notes) = overlays(&b, 1.6, "Board");
     assert!(notes.is_empty(), "{notes:?}");
-    for (name, expected) in [
-        ("Solder mask top", 33.94),
-        ("Solder mask top over copper", 34.06),
-        ("Silkscreen top", 33.94),
-        ("Silkscreen top over copper", 34.06),
-    ] {
-        let actual = area(named(&list, name));
-        assert!((actual - expected).abs() < 0.001, "{name}: {actual}");
+    // The thinned skirt edge may sit up to THIN inside x=5.010, so up to 6*THIN of the
+    // 6 mm crossing moves from over copper to over laminate; each pair still sums to 68.
+    for kind in ["Solder mask", "Silkscreen"] {
+        let low = area(named(&list, &format!("{kind} top")));
+        let high = area(named(&list, &format!("{kind} top over copper")));
+        assert!(
+            low > 33.94 - 0.001 && low < 33.94 + 6.0 * thin::THIN + 0.001,
+            "{kind}: {low}"
+        );
+        assert!((low + high - 68.0).abs() < 0.001, "{kind}: {low} + {high}");
     }
     assert!((area(named(&list, "Solder mask bottom")) - 100.0).abs() < 0.001);
     assert!((area(named(&list, "Finish top")) - 16.0).abs() < 0.001);
@@ -2892,4 +2902,304 @@ fn area_presence_selects_the_expanded_note_vocabulary() {
             assert_eq!(messages(&notes), [expected]);
         }
     }
+}
+
+/// Read the exported geometry back so coverage includes every point, not just the centerline.
+fn exported_shape(overlay: &Value) -> MultiPolygon {
+    let ring = |value: &Value| {
+        LineString::new(
+            value
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|point| Coord {
+                    x: point[0].as_f64().unwrap(),
+                    y: point[1].as_f64().unwrap(),
+                })
+                .collect(),
+        )
+    };
+    MultiPolygon::new(
+        overlay["areas"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|area| {
+                Polygon::new(
+                    ring(&area["outer"]),
+                    area["holes"].as_array().unwrap().iter().map(ring).collect(),
+                )
+            })
+            .collect(),
+    )
+}
+
+#[test]
+fn tented_hairline_tracks_are_fully_covered_without_overlapping_mask_pieces() {
+    use geo::Area;
+
+    // We cover a vertical and a diagonal track, including one narrower than THIN.
+    for width in [0.05, thin::THIN / 2.0] {
+        for (from, to) in [(p(2.0, 2.0), p(2.0, 4.0)), (p(2.0, 2.0), p(4.0, 3.0))] {
+            for layer in [0, 1] {
+                let mut b = board(
+                    vec![track(layer, from, to, width)],
+                    vec![Graphic::Line {
+                        layer: 3,
+                        from: p(1.0, 3.0),
+                        to: p(5.0, 3.0),
+                        width: 0.2,
+                        owner: None,
+                    }],
+                );
+                b.outline.outer = square(0.0, 0.0, 6.0, 6.0);
+                let opaque = board_model::Color {
+                    r: 31,
+                    g: 95,
+                    b: 58,
+                    opacity: Some(1.0),
+                };
+                b.appearance.top_solder_mask = Some(opaque);
+                b.appearance.bottom_solder_mask = Some(opaque);
+                let (list, notes) = overlays(&b, 1.6, "Board");
+                assert!(notes.is_empty(), "{notes:?}");
+                let side = if layer == 0 { "top" } else { "bottom" };
+                assert_eq!(
+                    named(&list, &format!("Solder mask {side} over copper"))["opacity"],
+                    1.0
+                );
+                let copper = exported_shape(named(&list, &format!("Copper {side}")));
+                let high = exported_shape(named(&list, &format!("Solder mask {side} over copper")));
+                let low = exported_shape(named(&list, &format!("Solder mask {side}")));
+                assert!(copper.unsigned_area() > 0.0);
+                assert!(
+                    copper.difference(&high).unsigned_area() < 1e-10,
+                    "bare copper: width {width}, {from:?} to {to:?}, {side}"
+                );
+                assert!(high.intersection(&low).unsigned_area() < 1e-10);
+                assert!((high.union(&low).unsigned_area() - 36.0).abs() < 1e-8);
+                if layer == 0 {
+                    let silk = exported_shape(named(&list, "Silkscreen top over copper"));
+                    assert!(
+                        silk.difference(&high).unsigned_area() < 1e-7,
+                        "width {width}, {from:?} to {to:?}: {}",
+                        silk.difference(&high).unsigned_area()
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[cfg(feature = "altium")]
+#[test]
+fn dense_board_mask_covers_tented_copper() {
+    use board_model::InputFormat;
+    use geo::Area;
+
+    let read = altium_pcbdoc::Altium
+        .read(include_bytes!(
+            "../../../altium-pcbdoc/tests/boards/dense-board.PcbDoc"
+        ))
+        .unwrap();
+    let (list, notes) = overlays(&read.board, read.board.thickness.unwrap(), "Board");
+    assert!(messages(&notes)
+        .iter()
+        .all(|m| !m.starts_with("Solder mask")));
+    for side in ["top", "bottom"] {
+        let copper = exported_shape(named(&list, &format!("Copper {side}")));
+        let finish = exported_shape(named(&list, &format!("Finish {side}")));
+        let high = exported_shape(named(&list, &format!("Solder mask {side} over copper")));
+        let low = exported_shape(named(&list, &format!("Solder mask {side}")));
+        // We check copper under the mask, excluding intentional openings and drills.
+        // The finish is independently thinned, so it cannot define the openings exactly.
+        let tented = copper.intersection(&high.union(&low));
+        let bare = tented.difference(&high).unsigned_area();
+        assert!(finish.unsigned_area() > 0.0);
+        // Export rounds coordinates to 0.000001 mm; boolean cuts of those rounded
+        // edges leave sub-micrometer-square residuals. We allow 0.000001 mm2.
+        assert!(bare < 1e-6, "{side}: {bare} mm2 of bare copper under mask");
+        assert!(high.intersection(&low).unsigned_area() < 1e-8);
+    }
+}
+
+#[test]
+fn a_mask_piece_smaller_than_the_sliver_cutoff_still_covers_copper() {
+    use geo::Area;
+
+    for width in [0.05, thin::THIN / 2.0] {
+        // We place most of the track outside the face. Only its round tip and skirt
+        // reach inside, leaving a mask piece smaller than MIN_AREA after clipping.
+        let mut b = board(
+            vec![track(0, p(2.0, -2.0), p(2.0, -0.3 * width), width)],
+            vec![],
+        );
+        b.outline.outer = square(0.0, 0.0, 6.0, 6.0);
+        let (list, notes) = overlays(&b, 1.6, "Board");
+        assert!(notes.is_empty(), "{notes:?}");
+        let copper = exported_shape(named(&list, "Copper top"));
+        let high = exported_shape(named(&list, "Solder mask top over copper"));
+        let face = exported_shape(named(&list, "Laminate top"));
+        let tip = copper.intersection(&face);
+        assert!(tip.unsigned_area() > 0.0);
+        assert!(high.unsigned_area() > 0.0 && high.unsigned_area() < thin::MIN_AREA);
+        assert!(tip.difference(&high).unsigned_area() < 1e-8);
+    }
+}
+
+/// CC0 fixtures and their exact dimensions are documented beside the boards. Measure only
+/// overlay construction and serialization, excluding file parsing, with one warmup and 3 runs.
+#[cfg(all(feature = "altium", feature = "kicad"))]
+fn overlay_fixtures() -> Vec<(&'static str, board_model::ReadOutcome)> {
+    use board_model::InputFormat;
+    vec![
+        (
+            "Altium dense-board",
+            altium_pcbdoc::Altium
+                .read(include_bytes!(
+                    "../../../altium-pcbdoc/tests/boards/dense-board.PcbDoc"
+                ))
+                .unwrap(),
+        ),
+        (
+            "Altium all-features",
+            altium_pcbdoc::Altium
+                .read(include_bytes!(
+                    "../../../altium-pcbdoc/tests/boards/all-features.PcbDoc"
+                ))
+                .unwrap(),
+        ),
+        (
+            "KiCad all-features",
+            kicad_pcb::KiCad
+                .read(include_bytes!(
+                    "../../../kicad-pcb/tests/boards/k10-all-features.kicad_pcb"
+                ))
+                .unwrap(),
+        ),
+    ]
+}
+
+#[cfg(all(feature = "altium", feature = "kicad"))]
+#[test]
+#[ignore = "release measurement; run explicitly with --ignored --nocapture"]
+fn measure_fixture_overlays() {
+    for (name, read) in overlay_fixtures() {
+        let run = || {
+            super::overlays(
+                &read.board,
+                &read.fonts,
+                read.board.thickness.unwrap(),
+                "Board",
+                Copper::Outer,
+            )
+        };
+        let _ = run();
+        let mut times = Vec::new();
+        for _ in 0..3 {
+            let start = std::time::Instant::now();
+            let (list, notes) = run();
+            times.push(start.elapsed().as_secs_f64());
+            let points: usize = list.iter().map(|o| faces(&exported_shape(o))).sum();
+            assert!(
+                !notes.iter().any(|n| n["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("could not be built")),
+                "{notes:?}"
+            );
+            println!(
+                "{name}: {points} estimated faces, {:.6} s",
+                times.last().unwrap()
+            );
+        }
+    }
+}
+
+#[cfg(all(feature = "altium", feature = "kicad"))]
+#[test]
+fn fixture_mask_and_silk_rings_are_valid_after_export() {
+    use geo::{Area, Validation};
+    for (name, read) in overlay_fixtures() {
+        let (list, notes) = super::overlays(
+            &read.board,
+            &read.fonts,
+            read.board.thickness.unwrap(),
+            "Board",
+            Copper::Outer,
+        );
+        assert!(!list.is_empty(), "{name}: {notes:?}");
+        for side in ["top", "bottom"] {
+            let prefix = format!("Silkscreen {side}:");
+            assert!(
+                messages(&notes)
+                    .iter()
+                    .filter(|m| m.starts_with(&prefix))
+                    .count()
+                    <= 1
+            );
+        }
+        for overlay in list
+            .iter()
+            .filter(|o| matches!(o["kind"].as_str(), Some("mask" | "silkscreen")))
+        {
+            let shape = exported_shape(overlay);
+            for p in shape.iter() {
+                for ring in std::iter::once(p.exterior()).chain(p.interiors()) {
+                    assert!(ring.0.len() >= 4, "{name}: {}", overlay["name"]);
+                    let ring = geo::Polygon::new(ring.clone(), vec![]);
+                    assert!(ring.unsigned_area() >= 1e-6, "{name}: {}", overlay["name"]);
+                    assert!(
+                        ring.is_valid(),
+                        "{name}: {}: {:?}",
+                        overlay["name"],
+                        ring.validation_errors()
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn the_shared_skirt_is_thinned_and_still_contains_all_copper() {
+    use geo::Area;
+    let copper = geo::MultiPolygon::new(vec![stroke(p(0.0, 0.0), p(10.0, 2.0), 0.0025).unwrap()]);
+    let dense = copper.union(&copper.buffer(MASK_COAT));
+    let skirt = mask_skirt(&copper);
+    assert!(faces(&skirt) < faces(&dense));
+    assert!(copper.difference(&skirt).unsigned_area() < 1e-12);
+}
+
+#[test]
+fn split_filter_counts_degenerate_rings_and_keeps_small_copper_pieces() {
+    let rect = |x, y, w, h| contour(&square(x, y, x + w, y + h)).unwrap();
+    let small = rect(0.0, 0.0, 0.02, 0.02);
+    let empty = rect(2.0, 0.0, 0.02, 0.02);
+    let zero = geo::Polygon::new(
+        geo::LineString::from(vec![(3.0, 0.0), (4.0, 0.0), (5.0, 0.0), (3.0, 0.0)]),
+        vec![],
+    );
+    let crossing = geo::Polygon::new(
+        geo::LineString::from(vec![
+            (6.0, 0.0),
+            (8.0, 2.0),
+            (6.0, 2.0),
+            (9.0, 0.0),
+            (6.0, 0.0),
+        ]),
+        vec![],
+    );
+    let bad_hole = geo::Polygon::new(
+        rect(10.0, 0.0, 2.0, 2.0).exterior().clone(),
+        vec![rect(10.5, 0.5, 0.0001, 0.0001).exterior().clone()],
+    );
+    let (out, n) = split_pieces(
+        geo::MultiPolygon::new(vec![small.clone(), empty, zero, crossing, bad_hole]),
+        &geo::MultiPolygon::new(vec![small.clone()]),
+    );
+    assert_eq!(n, 4);
+    assert_eq!(out.0.len(), 2);
+    assert!(out.0.contains(&small));
+    assert!(out.0.iter().all(|p| p.interiors().is_empty()));
 }
