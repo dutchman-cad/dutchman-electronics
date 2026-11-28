@@ -388,3 +388,65 @@ fn plane_and_pour_joins_follow_the_rules_for_single_pads() -> Result<(), Box<dyn
     );
     Ok(())
 }
+
+/// text-kinds: twelve DejaVu Sans Mono texts on Top Overlay. The nine 10 x 4 frames (stored at
+/// their lower-left corners, x 3, 18 and 33) are placed at their justification's point of the
+/// frame, anchored there by the same part of the text's box; PLAIN, INV and OFS keep their
+/// location and Altium's left-baseline anchor. INV (margin 0.5) and OFS (offset 0.3) are
+/// inverted, which is not drawn yet: a note names each.
+#[test]
+fn frames_place_their_text_and_inverted_texts_get_a_note() -> Result<(), Box<dyn std::error::Error>>
+{
+    use board_model::{HorizontalAnchor as H, TextAnchor, VerticalAnchor as V};
+    let out = read("text-kinds.PcbDoc")?;
+    let anchor = |horizontal, vertical| TextAnchor {
+        horizontal,
+        vertical,
+    };
+    let want = [
+        ("LT", 3.0, 21.0, anchor(H::Left, V::Top)),
+        ("CT", 23.0, 20.988, anchor(H::Center, V::Top)),
+        ("RT", 43.0, 21.0, anchor(H::Right, V::Top)),
+        ("LM", 3.0, 12.5, anchor(H::Left, V::Center)),
+        ("CM", 23.0, 12.488, anchor(H::Center, V::Center)),
+        ("RM", 43.0, 12.5, anchor(H::Right, V::Center)),
+        ("LB", 3.0, 4.0, anchor(H::Left, V::Bottom)),
+        ("CB", 23.0, 3.988, anchor(H::Center, V::Bottom)),
+        ("RB", 43.0, 4.0, anchor(H::Right, V::Bottom)),
+        ("PLAIN", 33.0, 25.0, TextAnchor::default()),
+        ("INV", 3.0, 25.0, TextAnchor::default()),
+        ("OFS", 18.0, 25.0, TextAnchor::default()),
+    ];
+    assert_eq!(out.board.texts.len(), want.len());
+    for (content, x, y, a) in want {
+        let t = out
+            .board
+            .texts
+            .iter()
+            .find(|t| t.content == content)
+            .ok_or(content)?;
+        assert!(
+            (t.at.x - x).abs() <= TOLERANCE && (t.at.y - y).abs() <= TOLERANCE,
+            "{content}: {:?}",
+            t.at
+        );
+        assert_eq!(t.anchor, a, "{content}");
+    }
+    let mut warnings: Vec<&str> = out
+        .notes
+        .iter()
+        .filter(|n| n.severity == Severity::Warning)
+        .map(|n| n.message.as_str())
+        .collect();
+    warnings.sort_unstable();
+    assert_eq!(
+        warnings,
+        [
+            "the inverted text \"INV\" at (3.000, 25.000), margin 0.500 is drawn as plain \
+             letters: its letters cut out of a filled box are not drawn yet",
+            "the inverted text \"OFS\" at (18.000, 25.000), offset 0.300 is drawn as plain \
+             letters: its letters cut out of a filled box are not drawn yet",
+        ]
+    );
+    Ok(())
+}
