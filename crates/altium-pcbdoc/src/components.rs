@@ -163,6 +163,7 @@ fn placement(record: &Properties, designator: String) -> Result<Placement, Strin
         side,
         models: Vec::new(),
         comment: String::new(),
+        fitted: true,
     })
 }
 

@@ -9,7 +9,8 @@ use std::collections::{BTreeMap, HashMap};
 use board_model::{
     Board, Contour, CopperItem, EmbeddedFont, Graphic, HorizontalAnchor, Layer, LayerKind,
     ModelRef, ModelSource, Note, PadShape, Placement, Point, ReadOutcome, Segment, Severity, Side,
-    StackPosition, Text, TextAnchor, TextFont, VerticalAnchor, KICAD_LINE_PITCH,
+    StackPosition, Text, TextAnchor, TextFont, Variant, VariantValue, VerticalAnchor,
+    KICAD_LINE_PITCH,
 };
 
 use crate::geom::{arc_through, circle_segment, place, pts_contour, split_fill, Frame};
@@ -139,6 +140,22 @@ struct Reader {
     sources: Vec<(String, Option<usize>, String)>,
     /// Canonical layer name -> the name KiCad shows for it (the layer table's user name).
     shown_layer_names: HashMap<String, String>,
+    /// Each footprint's `(variant ...)` entries, in the file's order.
+    variant_entries: Vec<FootprintVariant>,
+}
+
+/// What one footprint's `(variant ...)` entry changes in one board variant (`k10-dnp`): KiCad
+/// writes only what differs from the footprint's own flags and fields.
+struct FootprintVariant {
+    /// The variant's name, as the board's `(variants ...)` list gives it.
+    variant: String,
+    designator: String,
+    /// Whether the footprint itself is marked do-not-populate.
+    board_dnp: bool,
+    /// `(dnp yes)` or `(dnp no)` in the variant, when given.
+    dnp: Option<bool>,
+    /// The `Value` field in the variant, when given.
+    value: Option<String>,
 }
 
 /// The sides a `(tenting ...)` list covers: top, bottom. KiCad 9 writes the sides it covers as
@@ -901,6 +918,12 @@ impl Reader {
                 fields.push(("Value".into(), value.to_string()));
             }
         }
+        // The part's comment is its Value field, as stored (`k10-dnp`: "10k").
+        let comment = fields
+            .iter()
+            .find(|(n, _)| n == "Value")
+            .map(|(_, v)| v.clone())
+            .unwrap_or_default();
         let fields_at = self.fields.len();
         self.fields.push(Fields {
             reference: designator.clone(),
@@ -969,6 +992,13 @@ impl Reader {
                 format!("3D model file(s) named by the board, not stored in it: first {file}"),
             );
         }
+        // KiCad's do-not-populate flag: `dnp` among the footprint's `attr` keywords
+        // (`(attr smd dnp)`, `k10-dnp`'s R2). `exclude_from_pos_files`, `exclude_from_bom` and
+        // `board_only` (R3 to R5) leave the part fitted.
+        let fitted = !fp
+            .child("attr")
+            .is_some_and(|a| a.args().iter().any(|k| k.text() == Some("dnp")));
+        self.footprint_variants(fp, &designator, !fitted);
         let pos = frame.point(0.0, 0.0);
         self.components.push(Placement {
             designator,
@@ -977,8 +1007,64 @@ impl Reader {
             rotation_deg: angle,
             side: if bottom { Side::Bottom } else { Side::Top },
             models: model.into_iter().collect(),
-            comment: String::new(),
+            comment,
+            fitted,
         });
+    }
+
+    /// Keeps a footprint's `(variant (name "LITE") (dnp yes) (field (name "Value") (value "1k")))`
+    /// entries (`k10-dnp`). Other settings in an entry, and fields other than `Value`, get a note.
+    fn footprint_variants(&mut self, fp: &Node, designator: &str, board_dnp: bool) {
+        for entry in fp.children("variant") {
+            let Some(variant) = entry.child("name").and_then(|n| n.str_at(0)) else {
+                self.tally.add(
+                    Severity::Warning,
+                    "footprint variant entr(ies) without a name (not read)",
+                );
+                continue;
+            };
+            let mut found = FootprintVariant {
+                variant: variant.to_string(),
+                designator: designator.to_string(),
+                board_dnp,
+                dnp: None,
+                value: None,
+            };
+            for item in entry.args() {
+                match item.head() {
+                    Some("name") => {}
+                    Some("dnp") => match item.str_at(0) {
+                        Some("yes") => found.dnp = Some(true),
+                        Some("no") => found.dnp = Some(false),
+                        _ => self.tally.add(
+                            Severity::Warning,
+                            "footprint variant do-not-populate setting(s) that are neither yes \
+                             nor no (not read)",
+                        ),
+                    },
+                    Some("field") => {
+                        let name = item.child("name").and_then(|n| n.str_at(0));
+                        let value = item.child("value").and_then(|n| n.str_at(0));
+                        match (name, value) {
+                            (Some("Value"), Some(value)) => found.value = Some(value.to_string()),
+                            (name, _) => self.tally.add(
+                                Severity::Info,
+                                format!(
+                                    "footprint variant field(s) {} (not read; only the Value is)",
+                                    name.unwrap_or("without a name")
+                                ),
+                            ),
+                        }
+                    }
+                    Some(other) => self.tally.add(
+                        Severity::Info,
+                        format!("footprint variant setting(s) {other} (not read)"),
+                    ),
+                    None => {}
+                }
+            }
+            self.variant_entries.push(found);
+        }
     }
 
     fn model(&mut self, m: &Node) -> Option<ModelRef> {
@@ -1519,6 +1605,76 @@ fn place_copper(root: &Node, layers: &mut [Layer], thickness: Option<f64>, tally
 
 /// Reads a parsed `.kicad_pcb`.
 /// `variables` is what the texts' text variables may use besides the board file.
+/// The board's variants (`(variants (variant (name "LITE")))`, KiCad 10, `k10-dnp`) with what
+/// each footprint's entries change in them: `(dnp yes)` leaves the part out, `(dnp no)` fits a
+/// part the board marks do-not-populate (R2 in LITE), a `Value` field changes its comment. A
+/// part is never in both lists: when two entries of one variant disagree, the first is kept.
+fn board_variants(root: &Node, entries: &[FootprintVariant], tally: &mut Tally) -> Vec<Variant> {
+    let mut variants: Vec<Variant> = Vec::new();
+    for v in root
+        .child("variants")
+        .into_iter()
+        .flat_map(|v| v.children("variant"))
+    {
+        match v.child("name").and_then(|n| n.str_at(0)) {
+            Some(name) if !variants.iter().any(|seen| seen.name == name) => {
+                variants.push(Variant {
+                    name: name.to_string(),
+                    ..Variant::default()
+                });
+            }
+            Some(_) => tally.add(
+                Severity::Warning,
+                "board variant(s) listed twice (read once)",
+            ),
+            None => tally.add(
+                Severity::Warning,
+                "board variant(s) without a name (not read)",
+            ),
+        }
+    }
+    for e in entries {
+        let Some(variant) = variants.iter_mut().find(|v| v.name == e.variant) else {
+            tally.add(
+                Severity::Warning,
+                format!(
+                    "footprint variant entr(ies) for {}, a variant the board does not list (not \
+                     read)",
+                    e.variant
+                ),
+            );
+            continue;
+        };
+        let d = &e.designator;
+        let both = || {
+            format!(
+                "footprint variant entr(ies) that both fit and leave out a part in {} (the first \
+                 is kept)",
+                e.variant
+            )
+        };
+        match e.dnp {
+            Some(true) if variant.fitted.contains(d) => tally.add(Severity::Warning, both()),
+            Some(true) if !variant.not_fitted.contains(d) => variant.not_fitted.push(d.clone()),
+            // Fitting a part the board fits changes nothing; only a DNP part is listed.
+            Some(false) if e.board_dnp && variant.not_fitted.contains(d) => {
+                tally.add(Severity::Warning, both());
+            }
+            Some(false) if e.board_dnp && !variant.fitted.contains(d) => {
+                variant.fitted.push(d.clone());
+            }
+            _ => {}
+        }
+        if let Some(comment) = &e.value {
+            variant.values.push(VariantValue {
+                designator: e.designator.clone(),
+                comment: comment.clone(),
+            });
+        }
+    }
+    variants
+}
+
 pub fn read(mut root: Node, variables: &Variables) -> ReadOutcome {
     let absurd = crate::sexpr::limit_numbers(&mut root);
     let root = &root;
@@ -1610,6 +1766,7 @@ pub fn read(mut root: Node, variables: &Variables) -> ReadOutcome {
         fields: Vec::new(),
         sources: Vec::new(),
         shown_layer_names: shown_layer_names(root),
+        variant_entries: Vec::new(),
     };
     let mut font_notes = Vec::new();
     r.embedded = crate::fonts::read(root, &mut font_notes);
@@ -1623,7 +1780,7 @@ pub fn read(mut root: Node, variables: &Variables) -> ReadOutcome {
         match head {
             "version" | "generator" | "generator_version" | "general" | "paper" | "title_block"
             | "layers" | "setup" | "net" | "embedded_fonts" | "embedded_files" | "uuid"
-            | "property" => {}
+            | "property" | "variants" => {}
             "footprint" | "module" => r.footprint(item),
             "segment" => r.segment(item),
             "arc" => r.track_arc(item),
@@ -1710,6 +1867,7 @@ pub fn read(mut root: Node, variables: &Variables) -> ReadOutcome {
     for (text, (raw, owner, layer)) in r.texts.iter_mut().zip(&r.sources) {
         text.content = resolver.resolve(raw, *owner, layer);
     }
+    let variants = board_variants(root, &r.variant_entries, &mut r.tally);
     let mut notes = r.tally.into_notes();
     notes.extend(resolver.notes());
     notes.sort_by_key(|n| match n.severity {
@@ -1730,6 +1888,7 @@ pub fn read(mut root: Node, variables: &Variables) -> ReadOutcome {
             components: r.components,
             appearance: Default::default(),
             free_models: Vec::new(),
+            variants,
             solder_mask_expansion: mask_expansion,
         },
         notes,

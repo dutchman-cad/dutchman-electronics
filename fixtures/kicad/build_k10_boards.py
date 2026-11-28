@@ -437,3 +437,40 @@ fp.Add(z)
 b.Add(fp)
 fp.SetPosition(p(80, 50))
 save(b, "k10-all-features")
+
+
+# k10-dnp (issue #184): five resistors like k10-one-resistor's (test:R_0603, value 10k, two
+# 0.9 x 0.95 pads 0.8 either side of the origin, model box-1608.step), not turned, on the top,
+# each with one of KiCad's footprint flags so they can be told apart: R1 at (10,10) none; R2 at
+# (20,10) Do not populate; R3 at (30,10) Exclude from position files; R4 at (40,10) Exclude from
+# bill of materials; R5 at (10,20) Not in schematic (board only). The board has a variant LITE in
+# which R1 is not populated and shows the value 1k, and R2 is populated.
+b = new_board()
+rect(b, (0, 0), (50, 30))
+b.AddVariant("LITE")
+for ref, at, flag in [
+    ("R1", (10, 10), 0),
+    ("R2", (20, 10), pcbnew.FP_DNP),
+    ("R3", (30, 10), pcbnew.FP_EXCLUDE_FROM_POS_FILES),
+    ("R4", (40, 10), pcbnew.FP_EXCLUDE_FROM_BOM),
+    ("R5", (10, 20), pcbnew.FP_BOARD_ONLY),
+]:
+    fp = pcbnew.FOOTPRINT(b)
+    fp.SetReference(ref)
+    fp.SetValue("10k")
+    fp.SetFPID(pcbnew.LIB_ID("test", "R_0603"))
+    for n, x in (("1", -0.8), ("2", 0.8)):
+        pad(fp, n, x, (0.9, 0.95), pcbnew.PAD_SHAPE_RECT)
+    m = pcbnew.FP_3DMODEL()
+    m.m_Filename = "box-1608.step"
+    fp.Models().append(m)
+    fp.SetAttributes(pcbnew.FP_SMD | flag)
+    if ref == "R1":
+        v = fp.AddVariant("LITE")
+        v.SetDNP(True)
+        v.SetFieldValue("Value", "1k")
+    elif ref == "R2":
+        fp.AddVariant("LITE").SetDNP(False)
+    b.Add(fp)
+    fp.SetPosition(p(*at))
+save(b, "k10-dnp")

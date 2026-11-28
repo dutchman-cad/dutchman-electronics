@@ -1495,10 +1495,23 @@ paste.PcbDoc  (from one-resistor)
     and C), byte 1 12 (0x0C) except 13 (0x0D) on C, and byte 185 3 except 1 on C. The region
     is an ordinary record in /Regions6/Data on layer byte 35 (Top Paste).
 
-A variants project (one-resistor-based, with a part Not Fitted) was tried and not made: in a
+A variants project (one-resistor-based, with a part Not Fitted) was tried here first: in a
 project with only a board and no schematic, Altium 26.12.2's Project > Variants answered "Project
-must be compiled first" even after Project > Validate PCB Project. The project was closed
-without saving.
+must be compiled first" even after Project > Validate PCB Project, and the project was closed
+without saving. Variants need a schematic; they are made in variants-project (see "Variants"
+below).
+
+Variants (variants-project)
+---------------------------
+Altium 26.12.2 offers Project > Variants only in a project with a schematic, so variants-project
+has one: two parts from our own symbol library (RES-TEST) with our own footprint R0603-TEST, R1
+10k and R2 4k7 in series between net labels IN and OUT, synced to a copy of empty-outline with
+R1 at (20, 15) and R2 at (30, 15). Variant "Lite" has R2 Not Fitted; variant "Alt" changes R1's
+Comment to 22k. The variants live only in the project file, as [ProjectVariant1] (Lite:
+Variation1=Designator=R2|UniqueId=\JQYPWMZJ|Kind=1|AlternatePart=) and [ProjectVariant2] (Alt:
+Kind=0 with ParamVariation1=ParameterName=Comment|VariantValue=22k). The variation's UniqueId is
+the board component's SOURCEUNIQUEID. The board file is byte for byte the same before and after
+adding the variants. Details, every number and the privacy steps: variants-project/README.txt.
 
 Paths inside the files
 ----------------------

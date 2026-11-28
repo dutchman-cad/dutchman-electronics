@@ -292,6 +292,7 @@ mod tests {
                 side: Side::Top,
                 models: Vec::new(),
                 comment: "10k".into(),
+                fitted: true,
             }],
             texts,
             ..Board::default()

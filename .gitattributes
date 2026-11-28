@@ -9,3 +9,7 @@
 *.STEP       -text
 *.wrl        -text
 *.sexp       -text
+*.PcbLib     binary
+*.SchDoc     binary
+*.SchLib     binary
+*.PrjPcbVariants binary

@@ -510,6 +510,39 @@ pub struct Placement {
     pub models: Vec<ModelRef>,
     /// The component's comment, often its value ("10k"); empty when the file gives none.
     pub comment: String,
+    /// Whether the board file itself says the part is fitted: `false` for a part marked not to
+    /// be placed (KiCad's DNP flag). `true` when the file has no such flag (an Altium board file
+    /// has none; its assembly variants are in [`Board::variants`]).
+    pub fitted: bool,
+}
+
+/// An assembly variant of the board's project: which parts it leaves out, fits and changes the
+/// value of, against the base design. Designators are as the file writes them, matched exactly.
+///
+/// A part is left out of the variant when
+/// `(!placement.fitted || not_fitted contains it) && !fitted contains it`. A reader never puts
+/// one designator in both `not_fitted` and `fitted`; if a board model has it in both anyway,
+/// `not_fitted` wins.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Variant {
+    /// The variant's name ("Lite").
+    pub name: String,
+    /// The designators of the parts this variant does not fit.
+    pub not_fitted: Vec<String>,
+    /// The designators of the parts this variant fits although the board marks them not fitted
+    /// ([`Placement::fitted`] `false`, KiCad's DNP).
+    pub fitted: Vec<String>,
+    /// The parts whose comment (value) this variant changes.
+    pub values: Vec<VariantValue>,
+}
+
+/// A part's comment (value) in one variant.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct VariantValue {
+    /// The part's designator ("R1").
+    pub designator: String,
+    /// Its comment in the variant ("22k").
+    pub comment: String,
 }
 
 /// A hand-drawn mask opening, independent of pads, in board coordinates.
@@ -536,6 +569,9 @@ pub struct Board {
     pub graphics: Vec<Graphic>,
     pub texts: Vec<Text>,
     pub components: Vec<Placement>,
+    /// The assembly variants of the board's project, in the project's order; empty when the
+    /// board was read without its project or the project has none.
+    pub variants: Vec<Variant>,
     /// 3D bodies that belong to no part, in board coordinates: X and Y as on the board seen
     /// from the top, Z from the top face of the board (up is positive; a body below the board
     /// has a negative Z). A [`ModelRef`]'s `offset`, `rotation_deg` and shape are in that frame.
