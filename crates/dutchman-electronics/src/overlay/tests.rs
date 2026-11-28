@@ -2452,8 +2452,13 @@ fn filled_graphics_keep_holes_and_follow_the_conformal_split() {
     assert!(notes.is_empty(), "{notes:?}");
     let laminate_ink = area(named(&list, "Silkscreen top"));
     let copper_ink = area(named(&list, "Silkscreen top over copper"));
-    assert!((laminate_ink - 23.94).abs() < 0.001, "{laminate_ink}");
-    assert!((copper_ink - 22.06).abs() < 0.001, "{copper_ink}");
+    // The shared skirt is thinned once, so its edge may sit up to THIN inside x=5.010
+    // (never inside the copper): the 6 mm of crossing ink moves by at most 6*THIN.
+    assert!(
+        laminate_ink > 23.94 - 0.001 && laminate_ink < 23.94 + 6.0 * thin::THIN + 0.001,
+        "{laminate_ink}"
+    );
+    assert!((laminate_ink + copper_ink - 46.0).abs() < 0.001, "{copper_ink}");
     // The same area on copper draws its holes too, through the shared graphics path.
     b.copper.clear();
     if let Graphic::Area { layer, .. } = &mut b.graphics[0] {
@@ -2494,14 +2499,16 @@ fn hand_drawn_openings_cut_both_coats_and_ink_on_only_their_side() {
     });
     let (list, notes) = overlays(&b, 1.6, "Board");
     assert!(notes.is_empty(), "{notes:?}");
-    for (name, expected) in [
-        ("Solder mask top", 33.94),
-        ("Solder mask top over copper", 34.06),
-        ("Silkscreen top", 33.94),
-        ("Silkscreen top over copper", 34.06),
-    ] {
-        let actual = area(named(&list, name));
-        assert!((actual - expected).abs() < 0.001, "{name}: {actual}");
+    // The thinned skirt edge may sit up to THIN inside x=5.010, so up to 6*THIN of the
+    // 6 mm crossing moves from over copper to over laminate; each pair still sums to 68.
+    for kind in ["Solder mask", "Silkscreen"] {
+        let low = area(named(&list, &format!("{kind} top")));
+        let high = area(named(&list, &format!("{kind} top over copper")));
+        assert!(
+            low > 33.94 - 0.001 && low < 33.94 + 6.0 * thin::THIN + 0.001,
+            "{kind}: {low}"
+        );
+        assert!((low + high - 68.0).abs() < 0.001, "{kind}: {low} + {high}");
     }
     assert!((area(named(&list, "Solder mask bottom")) - 100.0).abs() < 0.001);
     assert!((area(named(&list, "Finish top")) - 16.0).abs() < 0.001);
