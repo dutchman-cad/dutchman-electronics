@@ -663,6 +663,27 @@ pub fn build_accepting(
         &crate::linked::folders(path, model_folders),
     );
     outcome.notes.extend(linked_notes);
+    let name = if outcome.board.name.trim().is_empty() {
+        path.file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("board")
+            .to_string()
+    } else {
+        outcome.board.name.clone()
+    };
+    build_outcome(outcome, format.as_ref(), &name, copper, bodies, accept)
+}
+
+/// Builds a package from an already read board, including its notes, models and fonts.
+/// Linked models and text parameters must be resolved before calling this function.
+pub fn build_outcome(
+    outcome: board_model::ReadOutcome,
+    format: &dyn board_model::InputFormat,
+    name: &str,
+    copper: crate::overlay::Copper,
+    bodies: Bodies,
+    accept: Accept,
+) -> Result<Package, String> {
     let board = outcome.board;
     // When there is no outline to make a board from, the reader's own words say why (an older
     // KiCad file, an outline that does not close), so the first Dropped note comes with the
@@ -676,97 +697,114 @@ pub fn build_accepting(
     } else {
         None
     };
-    let name = if board.name.trim().is_empty() {
-        path.file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("board")
-            .to_string()
-    } else {
-        board.name.clone()
-    };
     // A reader that refused the whole file (a KiCad board older than 9) returns no layers and one
     // note; that note alone is the error, in plain words, rather than "no outline" before it.
     let refused = board.layers.is_empty() && outcome.notes.len() == 1;
-    let step = board_step::write(&board, &name).map_err(|e| match &why {
+    let step = board_step::write(&board, name).map_err(|e| match &why {
         Some(why) if refused => why.clone(),
         Some(why) => format!("{e}: {why}"),
         None => e.to_string(),
     })?;
 
-    let mut notes: Vec<Value> = outcome.notes.iter().map(note).collect();
-    let board_notes: Vec<Value> = step.notes.iter().map(note).collect();
-    // What was left out of the board solid is said in the package's own notes too, not only on
-    // the Board part.
-    notes.extend(board_notes.iter().cloned());
-    let mut models = vec![json!({ "id": BOARD_MODEL, "file": BOARD_FILE })];
-    let mut parts = vec![json!({
-        "name": BOARD_PART,
-        "model": BOARD_MODEL,
-        "transform": IDENTITY,
-        "color": BOARD_COLOR,
-        "metallic": BOARD_FINISH.metallic,
-        "roughness": BOARD_FINISH.roughness,
-        "notes": board_notes,
-    })];
-    let plated = plating(&board, &step);
-    let mut files = vec![(BOARD_FILE.to_string(), step.text.into_bytes())];
-    let recognizer = Recognizer::new(&board);
-    let placed = components_with(
-        &board.components,
-        &outcome.models,
-        step.thickness,
-        &board.free_models,
-        Some((&recognizer, bodies)),
-    );
-    models.extend(
-        placed
-            .models
-            .iter()
-            .map(|(id, file, _)| json!({ "id": id, "file": file })),
-    );
-    files.extend(
-        placed
-            .models
-            .into_iter()
-            .map(|(_, file, bytes)| (file, bytes)),
-    );
-    parts.extend(placed.parts);
-    notes.extend(placed.notes);
-    notes.extend(plated.notes);
-    // The plating takes the top finish; a process we do not know is named once, in a note.
-    let (plating_look, _) = pad_look(board.appearance.top_finish.as_ref());
-    notes.extend(finish_notes(&board));
-    if let Some(text) = plated.text {
-        models.push(json!({ "id": PLATING_MODEL, "file": PLATING_FILE }));
-        parts.push(json!({
-            "name": PLATING_PART,
-            "model": PLATING_MODEL,
+    let overlay_thickness = step.thickness;
+    let board_ref = &board;
+    let fonts = &outcome.fonts;
+    std::thread::scope(|scope| {
+        let render = || {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                crate::overlay::overlays(board_ref, fonts, overlay_thickness, BOARD_PART, copper)
+            })).unwrap_or_else(|_| (Vec::new(), vec![json!({
+                "severity": "Dropped",
+                "message": "the laminate, copper, finish, silkscreen and solder mask overlays could not be drawn",
+            })]))
+        };
+        // We start only after STEP succeeds. Plating and components read the same board
+        // independently; failed worker creation uses the serial path.
+        let worker = std::thread::Builder::new()
+            .stack_size(16 << 20)
+            .spawn_scoped(scope, render)
+            .ok();
+        let mut notes: Vec<Value> = outcome.notes.iter().map(note).collect();
+        let board_notes: Vec<Value> = step.notes.iter().map(note).collect();
+        // What was left out of the board solid is said in the package's own notes too, not only on
+        // the Board part.
+        notes.extend(board_notes.iter().cloned());
+        let mut models = vec![json!({ "id": BOARD_MODEL, "file": BOARD_FILE })];
+        let mut parts = vec![json!({
+            "name": BOARD_PART,
+            "model": BOARD_MODEL,
             "transform": IDENTITY,
-            "color": plating_look.color,
-            "metallic": plating_look.finish.metallic,
-            "roughness": plating_look.finish.roughness,
-            "notes": [],
-        }));
-        files.push((PLATING_FILE.to_string(), text.into_bytes()));
-    }
-    let (mut overlays, overlay_notes) =
-        crate::overlay::overlays(&board, &outcome.fonts, step.thickness, BOARD_PART, copper);
-    if !accept.laminate {
-        negotiate_down(&mut overlays);
-    }
-    notes.extend(overlay_notes);
-    let manifest = json!({
-        "schema": PARTS_SCHEMA,
-        "ok": true,
-        "name": name,
-        "units": "mm",
-        "source": { "format": format.id(), "format_name": format.name() },
-        "models": models,
-        "parts": parts,
-        "overlays": overlays,
-        "notes": notes,
-    });
-    Ok(Package { manifest, files })
+            "color": BOARD_COLOR,
+            "metallic": BOARD_FINISH.metallic,
+            "roughness": BOARD_FINISH.roughness,
+            "notes": board_notes,
+        })];
+        let plated = plating(&board, &step);
+        let mut files = vec![(BOARD_FILE.to_string(), step.text.into_bytes())];
+        let recognizer = Recognizer::new(&board);
+        let placed = components_with(
+            &board.components,
+            &outcome.models,
+            step.thickness,
+            &board.free_models,
+            Some((&recognizer, bodies)),
+        );
+        models.extend(
+            placed
+                .models
+                .iter()
+                .map(|(id, file, _)| json!({ "id": id, "file": file })),
+        );
+        files.extend(
+            placed
+                .models
+                .into_iter()
+                .map(|(_, file, bytes)| (file, bytes)),
+        );
+        parts.extend(placed.parts);
+        notes.extend(placed.notes);
+        notes.extend(plated.notes);
+        // The plating takes the top finish; a process we do not know is named once, in a note.
+        let (plating_look, _) = pad_look(board.appearance.top_finish.as_ref());
+        notes.extend(finish_notes(&board));
+        if let Some(text) = plated.text {
+            models.push(json!({ "id": PLATING_MODEL, "file": PLATING_FILE }));
+            parts.push(json!({
+                "name": PLATING_PART,
+                "model": PLATING_MODEL,
+                "transform": IDENTITY,
+                "color": plating_look.color,
+                "metallic": plating_look.finish.metallic,
+                "roughness": plating_look.finish.roughness,
+                "notes": [],
+            }));
+            files.push((PLATING_FILE.to_string(), text.into_bytes()));
+        }
+        let (mut overlays, overlay_notes) = match worker {
+            Some(worker) => worker.join().unwrap_or_else(|_| render()),
+            None => render(),
+        };
+        if !accept.laminate {
+            negotiate_down(&mut overlays);
+        }
+        notes.extend(overlay_notes);
+        let mut manifest = json!({
+            "schema": PARTS_SCHEMA,
+            "ok": true,
+            "name": name,
+            "units": "mm",
+            "source": { "format": format.id(), "format_name": format.name() },
+        });
+        if let Some(map) = manifest.as_object_mut() {
+            // These arrays already contain JSON values, including every overlay coordinate.
+            // Moving them avoids a second complete serialization and allocation pass.
+            map.insert("models".into(), Value::Array(models));
+            map.insert("parts".into(), Value::Array(parts));
+            map.insert("overlays".into(), Value::Array(overlays));
+            map.insert("notes".into(), Value::Array(notes));
+        }
+        Ok(Package { manifest, files })
+    })
 }
 
 /// Makes the overlays what a loader that knows only `copper`, `silkscreen` and `mask` can draw:
@@ -4052,5 +4090,40 @@ mod tests {
                 assert!(notes.is_empty(), "{notes:?}");
             }
         }
+    }
+}
+
+#[cfg(all(test, feature = "altium"))]
+mod outcome_tests {
+    use super::*;
+    use board_model::InputFormat;
+
+    #[test]
+    fn resolved_outcome_build_matches_file_build() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../altium-pcbdoc/tests/boards/outline-with-hole.PcbDoc");
+        let bytes = std::fs::read(&path).unwrap();
+        let expected = build_accepting(
+            &path,
+            &bytes,
+            &[],
+            &[],
+            crate::overlay::Copper::Outer,
+            Bodies::default(),
+            Accept { laminate: true },
+        )
+        .unwrap();
+        let outcome = altium_pcbdoc::Altium.read(&bytes).unwrap();
+        let name = expected.manifest["name"].as_str().unwrap();
+        let actual = build_outcome(
+            outcome,
+            &altium_pcbdoc::Altium,
+            name,
+            crate::overlay::Copper::Outer,
+            Bodies::default(),
+            Accept { laminate: true },
+        )
+        .unwrap();
+        assert_eq!(actual, expected);
     }
 }

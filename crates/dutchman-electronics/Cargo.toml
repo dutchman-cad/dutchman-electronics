@@ -9,6 +9,8 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+# Spatial candidate filtering for geometry checks; MIT or Apache-2.0.
+rstar = "0.12"
 board-model = { path = "../board-model" }
 board-step = { path = "../board-step" }
 altium-pcbdoc = { path = "../altium-pcbdoc", optional = true }

@@ -81,6 +81,7 @@ dependencies = [
  "board-step",
  "geo",
  "kicad-pcb",
+ "rstar",
  "serde_json",
  "ttf-parser",
 ]

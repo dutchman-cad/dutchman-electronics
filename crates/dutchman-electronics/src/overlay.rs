@@ -32,7 +32,11 @@ use board_model::{
 };
 use geo::buffer::Buffer;
 use geo::orient::{Direction, Orient};
-use geo::{Area, BooleanOps, Coord, Intersects, LineString, MultiPolygon, Polygon, Validation};
+mod spatial;
+mod validity;
+use spatial::LocalOps;
+
+use geo::{Area, BooleanOps, Coord, Intersects, LineString, MultiPolygon, Polygon};
 use serde_json::{json, Value};
 
 use crate::colors::{
@@ -631,16 +635,13 @@ impl Pile {
     }
 
     fn union(&self) -> MultiPolygon {
-        if self.outlined.is_empty() {
-            return geo::unary_union(&self.polygons);
-        }
-        let all: Vec<Polygon> = self
-            .polygons
-            .iter()
-            .chain(&self.outlined)
-            .cloned()
-            .collect();
-        geo::unary_union(&all)
+        spatial::union(&MultiPolygon::new(
+            self.polygons
+                .iter()
+                .chain(&self.outlined)
+                .cloned()
+                .collect(),
+        ))
     }
 
     /// The letter outlines alone, as one shape.
@@ -796,7 +797,26 @@ fn rounded_ring(r: &LineString) -> LineString {
 /// Thin the shared boundary once, then restore any copper the simplification left outside.
 /// The coat is wider than THIN, but the containment check also protects narrow features.
 fn mask_skirt(copper: &MultiPolygon) -> MultiPolygon {
-    let buffered = copper.union(&copper.buffer(MASK_COAT));
+    let large = copper
+        .iter()
+        .fold(copper.0.len(), |n, p| n.saturating_add(p.interiors().len()))
+        >= 4096;
+    if let Some(groups) = spatial::components(copper, MASK_COAT) {
+        return MultiPolygon::new(
+            groups
+                .iter()
+                .flat_map(|g| mask_skirt_group(g, large).0)
+                .collect(),
+        );
+    }
+    mask_skirt_group(copper, large)
+}
+
+fn mask_skirt_group(copper: &MultiPolygon, large: bool) -> MultiPolygon {
+    let buffer = copper.buffer(MASK_COAT);
+    // A positive buffer normally contains the original copper. The containment check below
+    // restores it if numerical rounding or thinning left any outside.
+    let buffered = if large { buffer } else { copper.union(&buffer) };
     let (skirt, _) = thin::thin_keeping(&buffered, thin::THIN, &MultiPolygon::new(Vec::new()));
     let skirt = MultiPolygon::new(
         skirt
@@ -809,20 +829,23 @@ fn mask_skirt(copper: &MultiPolygon) -> MultiPolygon {
             })
             .collect(),
     );
-    if copper.difference(&skirt).0.is_empty() {
+    if copper.difference_fast(&skirt).0.is_empty() {
         skirt
     } else {
-        skirt.union(copper)
+        skirt.union_fast(copper)
     }
 }
 
 /// Remove unusable split pieces without simplifying their shared edges. Small usable pieces
 /// touching copper stay: removing them could uncover a track or a pad.
 fn split_pieces(shape: MultiPolygon, copper: &MultiPolygon) -> (MultiPolygon, usize) {
-    let ring_ok = |r: &LineString| {
-        r.0.len() >= 4
-            && Polygon::new(r.clone(), vec![]).unsigned_area() >= 1e-6
-            && Polygon::new(r.clone(), vec![]).is_valid()
+    let mut validator = validity::Validity::default();
+    let mut ring_ok = |r: &LineString| {
+        if r.0.len() < 4 {
+            return false;
+        }
+        let polygon = Polygon::new(r.clone(), vec![]);
+        polygon.unsigned_area() >= 1e-6 && validator.valid(&polygon)
     };
     let mut dropped = 0usize;
     let mut kept = Vec::new();
@@ -1554,10 +1577,10 @@ fn overlays_within(
     // A failure inside the polygon library must not take the whole package down with it.
     let built = catch_unwind(AssertUnwindSafe(|| {
         let all_drilled = holes.union();
-        let face = outline.map(|o| o.difference(&cutouts.union()));
-        let mut built = Vec::new();
-        let mut slivers = Vec::new();
-        for (side, f, sign) in [("top", &top, 1.0), ("bottom", &bottom, -1.0)] {
+        let face = outline.map(|o| o.difference_fast(&cutouts.union()));
+        let process_side = |side: &'static str, f: &SideFaces, sign: f64| {
+            let mut built = Vec::new();
+            let mut slivers = Vec::new();
             // The top side stacks up from the face at z = thickness, the bottom down from z = 0.
             let base = if sign > 0.0 { thickness } else { 0.0 };
             let at = |lift: f64| base + sign * lift;
@@ -1586,19 +1609,31 @@ fn overlays_within(
             // All copper of the face is one unit; the finish is the part of it the mask opens
             // over (the opening, not the pad, so the ring round a pad is covered too).
             // This side's drills: the pads' and those of its open vias.
-            let drilled = all_drilled.union(&f.open_drill.union());
-            let copper_all = f.masked.union().union(&f.bare.union()).difference(&drilled);
+            let open_drill = f.open_drill.union();
+            // When every via is open, both piles are identical. We reuse the exact union,
+            // avoiding another large boolean operation without changing its input or rounding.
+            let via_drill = if f.via_drill.polygons == f.open_drill.polygons {
+                None
+            } else {
+                Some(f.via_drill.union())
+            };
+            let drilled = all_drilled.union_fast(&open_drill);
+            let copper_all = f
+                .masked
+                .union()
+                .union_fast(&f.bare.union())
+                .difference_fast(&drilled);
             let opening_all = f.opening.union();
-            let finish = copper_all.intersection(&opening_all);
+            let finish = copper_all.intersection_fast(&opening_all);
             // Silkscreen is not printed over holes, via caps, or the mask openings.
             // We thin ink before clipping, then remove any extra points the cuts leave.
             // Both passes precede the split, so its shared mask edges stay exact.
             let text = f.silk.outlined_union();
             let (silk, before) = thin::thin_keeping(&f.silk.union(), thin::THIN, &text);
             let silk = silk
-                .difference(&drilled)
-                .difference(&f.via_drill.union())
-                .difference(&opening_all);
+                .difference_fast(&drilled)
+                .difference_fast(via_drill.as_ref().unwrap_or(&open_drill))
+                .difference_fast(&opening_all);
             let (silk, after) = thin::thin_keeping(&silk, thin::THIN, &text);
             let mut silk_slivers = before.saturating_add(after);
             // It lies on the mask coat, so over copper it sits higher than over bare laminate.
@@ -1606,9 +1641,9 @@ fn overlays_within(
             // We include copper explicitly: a buffer must never leave a hole over a thin
             // track. Mask and silk use the same region and its exact complement.
             let skirt = mask_skirt(&copper_all);
-            let (silk_over_copper, n) = split_pieces(silk.intersection(&skirt), &copper_all);
+            let (silk_over_copper, n) = split_pieces(silk.intersection_fast(&skirt), &copper_all);
             silk_slivers = silk_slivers.saturating_add(n);
-            let (silk_over_laminate, n) = split_pieces(silk.difference(&skirt), &copper_all);
+            let (silk_over_laminate, n) = split_pieces(silk.difference_fast(&skirt), &copper_all);
             silk_slivers = silk_slivers.saturating_add(n);
             if silk_slivers > 0 {
                 slivers.push((format!("Silkscreen {side}"), silk_slivers));
@@ -1640,15 +1675,17 @@ fn overlays_within(
             // together they are the whole mask, no area counted twice.
             let mask = face
                 .as_ref()
-                .map(|face| face.difference(&drilled.union(&opening_all)));
+                .map(|face| face.difference_fast(&drilled.union_fast(&opening_all)));
             let mut mask_slivers = 0usize;
             let mut mask_piece = |shape| {
                 let (shape, n) = split_pieces(shape, &copper_all);
                 mask_slivers = mask_slivers.saturating_add(n);
                 shape
             };
-            let mask_over_copper = mask.as_ref().map(|m| mask_piece(m.intersection(&skirt)));
-            let mask_over_laminate = mask.as_ref().map(|m| mask_piece(m.difference(&skirt)));
+            let mask_over_copper = mask
+                .as_ref()
+                .map(|m| mask_piece(m.intersection_fast(&skirt)));
+            let mask_over_laminate = mask.as_ref().map(|m| mask_piece(m.difference_fast(&skirt)));
             if mask_slivers > 0 {
                 slivers.push((format!("Solder mask {side}"), mask_slivers));
             }
@@ -1660,7 +1697,7 @@ fn overlays_within(
                     0.0,
                     FLAT_LAMINATE_LIFT,
                     LAMINATE_THICKNESS,
-                    face.difference(&drilled),
+                    face.difference_fast(&drilled),
                     (LAMINATE_COLOR.to_string(), BOARD_FINISH),
                 ));
             }
@@ -1745,7 +1782,26 @@ fn overlays_within(
                     });
                 }
             }
-        }
+            (built, slivers)
+        };
+        // The two faces read shared inputs and produce independent, ordered results.
+        // Failure to start a worker uses the same serial calculation.
+        let ((mut built, mut slivers), (bottom_built, bottom_slivers)) =
+            std::thread::scope(|scope| {
+                let worker = std::thread::Builder::new()
+                    .stack_size(16 << 20)
+                    .spawn_scoped(scope, || process_side("bottom", &bottom, -1.0));
+                let top_result = process_side("top", &top, 1.0);
+                let bottom_result = match worker {
+                    Ok(worker) => worker
+                        .join()
+                        .unwrap_or_else(|_| process_side("bottom", &bottom, -1.0)),
+                    Err(_) => process_side("bottom", &bottom, -1.0),
+                };
+                (top_result, bottom_result)
+            });
+        built.extend(bottom_built);
+        slivers.extend(bottom_slivers);
         // Each inner layer at its height in the stack, drills and via holes cut out.
         for ((&i, pile), via_drills) in inner_layers.iter().zip(&inner_piles).zip(&inner_via_drills)
         {
@@ -1767,8 +1823,8 @@ fn overlays_within(
                 thickness: Some(t),
                 shape: pile
                     .union()
-                    .difference(&all_drilled)
-                    .difference(&via_drills.union()),
+                    .difference_fast(&all_drilled)
+                    .difference_fast(&via_drills.union()),
                 text: pile.outlined_union(),
                 color: COPPER_COLOR.to_string(),
                 finish_look: COPPER_FINISH,
@@ -1823,9 +1879,11 @@ fn overlays_within(
                     "color": b.color,
                     "metallic": b.finish_look.metallic,
                     "roughness": b.finish_look.roughness,
-                    "areas": areas(&b.shape),
                 });
                 if let Some(map) = o.as_object_mut() {
+                    // The areas are already JSON values; move them instead of serializing
+                    // and cloning the complete coordinate tree through the outer object.
+                    map.insert("areas".into(), Value::Array(areas(&b.shape)));
                     if let Some(finish) = b.finish {
                         map.insert("finish".into(), json!(finish));
                     }

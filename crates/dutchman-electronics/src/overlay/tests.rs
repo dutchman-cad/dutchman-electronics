@@ -3337,3 +3337,80 @@ fn mixed_regions_and_areas_name_both_in_hole_notes() {
         assert!(messages(&notes).iter().any(|m| m == expected), "{notes:?}");
     }
 }
+
+#[test]
+fn pile_union_keeps_polygon_and_text_order_without_cloning() {
+    let mut pile = Pile::default();
+    for i in 0..500 {
+        let at = p(f64::from(i % 25) * 2.0, f64::from(i / 25) * 2.0);
+        pile.polygons.extend(circle(at, 0.6));
+        pile.outlined.extend(circle(p(at.x + 0.6, at.y), 0.4));
+    }
+    let previous: Vec<Polygon> = pile
+        .polygons
+        .iter()
+        .chain(&pile.outlined)
+        .cloned()
+        .collect();
+    assert_eq!(pile.union(), geo::unary_union(&previous));
+}
+
+#[test]
+fn large_independent_mask_skirts_still_cover_every_copper_island() {
+    let copper = MultiPolygon::new(
+        (0..4200)
+            .filter_map(|i| {
+                circle(
+                    Point {
+                        x: f64::from(i % 100) * 2.0,
+                        y: f64::from(i / 100) * 2.0,
+                    },
+                    0.35,
+                )
+            })
+            .collect(),
+    );
+    let skirt = mask_skirt(&copper);
+    assert!(copper.difference(&skirt).0.is_empty());
+    assert_eq!(skirt.0.len(), copper.0.len());
+}
+
+#[test]
+fn repeated_rounded_mask_holes_keep_coordinates_and_report_invalid_rings() {
+    let rectangle = |x: f64, y: f64, side: f64| {
+        LineString::from(vec![
+            (x, y),
+            (x + side, y),
+            (x + side, y + side),
+            (x, y + side),
+            (x, y),
+        ])
+    };
+    let valid_holes: Vec<_> = (0..4200)
+        .map(|i| {
+            rectangle(
+                2.0 + f64::from(i % 100) * 2.0,
+                2.0 + f64::from(i / 100) * 2.0,
+                0.5,
+            )
+        })
+        .collect();
+    let exterior = rectangle(0.0, 0.0, 240.0);
+    let mut holes = valid_holes.clone();
+    // We add one nonzero-area crossing and one ring that collapses at 1 nm precision.
+    holes.push(LineString::from(vec![
+        (210.0, 2.0),
+        (212.0, 4.0),
+        (210.0, 5.0),
+        (213.0, 2.0),
+        (210.0, 2.0),
+    ]));
+    holes.push(rectangle(220.0, 2.0, 0.000_000_000_4));
+    let shape = MultiPolygon::new(vec![Polygon::new(exterior.clone(), holes)]);
+    let (actual, dropped) = split_pieces(shape, &MultiPolygon::new(vec![]));
+    assert_eq!(dropped, 2);
+    assert_eq!(
+        actual,
+        MultiPolygon::new(vec![Polygon::new(exterior, valid_holes)])
+    );
+}
