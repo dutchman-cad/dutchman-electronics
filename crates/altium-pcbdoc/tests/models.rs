@@ -380,7 +380,7 @@ fn an_extruded_body_has_its_color_and_opacity() -> Result<(), Box<dyn std::error
             r: 128,
             g: 128,
             b: 128,
-            opacity: 1.0
+            opacity: Some(1.0)
         })
     );
     assert_eq!(
@@ -389,7 +389,7 @@ fn an_extruded_body_has_its_color_and_opacity() -> Result<(), Box<dyn std::error
             r: 32,
             g: 128,
             b: 224,
-            opacity: 0.5
+            opacity: Some(0.5)
         })
     );
     // Only the color differs: the same box in the same place, and no notes.

@@ -205,7 +205,7 @@ fn argb(text: &str) -> Option<Color> {
         r: byte(16),
         g: byte(8),
         b: byte(0),
-        opacity: f64::from(byte(24)) / 255.0,
+        opacity: Some(f64::from(byte(24)) / 255.0),
     })
 }
 
@@ -234,7 +234,7 @@ pub(crate) fn colorref(value: &str, opacity: Option<f64>) -> Option<Color> {
         r,
         g,
         b,
-        opacity: opacity.filter(|o| (0.0..=1.0).contains(o))?,
+        opacity: Some(opacity.filter(|o| (0.0..=1.0).contains(o))?),
     })
 }
 
@@ -303,9 +303,15 @@ mod tests {
             &mut notes,
         );
         let mask = a.top_solder_mask.unwrap();
-        assert_eq!((mask.r, mask.g, mask.b, mask.opacity), (17, 85, 204, 0.6));
+        assert_eq!(
+            (mask.r, mask.g, mask.b, mask.opacity),
+            (17, 85, 204, Some(0.6))
+        );
         let silk = a.top_silkscreen.unwrap();
-        assert_eq!((silk.r, silk.g, silk.b, silk.opacity), (255, 255, 0, 1.0));
+        assert_eq!(
+            (silk.r, silk.g, silk.b, silk.opacity),
+            (255, 255, 0, Some(1.0))
+        );
         assert_eq!((a.bottom_solder_mask, a.bottom_silkscreen), (None, None));
         assert!(notes.is_empty());
     }
@@ -366,7 +372,7 @@ mod tests {
         assert_eq!(top.material, "Tin & Lead");
         let c = top.color.unwrap();
         assert_eq!((c.r, c.g, c.b), (255, 0, 16));
-        assert!((c.opacity - 128.0 / 255.0).abs() < 1e-12);
+        assert!((c.opacity.unwrap() - 128.0 / 255.0).abs() < 1e-12);
         assert!((top.thickness.unwrap() - 0.02032).abs() < 1e-12);
         // No copper layer: a finish cannot be placed on a side.
         assert_eq!(finishes(&layer(FINISH_TYPE, "ENIG")), (None, None));

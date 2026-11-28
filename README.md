@@ -52,6 +52,39 @@ The "neutral board model" is plain Rust types in `crates/board-model`: outline, 
 
 Each further format is one new crate that fills the same model.
 
+### Filled graphics, pad sides, and mask openings
+
+We carry filled graphics as `Graphic::Area { layer, contour, holes, owner }`, in board
+coordinates. We draw them on copper and silkscreen wherever we draw lines and text.
+We also draw graphic lines and arcs on copper layers as copper under the mask.
+Silkscreen areas keep their holes and are clipped by mask openings and drills, then split
+between the coat over copper and the coat over laminate, at the same heights as silk lines.
+Other layer kinds remain reported as dropped until we draw those layers.
+
+We keep a pad's existing shape and dimensions as its top shape. `CopperItem::Pad.bottom`
+is an optional `(PadShape, size_x, size_y)` override using the same center and rotation.
+`CopperItem::PolygonPad.bottom` is an optional list of closed contours in board coordinates,
+just like its existing `shapes`. `None` means the same shape on both faces. The bottom
+copper, surface finish, and mask opening use the bottom geometry; inner layers keep the
+existing top geometry. These overrides apply only to pads on both copper faces
+(through pads on multi-layer or inner copper). For a single-face pad, we use its existing
+geometry on its own face and ignore `bottom`, with one Info note counting those pads.
+Side-specific tenting and expansion still apply.
+
+`Board.mask_openings` holds `MaskOpening { side, contour, holes }` for hand-drawn openings,
+independent of pads. We subtract their union from both conformal mask coats and from
+silkscreen on that side. Copper inside these openings receives the surface finish. Holes
+inside an opening leave islands of mask and ink; contours may wind either way.
+
+`Color.opacity: Option<f64>` distinguishes an unknown opacity (`None`) from an explicit
+value, including zero. Unknown mask opacity uses 0.75; known mask opacity retains the
+0.75 floor. Unknown body opacity uses 1.0. We read silkscreen opacity but leave it unused;
+package silkscreen is always opaque and carries no opacity field. Without laminate negotiation, mask opacity remains 1.0.
+These are neutral model and drawing capabilities; readers currently fill the new shape
+and opening fields with defaults until they implement the corresponding file features.
+The package schema remains `dutchman.parts/1`: areas and optional opacity use the existing
+manifest fields, with no new overlay kinds.
+
 The Dutchman side of add-ons is specified in dutchman-cad/dutchman#1005.
 
 ## Module interface

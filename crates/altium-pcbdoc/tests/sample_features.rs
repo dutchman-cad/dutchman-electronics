@@ -123,7 +123,7 @@ fn a_solid_3d_mask_reads_opacity_one() -> Result<(), Box<dyn std::error::Error>>
     for mask in [a.top_solder_mask, a.bottom_solder_mask] {
         let m = mask.ok_or("no mask color")?;
         assert_eq!((m.r, m.g, m.b), (36, 120, 50));
-        assert!((m.opacity - 1.0).abs() < 1e-9, "{m:?}");
+        assert!((m.opacity.ok_or("no opacity")? - 1.0).abs() < 1e-9, "{m:?}");
     }
     Ok(())
 }
@@ -162,7 +162,7 @@ fn a_cylinder_body_is_an_extruded_circle() -> Result<(), Box<dyn std::error::Err
     assert!(standoff.abs() <= TOLERANCE && (height - 1.0).abs() <= TOLERANCE);
     assert_eq!((m.offset, m.rotation_deg), ([0.0; 3], [0.0; 3]));
     let c = m.color.ok_or("no color")?;
-    assert_eq!((c.r, c.g, c.b, c.opacity), (128, 128, 128, 1.0));
+    assert_eq!((c.r, c.g, c.b, c.opacity), (128, 128, 128, Some(1.0)));
     assert!(
         out.notes.iter().all(|n| !n.message.contains("3D bod")),
         "{:?}",

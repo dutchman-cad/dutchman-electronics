@@ -826,6 +826,7 @@ pub(crate) fn pads(
             Some(2) => PadShape::Rectangle,
             Some(3) => {
                 items.push(CopperItem::PolygonPad {
+                    bottom: None,
                     layer,
                     at: at_point,
                     shapes: vec![octagon(at_point, size_x, size_y, rotation)],
@@ -850,6 +851,7 @@ pub(crate) fn pads(
             }
         };
         items.push(CopperItem::Pad {
+            bottom: None,
             layer,
             at: at_point,
             shape,

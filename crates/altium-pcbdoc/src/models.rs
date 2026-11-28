@@ -864,7 +864,7 @@ mod tests {
                 r: 32,
                 g: 128,
                 b: 224,
-                opacity,
+                opacity: Some(opacity),
             })
         };
         assert_eq!(

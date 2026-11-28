@@ -135,7 +135,9 @@ pub struct Color {
     pub r: u8,
     pub g: u8,
     pub b: u8,
-    pub opacity: f64,
+    /// `None` uses the drawing default: mask 0.75, bodies 1.0.
+    /// Silkscreen opacity is read but unused; package silkscreen is always opaque.
+    pub opacity: Option<f64>,
 }
 
 /// How the board's faces look, as the file records it. `None` where the file says nothing.
@@ -219,6 +221,10 @@ pub enum CopperItem {
         shape: PadShape,
         size_x: f64,
         size_y: f64,
+        /// Bottom shape and dimensions; `None` reuses the top. Same center and rotation.
+        /// Used only for pads on both copper faces; ignored with an Info note for
+        /// single-face pads, whose existing shape applies on their own face.
+        bottom: Option<(PadShape, f64, f64)>,
         rotation_deg: f64,
         /// A through-hole pad has a drill diameter.
         drill: Option<f64>,
@@ -243,6 +249,10 @@ pub enum CopperItem {
         layer: usize,
         at: Point,
         shapes: Vec<Contour>,
+        /// Bottom copper contours in board coordinates; `None` reuses `shapes`.
+        /// Used only for pads on both copper faces; ignored with an Info note for
+        /// single-face pads, whose `shapes` apply on their own face.
+        bottom: Option<Vec<Contour>>,
         /// A through-hole pad has a drill diameter.
         drill: Option<f64>,
         /// The hole is plated. Always false for a pad without a hole.
@@ -268,11 +278,18 @@ pub enum CopperItem {
     },
 }
 
-/// A line or arc drawn on a layer that is not copper (today the silkscreen), in board
+/// A line, arc or filled area drawn on a layer (copper or silkscreen), in board
 /// coordinates like pads and texts. `layer` is an index into [`Board::layers`], whose `kind` and
 /// `side` say which layer it is. `owner` is the designator of the component it belongs to, if any.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Graphic {
+    /// A filled area minus its holes, in board coordinates, with either winding.
+    Area {
+        layer: usize,
+        contour: Contour,
+        holes: Vec<Contour>,
+        owner: Option<String>,
+    },
     Line {
         layer: usize,
         from: Point,
@@ -495,6 +512,15 @@ pub struct Placement {
     pub comment: String,
 }
 
+/// A hand-drawn mask opening, independent of pads, in board coordinates.
+/// The opening is `contour` minus `holes`, in either winding.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MaskOpening {
+    pub side: Side,
+    pub contour: Contour,
+    pub holes: Vec<Contour>,
+}
+
 /// A whole board, read from a file.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Board {
@@ -504,7 +530,9 @@ pub struct Board {
     pub layers: Vec<Layer>,
     pub outline: Outline,
     pub copper: Vec<CopperItem>,
-    /// Lines and arcs on non-copper layers (silkscreen).
+    /// Additional openings cut from this side's mask and silkscreen.
+    pub mask_openings: Vec<MaskOpening>,
+    /// Lines, arcs and filled areas on drawn layers.
     pub graphics: Vec<Graphic>,
     pub texts: Vec<Text>,
     pub components: Vec<Placement>,
@@ -516,7 +544,7 @@ pub struct Board {
     pub appearance: Appearance,
     /// How far the solder mask opens past the edge of each bare pad, in mm, when the file says.
     /// `None` means the file does not say; readers of the board then use
-    /// [`DEFAULT_SOLDER_MASK_EXPANSION`]. Per-pad overrides are not read yet.
+    /// [`DEFAULT_SOLDER_MASK_EXPANSION`]. Per-pad overrides take precedence.
     pub solder_mask_expansion: Option<f64>,
 }
 

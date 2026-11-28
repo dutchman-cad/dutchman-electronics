@@ -160,6 +160,7 @@ fn the_mask_is_the_outline_less_cutouts_openings_and_drills() {
     let mut b = board(
         vec![
             CopperItem::Pad {
+                bottom: None,
                 layer: 0,
                 at: p(5.0, 5.0),
                 shape: PadShape::Rectangle,
@@ -235,6 +236,7 @@ fn pads_on_the_bottom_only_open_the_bottom_mask() {
     // 0.1 mm a side: 1.2^2 = 1.44 mm2, so 200 - 1.44 = 198.56.
     let mut b = board(
         vec![CopperItem::Pad {
+            bottom: None,
             layer: 1,
             at: p(5.0, 5.0),
             shape: PadShape::Rectangle,
@@ -361,6 +363,7 @@ fn a_via_is_a_tented_disc_on_both_faces() {
 fn a_plated_pad_is_bare_copper_on_both_faces_with_its_hole() {
     // one-plated-pad's numbers: round 2 x 2, hole 1, on Multi-Layer.
     let pad = CopperItem::Pad {
+        bottom: None,
         layer: 2,
         at: p(25.0, 15.0),
         shape: PadShape::Round,
@@ -388,6 +391,7 @@ fn a_plated_pad_is_bare_copper_on_both_faces_with_its_hole() {
 fn copper_is_one_unit_and_the_finish_follows_the_opening() {
     // A track running into the middle of a 2 x 2 square pad: its last 1 mm is under the pad.
     let pad = CopperItem::Pad {
+        bottom: None,
         layer: 0,
         at: p(10.0, 0.0),
         shape: PadShape::Rectangle,
@@ -419,6 +423,7 @@ fn copper_is_one_unit_and_the_finish_follows_the_opening() {
 #[test]
 fn a_rotated_rectangle_pad_keeps_its_area() {
     let pad = CopperItem::Pad {
+        bottom: None,
         layer: 0,
         at: p(25.0, 15.0),
         shape: PadShape::Rectangle,
@@ -501,6 +506,7 @@ fn silkscreen_lines_and_arcs_are_drawn_and_other_layers_are_noted() {
     assert!((area(o) - exact).abs() < 0.05, "{}", area(o));
     assert_eq!(o["areas"].as_array().unwrap().len(), 2);
     assert_eq!(notes.len(), 1);
+    // Only lines and arcs are present, so the unsupported layer keeps its old note.
     assert!(notes[0]["message"]
         .as_str()
         .unwrap()
@@ -530,6 +536,7 @@ fn inner_layer_copper_and_bad_sizes_are_noted() {
         messages,
         [
             "1 copper item(s) on inner layers are left out, as they lie inside the board",
+            // Two invalid items; no areas or manual openings change the vocabulary.
             "2 copper or silkscreen item(s) have unusable sizes or layers and were left out",
         ]
     );
@@ -705,6 +712,7 @@ fn a_whole_circle_arc_is_a_ring_with_its_hole_open() {
 fn a_tall_slot_turned_a_quarter_lies_along_x() {
     // An oval 1 wide and 3 tall, turned 90 degrees, reaches x = +-1.5 and y = +-0.5.
     let pad = CopperItem::Pad {
+        bottom: None,
         layer: 0,
         at: p(0.0, 0.0),
         shape: PadShape::Oval,
@@ -750,6 +758,7 @@ fn silkscreen_is_not_printed_over_holes_or_pads() {
 /// A bare 1 x 1 SMD pad at (5, 0) on `layer`.
 fn square_pad(layer: usize) -> CopperItem {
     CopperItem::Pad {
+        bottom: None,
         layer,
         at: p(5.0, 0.0),
         shape: PadShape::Rectangle,
@@ -771,6 +780,7 @@ fn the_mask_opening_is_the_pad_grown_by_the_boards_expansion() {
     // 196.25. With an expansion of 0 it is the pad itself: 200 - 2 = 198.
     let mut b = board(
         vec![CopperItem::Pad {
+            bottom: None,
             layer: 0,
             at: p(5.0, 5.0),
             shape: PadShape::Rectangle,
@@ -899,6 +909,7 @@ fn items_far_off_the_board_or_on_other_layers_are_left_out() {
     assert!(list.is_empty());
     assert_eq!(
         notes[0]["message"],
+        // No areas or manual openings: these three failures keep the original wording.
         "3 copper or silkscreen item(s) have unusable sizes or layers and were left out"
     );
 }
@@ -1001,6 +1012,7 @@ fn a_huge_text_or_one_far_away_adds_nothing_and_is_one_unusable_item_each() {
         .into_iter()
         .filter(|m| m.contains("unusable"))
         .collect();
+    // No filled graphics or manual openings: retain the original note vocabulary.
     assert_eq!(
         unusable,
         ["2 copper or silkscreen item(s) have unusable sizes or layers and were left out"]
@@ -1045,6 +1057,7 @@ fn a_text_whose_strokes_all_fail_is_one_unusable_item_not_drawn() {
         m.iter().all(|m| !m.contains("Hershey")),
         "a text without a stroke is not counted as drawn: {m:?}"
     );
+    // A failed stroke text adds one unusable item, with the original vocabulary.
     assert!(
         m.iter().any(|m| m.starts_with("1 copper or silkscreen")),
         "{m:?}"
@@ -1119,6 +1132,7 @@ fn a_hole_that_cannot_be_drawn_is_counted_and_the_pour_stays() {
     let (list, notes) = overlays(&pour(vec![flat, square(4.0, 4.0, 6.0, 6.0)]), 1.6, "Board");
     let copper = named(&list, "Copper top");
     assert!((area(copper) - 96.0).abs() < 1e-9);
+    // Only copper regions are present, so their hole failure keeps its old wording.
     assert!(
         messages(&notes)
             .iter()
@@ -1163,6 +1177,7 @@ fn regions_past_the_hole_budget_are_drawn_solid_and_noted() {
     let (list, notes) = overlays_within(&b, 1.6, "Board", 20, 3, MAX_SOLID_FACES);
     let copper = named(&list, "Copper top");
     assert!((area(copper) - 100.0).abs() < 1e-9, "{}", area(copper));
+    // One copper region exceeds the hole budget; no area graphics alter the wording.
     assert!(
         messages(&notes)
             .iter()
@@ -1197,6 +1212,7 @@ fn holes_past_the_cap_are_noted_not_cut() {
 /// y = 2.
 fn stacked_board(copper: usize, silk: usize) -> Board {
     let pad = CopperItem::Pad {
+        bottom: None,
         layer: copper,
         at: p(15.0, 5.0),
         shape: PadShape::Rectangle,
@@ -1289,7 +1305,7 @@ fn the_mask_opacity_is_the_files_but_at_least_the_floor() {
         r: 17,
         g: 85,
         b: 204,
-        opacity: 0.6,
+        opacity: Some(0.6),
     });
     let (list, _) = overlays(&b, 1.6, "Board");
     // 0.6 is under the 0.75 floor, so the floor is used.
@@ -1300,7 +1316,7 @@ fn the_mask_opacity_is_the_files_but_at_least_the_floor() {
         r: 17,
         g: 85,
         b: 204,
-        opacity: 0.9,
+        opacity: Some(0.9),
     });
     let (list, _) = overlays(&b, 1.6, "Board");
     assert_eq!(whole(&list, "Solder mask top")["opacity"], 0.9);
@@ -1948,6 +1964,7 @@ fn the_mask_face_holds_the_true_outline_and_its_holes_stay_open() {
 fn a_rounded_rectangle_pad_has_its_corners_cut_round() {
     // 3 x 2 with a radius of a quarter of the short side: 0.5 mm.
     let pad = CopperItem::Pad {
+        bottom: None,
         layer: 0,
         at: p(10.0, 5.0),
         shape: PadShape::RoundedRectangle { radius_ratio: 0.25 },
@@ -1987,6 +2004,7 @@ fn a_polygon_pad_is_the_union_of_its_pieces_with_its_hole_and_a_grown_opening() 
             .collect(),
     };
     let pad = CopperItem::PolygonPad {
+        bottom: None,
         layer: 0,
         at: p(10.0, 5.0),
         shapes: vec![
@@ -2029,6 +2047,7 @@ fn a_rounded_rectangle_opening_is_the_true_offset_of_the_pad() {
     // pi/4) = 5.7854 and P = 2 * (3 + 2) - 8 * 0.5 + 2 * pi * 0.5 = 9.1416, so 8.2671; the 20 x 10
     // board's mask is 200 less that.
     let pad = CopperItem::Pad {
+        bottom: None,
         layer: 0,
         at: p(10.0, 5.0),
         shape: PadShape::RoundedRectangle { radius_ratio: 0.25 },
@@ -2280,6 +2299,7 @@ fn mask_pad(
 ) -> Board {
     let mut b = board(
         vec![CopperItem::Pad {
+            bottom: None,
             layer: 0,
             at: p(5.0, 5.0),
             shape,
@@ -2406,4 +2426,470 @@ fn a_via_uses_its_own_expansion_on_each_side() {
     assert!((top - 197.9894).abs() < 0.02, "{top}");
     let bottom = area(&whole(&list, "Solder mask bottom"));
     assert!((bottom - 199.7173).abs() < 0.02, "{bottom}");
+}
+
+#[test]
+fn filled_graphics_keep_holes_and_follow_the_conformal_split() {
+    // We have 8*6 - 1*2 = 46 mm2 of ink. The copper's 0.010 mm mask skirt
+    // reaches x=5.010; the other skirt edges lie outside the ink. We therefore
+    // place (4 + 0.010)*6 - 1*2 = 22.06 mm2 over copper and
+    // 46 - 22.06 = 23.94 mm2 over laminate, with the ink's hole still open.
+    let mut b = board(
+        vec![CopperItem::Region {
+            layer: 0,
+            contour: square(1.0, 1.0, 5.0, 7.0),
+            holes: vec![],
+        }],
+        vec![Graphic::Area {
+            layer: 3,
+            contour: square(1.0, 1.0, 9.0, 7.0),
+            holes: vec![square(2.0, 2.0, 3.0, 4.0)],
+            owner: None,
+        }],
+    );
+    b.outline.outer = square(0.0, 0.0, 10.0, 10.0);
+    let (list, notes) = overlays(&b, 1.6, "Board");
+    assert!(notes.is_empty(), "{notes:?}");
+    let laminate_ink = area(named(&list, "Silkscreen top"));
+    let copper_ink = area(named(&list, "Silkscreen top over copper"));
+    assert!((laminate_ink - 23.94).abs() < 0.001, "{laminate_ink}");
+    assert!((copper_ink - 22.06).abs() < 0.001, "{copper_ink}");
+    // The same area on copper draws its holes too, through the shared graphics path.
+    b.copper.clear();
+    if let Graphic::Area { layer, .. } = &mut b.graphics[0] {
+        *layer = 0;
+    }
+    let (list, notes) = overlays(&b, 1.6, "Board");
+    assert!(notes.is_empty(), "{notes:?}");
+    assert!((area(named(&list, "Copper top")) - 46.0).abs() < 0.001);
+}
+
+#[test]
+fn hand_drawn_openings_cut_both_coats_and_ink_on_only_their_side() {
+    // We have a 10*10 board with copper at x=0..5 and ink covering the board.
+    // The opening at x=2..8, y=2..8 removes 36 - 2*2 = 32 mm2.
+    // We split both coats at x=5.010, including the copper's 0.010 mm skirt:
+    // over copper we keep 5.010*10 - ((5.010 - 2)*6 - (5.010 - 4)*2)
+    // = 50.1 - 16.04 = 34.06 mm2; over laminate we keep 68 - 34.06
+    // = 33.94 mm2. The skirt transfers 0.010*(10 - 6 + 2) = 0.06 mm2
+    // between coats. We still finish only the actual copper: 3*6 - 1*2 = 16 mm2.
+    let mut b = board(
+        vec![CopperItem::Region {
+            layer: 0,
+            contour: square(0.0, 0.0, 5.0, 10.0),
+            holes: vec![],
+        }],
+        vec![Graphic::Area {
+            layer: 3,
+            contour: square(0.0, 0.0, 10.0, 10.0),
+            holes: vec![],
+            owner: None,
+        }],
+    );
+    b.outline.outer = square(0.0, 0.0, 10.0, 10.0);
+    b.mask_openings.push(board_model::MaskOpening {
+        side: Side::Top,
+        contour: square(2.0, 2.0, 8.0, 8.0),
+        holes: vec![square(4.0, 4.0, 6.0, 6.0)],
+    });
+    let (list, notes) = overlays(&b, 1.6, "Board");
+    assert!(notes.is_empty(), "{notes:?}");
+    for (name, expected) in [
+        ("Solder mask top", 33.94),
+        ("Solder mask top over copper", 34.06),
+        ("Silkscreen top", 33.94),
+        ("Silkscreen top over copper", 34.06),
+    ] {
+        let actual = area(named(&list, name));
+        assert!((actual - expected).abs() < 0.001, "{name}: {actual}");
+    }
+    assert!((area(named(&list, "Solder mask bottom")) - 100.0).abs() < 0.001);
+    assert!((area(named(&list, "Finish top")) - 16.0).abs() < 0.001);
+    // A second opening on the bottom leaves the top unchanged.
+    b.mask_openings.push(board_model::MaskOpening {
+        side: Side::Bottom,
+        contour: square(1.0, 1.0, 3.0, 4.0),
+        holes: vec![],
+    });
+    let (list, _) = overlays(&b, 1.6, "Board");
+    assert!((area(&whole(&list, "Solder mask top")) - 68.0).abs() < 0.001);
+    assert!((area(named(&list, "Solder mask bottom")) - 94.0).abs() < 0.001);
+}
+
+#[test]
+fn bottom_pad_geometry_controls_copper_finish_and_openings() {
+    let mut item = square_pad(2);
+    if let CopperItem::Pad {
+        at,
+        size_x,
+        size_y,
+        bottom,
+        drill,
+        mask_expansion,
+        rotation_deg,
+        ..
+    } = &mut item
+    {
+        *at = p(5.0, 5.0);
+        *size_x = 2.0;
+        *size_y = 3.0;
+        *bottom = Some((PadShape::Rectangle, 4.0, 2.0));
+        *drill = Some(1.0);
+        *mask_expansion = [Some(0.0), Some(0.5)];
+        *rotation_deg = 90.0;
+    }
+    let mut b = board(vec![item], vec![]);
+    b.outline.outer = square(0.0, 0.0, 10.0, 10.0);
+    // The drill is approximated by a regular 32-gon of radius 0.5.
+    // Its area is n*r^2*sin(2*pi/n)/2.
+    let hole_area = 32.0 * 0.25 * (2.0 * PI / 32.0).sin() / 2.0;
+    for polygon in [false, true] {
+        if polygon {
+            b.copper = vec![CopperItem::PolygonPad {
+                layer: 2,
+                at: p(5.0, 5.0),
+                shapes: vec![square(4.0, 3.5, 6.0, 6.5)],
+                bottom: Some(vec![square(3.0, 4.0, 7.0, 6.0)]),
+                drill: Some(1.0),
+                plated: true,
+                owner: None,
+                tented: [None, None],
+                mask_expansion: [Some(0.0), Some(0.0)],
+            }];
+        }
+        let (list, notes) = overlays(&b, 1.6, "Board");
+        assert!(notes.is_empty(), "{notes:?}");
+        // Top 2*3, bottom 4*2, each with its drill removed. Finish covers both.
+        for (side, expected) in [("top", 6.0), ("bottom", 8.0)] {
+            for kind in ["Copper", "Finish"] {
+                assert!(
+                    (area(named(&list, &format!("{kind} {side}"))) - (expected - hole_area)).abs()
+                        < 0.001
+                );
+            }
+        }
+        // The rectangle turns 90 degrees about (5,5): its bottom long axis
+        // reaches y=7, while the polygon's board coordinates reach x=7.
+        for kind in ["Copper", "Finish"] {
+            let bottom = named(&list, &format!("{kind} bottom"));
+            assert_eq!(covers(bottom, 5.0, 6.5), !polygon);
+            assert_eq!(covers(bottom, 6.5, 5.0), polygon);
+            assert!(!covers(bottom, -5.0, 6.5));
+            assert!(!covers(bottom, 5.0, 5.0)); // drill
+        }
+        assert!((area(&whole(&list, "Solder mask top")) - 94.0).abs() < 0.001);
+        // Bottom rectangular opening grows to 5*3; polygon uses zero expansion: 4*2.
+        let expected = if polygon { 92.0 } else { 85.0 };
+        assert!((area(&whole(&list, "Solder mask bottom")) - expected).abs() < 0.001);
+    }
+}
+
+#[test]
+fn unknown_mask_opacity_uses_default_and_ink_stays_opaque() {
+    let mut b = board(
+        vec![CopperItem::Region {
+            layer: 0,
+            contour: square(1.0, 1.0, 2.0, 3.0),
+            holes: vec![],
+        }],
+        vec![Graphic::Area {
+            layer: 3,
+            contour: square(1.0, 1.0, 3.0, 3.0),
+            holes: vec![],
+            owner: None,
+        }],
+    );
+    b.outline.outer = square(0.0, 0.0, 10.0, 10.0);
+    let color = |opacity| board_model::Color {
+        r: 10,
+        g: 20,
+        b: 30,
+        opacity,
+    };
+    b.appearance.top_solder_mask = Some(color(None));
+    for opacity in [None, Some(0.0), Some(0.4), Some(1.0)] {
+        b.appearance.top_silkscreen = Some(color(opacity));
+        let (list, notes) = overlays(&b, 1.6, "Board");
+        assert!(notes.is_empty(), "{notes:?}");
+        let silk = whole(&list, "Silkscreen top");
+        // Ink stays opaque for every file value, so no opacity key is serialized.
+        for name in ["Silkscreen top", "Silkscreen top over copper"] {
+            assert!(named(&list, name).get("opacity").is_none());
+        }
+        assert_eq!(named(&list, "Solder mask top")["opacity"], 0.75);
+        // The 1*2 copper splits the 2*2 ink into two equal coats.
+        // Opacity changes no geometry: total ink 4 and total mask 100 mm2.
+        assert!((area(&silk) - 4.0).abs() < 0.001);
+        assert!((area(&whole(&list, "Solder mask top")) - 100.0).abs() < 0.001);
+    }
+}
+
+#[test]
+fn filled_ink_is_cut_by_pad_openings_and_drills() {
+    // Ink covers 100 mm2. A 1*1 pad opens 1.2*1.2 = 1.44 mm2.
+    // A separate plated drill removes a regular 32-gon of radius 0.5:
+    // area = 32*0.5^2*sin(2*pi/32)/2.
+    let mut pad = square_pad(0);
+    if let CopperItem::Pad { at, .. } = &mut pad {
+        *at = p(2.0, 2.0);
+    }
+    let drill = CopperItem::Pad {
+        layer: 2,
+        at: p(7.0, 7.0),
+        shape: PadShape::Rectangle,
+        size_x: 2.0,
+        size_y: 2.0,
+        bottom: None,
+        rotation_deg: 0.0,
+        drill: Some(1.0),
+        plated: true,
+        owner: None,
+        tented: [Some(true), Some(true)],
+        mask_expansion: [None, None],
+    };
+    let b = board(
+        vec![pad, drill],
+        vec![Graphic::Area {
+            layer: 3,
+            contour: square(0.0, 0.0, 10.0, 10.0),
+            holes: vec![],
+            owner: None,
+        }],
+    );
+    let (list, notes) = overlays(&b, 1.6, "Board");
+    assert!(notes.is_empty(), "{notes:?}");
+    let hole_area = 32.0 * 0.25 * (2.0 * PI / 32.0).sin() / 2.0;
+    assert!((area(&whole(&list, "Silkscreen top")) - (100.0 - 1.44 - hole_area)).abs() < 0.001);
+}
+
+#[test]
+fn unusable_and_over_budget_areas_are_noted() {
+    let mut b = board(
+        vec![],
+        vec![Graphic::Area {
+            layer: 3,
+            contour: square(1.0, 1.0, 3.0, 3.0),
+            holes: vec![],
+            owner: None,
+        }],
+    );
+    b.mask_openings.push(board_model::MaskOpening {
+        side: Side::Top,
+        contour: Contour::default(),
+        holes: vec![],
+    });
+    let (list, notes) = overlays_within(&b, 1.6, "Board", 100, 0, MAX_SOLID_FACES);
+    assert!(list.is_empty());
+    // Four line points exceed zero budget: one budget drop. The empty opening
+    // needs zero points but has no polygon: one unusable item, counted separately.
+    assert_eq!(messages(&notes), [
+        "1 drawn area(s) left out: the drawing budget of 0 points is used up",
+        "1 copper, graphic or mask opening item(s) have unusable sizes or layers and were left out",
+    ]);
+    assert!(notes.iter().all(|n| n["severity"] == "Dropped"));
+}
+
+#[test]
+fn curved_areas_charge_their_flattened_points() {
+    let circle = Contour {
+        segments: vec![Segment::Arc {
+            center: p(5.0, 5.0),
+            radius: 1.0,
+            start_deg: 0.0,
+            end_deg: 360.0,
+            clockwise: false,
+        }],
+    };
+    // A radius-1 circle uses 32 steps plus its repeated endpoint, not 4097.
+    // 100 areas and 100 openings therefore cost 200*33 = 6600 points.
+    let mut b = board(
+        vec![],
+        vec![
+            Graphic::Area {
+                layer: 3,
+                contour: circle.clone(),
+                holes: vec![],
+                owner: None,
+            };
+            100
+        ],
+    );
+    b.mask_openings = vec![
+        board_model::MaskOpening {
+            side: Side::Bottom,
+            contour: circle,
+            holes: vec![],
+        };
+        100
+    ];
+    let (list, notes) = overlays_within(&b, 1.6, "Board", 100, 6600, MAX_SOLID_FACES);
+    assert!(notes.is_empty(), "{notes:?}");
+    assert!(covers(named(&list, "Silkscreen top"), 5.0, 5.0));
+    let mut budget = 32;
+    let mut counts = HoleCounts::default();
+    let opening = &b.mask_openings[0];
+    assert!(drawn_region(&opening.contour, &[], &mut budget, &mut counts).is_empty());
+    assert_eq!(counts.budget_dropped, 1);
+    assert_eq!(budget, 32);
+}
+
+#[test]
+fn bottom_filled_graphic_keeps_board_coordinates_and_extrudes_down() {
+    let mut b = board(vec![], vec![]);
+    b.layers.push(Layer {
+        name: "Bottom Overlay".into(),
+        kind: LayerKind::Silkscreen,
+        side: Some(Side::Bottom),
+        position: None,
+    });
+    b.graphics.push(Graphic::Area {
+        layer: 6,
+        contour: square(2.0, 3.0, 6.0, 5.0),
+        holes: vec![square(3.0, 3.5, 4.0, 4.5)],
+        owner: None,
+    });
+    let (list, notes) = overlays(&b, 1.6, "Board");
+    assert!(notes.is_empty(), "{notes:?}");
+    let silk = named(&list, "Silkscreen bottom");
+    // Bottom mirrors the stack in Z; board coordinates already include placement.
+    assert_eq!(silk["z"], -0.015);
+    assert!(covers(silk, 5.0, 4.0));
+    assert!(!covers(silk, 3.5, 4.0));
+    assert!(!covers(silk, -5.0, 4.0));
+    assert!(!covers(silk, 5.0, -4.0));
+}
+
+#[test]
+fn single_face_pads_ignore_bottom_overrides_and_keep_position_and_rotation() {
+    for layer in [0, 1] {
+        for polygon in [false, true] {
+            let mut item = square_pad(layer);
+            if let CopperItem::Pad {
+                at,
+                size_x,
+                size_y,
+                bottom,
+                rotation_deg,
+                mask_expansion,
+                ..
+            } = &mut item
+            {
+                *at = p(5.0, 4.0);
+                *size_x = 4.0;
+                *size_y = 1.0;
+                *rotation_deg = 90.0;
+                *bottom = Some((PadShape::Rectangle, 8.0, 8.0));
+                *mask_expansion = [Some(0.0), Some(0.0)];
+            }
+            if polygon {
+                item = CopperItem::PolygonPad {
+                    layer,
+                    at: p(5.0, 4.0),
+                    shapes: vec![square(4.5, 2.0, 5.5, 6.0)],
+                    bottom: Some(vec![square(1.0, 0.0, 9.0, 8.0)]),
+                    drill: None,
+                    plated: false,
+                    owner: None,
+                    tented: [None, None],
+                    mask_expansion: [Some(0.0), Some(0.0)],
+                };
+            }
+            let mut b = board(vec![item], vec![]);
+            b.outline.outer = square(0.0, 0.0, 10.0, 10.0);
+            let (list, notes) = overlays(&b, 1.6, "Board");
+            assert_eq!(
+                messages(&notes),
+                ["1 single-face pad(s) have bottom geometry, which is ignored"]
+            );
+            assert_eq!(notes[0]["severity"], "Info");
+            let side = if layer == 0 { "top" } else { "bottom" };
+            for kind in ["Copper", "Finish"] {
+                let shape = named(&list, &format!("{kind} {side}"));
+                // A 4x1 rectangle turned 90 degrees about (5,4) runs along Y.
+                assert!(covers(shape, 5.0, 5.5));
+                assert!(!covers(shape, 6.5, 4.0));
+                assert!(!covers(shape, -5.0, 5.5));
+            }
+            let mask = whole(&list, &format!("Solder mask {side}"));
+            assert!(!covers(&mask, 5.0, 5.5));
+            assert!(covers(&mask, 6.5, 4.0));
+        }
+    }
+}
+
+#[test]
+fn a_through_pad_with_one_empty_side_is_one_unusable_item() {
+    for diameter in [0.0, 0.2] {
+        let mut item = square_pad(2);
+        if let CopperItem::Pad {
+            at, bottom, drill, ..
+        } = &mut item
+        {
+            *at = p(5.0, 5.0);
+            *bottom = Some((PadShape::Rectangle, 0.0, 1.0));
+            *drill = Some(diameter);
+        }
+        let (list, notes) = overlays(&board(vec![item], vec![]), 1.6, "Board");
+        assert!(covers(named(&list, "Copper top"), 5.3, 5.0));
+        // One empty side is one failed pad, even if its drill is also unusable.
+        assert_eq!(
+            messages(&notes),
+            ["1 copper or silkscreen item(s) have unusable sizes or layers and were left out"]
+        );
+    }
+}
+
+#[test]
+fn a_graphic_line_on_copper_is_drawn_under_the_mask() {
+    let mut b = board(
+        vec![],
+        vec![Graphic::Line {
+            layer: 0,
+            from: p(2.0, 3.0),
+            to: p(8.0, 3.0),
+            width: 1.0,
+            owner: None,
+        }],
+    );
+    b.outline.outer = square(0.0, 0.0, 10.0, 10.0);
+    let (list, notes) = overlays(&b, 1.6, "Board");
+    assert!(notes.is_empty(), "{notes:?}");
+    for name in ["Copper top", "Solder mask top over copper"] {
+        assert!(covers(named(&list, name), 5.0, 3.0));
+        assert!(!covers(named(&list, name), 5.0, 4.0));
+    }
+    assert_eq!(area_or_zero(&list, "Finish top"), 0.0);
+}
+
+#[test]
+fn area_presence_selects_the_expanded_note_vocabulary() {
+    for area_present in [false, true] {
+        for opening_present in [false, true] {
+            let mut b = board(vec![track(0, p(1.0, 1.0), p(2.0, 1.0), 0.0)], vec![]);
+            if area_present {
+                b.graphics.push(Graphic::Area {
+                    layer: 3,
+                    contour: square(3.0, 3.0, 4.0, 4.0),
+                    holes: vec![],
+                    owner: None,
+                });
+            }
+            if opening_present {
+                b.mask_openings.push(board_model::MaskOpening {
+                    side: Side::Bottom,
+                    contour: square(6.0, 6.0, 7.0, 7.0),
+                    holes: vec![],
+                });
+            }
+            let (_, notes) = overlays(&b, 1.6, "Board");
+            // The same zero-width track fails once in every case. Only the
+            // presence of areas or manual openings changes the note vocabulary.
+            let expected = if area_present || opening_present {
+                "1 copper, graphic or mask opening item(s) have unusable sizes or layers and were left out"
+            } else {
+                "1 copper or silkscreen item(s) have unusable sizes or layers and were left out"
+            };
+            assert_eq!(messages(&notes), [expected]);
+        }
+    }
 }

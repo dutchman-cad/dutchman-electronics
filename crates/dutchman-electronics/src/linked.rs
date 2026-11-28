@@ -979,6 +979,7 @@ mod tests {
         std::fs::write(dir.join("big.step"), points(30.0))?;
         std::fs::write(dir.join("fits.step"), points(2.0))?;
         let pad = |owner: &str, x: f64| CopperItem::Pad {
+            bottom: None,
             layer: 0,
             at: Point { x, y: 0.0 },
             shape: board_model::PadShape::Rectangle,

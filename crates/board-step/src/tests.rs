@@ -39,6 +39,7 @@ fn board(outer: Contour, cutouts: Vec<Contour>, copper: Vec<CopperItem>) -> Boar
 
 fn hole(x: f64, y: f64, drill: f64) -> CopperItem {
     CopperItem::Pad {
+        bottom: None,
         layer: 0,
         at: p(x, y),
         shape: PadShape::Round,
@@ -1153,6 +1154,7 @@ fn plated_hole(x: f64, y: f64, drill: f64) -> CopperItem {
             mask_expansion,
             ..
         } => CopperItem::Pad {
+            bottom: None,
             layer,
             at,
             shape,

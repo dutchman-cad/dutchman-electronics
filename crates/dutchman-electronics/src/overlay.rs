@@ -137,17 +137,22 @@ fn finite(p: Point) -> bool {
     p.x.is_finite() && p.y.is_finite()
 }
 
-/// Points along a counter-clockwise (positive `sweep_deg`) or clockwise arc, both ends included.
-fn arc_points(center: Point, radius: f64, start_deg: f64, sweep_deg: f64, out: &mut Vec<Coord>) {
+/// Steps needed for the chord tolerance and minimum circle resolution.
+fn arc_steps(radius: f64, sweep_deg: f64) -> usize {
     let step = if radius > CHORD {
         2.0 * (1.0 - CHORD / radius).acos()
     } else {
         PI / 4.0
     };
-    let steps = (sweep_deg.abs().to_radians() / step)
+    (sweep_deg.abs().to_radians() / step)
         .max(MIN_CIRCLE_SIDES * sweep_deg.abs() / 360.0)
         .ceil()
-        .clamp(1.0, MAX_ARC_POINTS as f64) as usize;
+        .clamp(1.0, MAX_ARC_POINTS as f64) as usize
+}
+
+/// Points along a counter-clockwise (positive `sweep_deg`) or clockwise arc, both ends included.
+fn arc_points(center: Point, radius: f64, start_deg: f64, sweep_deg: f64, out: &mut Vec<Coord>) {
+    let steps = arc_steps(radius, sweep_deg);
     for k in 0..=steps {
         let a = (start_deg + sweep_deg * (k as f64) / (steps as f64)).to_radians();
         out.push(Coord {
@@ -510,6 +515,8 @@ struct HoleCounts {
     solid: usize,
     /// Regions the holes removed entirely: a legitimate empty result, not an unusable item.
     emptied: usize,
+    /// Drawn areas omitted because their flattened points exceed the shared budget.
+    budget_dropped: usize,
 }
 
 /// A copper region: its outline less its holes. A hole that cannot be drawn is counted in
@@ -573,6 +580,38 @@ fn region(
             vec![outer]
         }
     }
+}
+
+/// Bound the flattened geometry of newly drawn areas before allocating it. A segment may
+/// expand to a whole arc. Charge the same points that `arc_points` emits.
+fn drawn_region(
+    outline: &Contour,
+    holes: &[Contour],
+    budget: &mut usize,
+    counts: &mut HoleCounts,
+) -> Vec<Polygon> {
+    let points = |c: &Contour| {
+        c.segments.iter().fold(0usize, |n, s| {
+            n.saturating_add(match s {
+                Segment::Line { .. } => 1,
+                Segment::Arc { radius, .. } => {
+                    arc_steps(*radius, s.sweep_deg().unwrap_or(360.0)).saturating_add(1)
+                }
+            })
+        })
+    };
+    let wanted = holes
+        .iter()
+        .take(MAX_REGION_HOLES)
+        .fold(points(outline), |n, c| n.saturating_add(points(c)));
+    if wanted > *budget {
+        counts.budget_dropped = counts.budget_dropped.saturating_add(1);
+        return Vec::new();
+    }
+    // `region` charges hole segments; reserve the full flattened cost instead.
+    *budget -= wanted;
+    let mut region_budget = usize::MAX;
+    region(outline, holes, &mut region_budget, counts)
 }
 
 /// Polygons gathered for one overlay before they are united.
@@ -824,6 +863,13 @@ fn overlays_within(
     // Vias drawn tented because the file does not say.
     let mut guessed_tenting = 0usize;
     let mut unshrunk = 0usize;
+    let mut ignored_bottom = 0usize;
+    let drawing_budget = hole_budget;
+    let extended_graphics = !board.mask_openings.is_empty()
+        || board
+            .graphics
+            .iter()
+            .any(|g| matches!(g, Graphic::Area { .. }));
     let (mut inner, mut unusable, mut other_graphics) = (0usize, 0usize, 0usize);
     let mut hole_counts = HoleCounts::default();
     let mut hole_budget = hole_budget;
@@ -917,11 +963,13 @@ fn overlays_within(
                 .len()
                 .saturating_sub(MAX_ITEMS.saturating_sub(shown)),
         )
-        .saturating_add(board.texts.len().saturating_sub(MAX_ITEMS));
+        .saturating_add(board.texts.len().saturating_sub(MAX_ITEMS))
+        .saturating_add(board.mask_openings.len().saturating_sub(MAX_ITEMS));
     for item in board.copper.iter().take(MAX_ITEMS) {
         let emptied_before = hole_counts.emptied;
         // The mask opening on each side (top, bottom) of a pad: `None` when that side is tented,
         // an empty list when the opening cannot be drawn (the pad itself is opened instead).
+        let mut bottom_shapes = None;
         let mut opened: [Option<Vec<Polygon>>; 2] = [Some(Vec::new()), Some(Vec::new())];
         let (layer, shapes, bare, drill): (usize, Vec<Polygon>, bool, Option<(Point, f64)>) =
             match item {
@@ -1031,14 +1079,26 @@ fn overlays_within(
                     layer,
                     at,
                     shapes: outlines,
+                    bottom,
                     drill,
                     tented,
                     mask_expansion,
                     ..
                 } => {
+                    let uses_bottom =
+                        drill.is_some() && matches!(on(*layer), On::Through | On::Inner(_));
+                    if bottom.is_some() && matches!(on(*layer), On::Face(_)) {
+                        ignored_bottom = ignored_bottom.saturating_add(1);
+                    }
+                    let bottom = if uses_bottom { bottom.as_ref() } else { None };
                     let sides = opened.iter_mut().zip(tented).zip(mask_expansion);
-                    for ((open, side_tented), side_by) in sides {
+                    for (k, ((open, side_tented), side_by)) in sides.enumerate() {
                         let by = side_expansion(*side_by);
+                        let outlines = if k == 1 {
+                            bottom.unwrap_or(outlines)
+                        } else {
+                            outlines
+                        };
                         *open = match side_tented {
                             Some(true) => None,
                             _ => {
@@ -1050,6 +1110,8 @@ fn overlays_within(
                             }
                         };
                     }
+                    bottom_shapes = bottom
+                        .map(|outlines| outlines.iter().filter_map(contour).collect::<Vec<_>>());
                     (
                         *layer,
                         outlines.iter().filter_map(contour).collect(),
@@ -1063,29 +1125,41 @@ fn overlays_within(
                     shape,
                     size_x,
                     size_y,
+                    bottom,
                     rotation_deg,
                     drill,
                     tented,
                     mask_expansion,
                     ..
                 } => {
+                    let uses_bottom =
+                        drill.is_some() && matches!(on(*layer), On::Through | On::Inner(_));
+                    if bottom.is_some() && matches!(on(*layer), On::Face(_)) {
+                        ignored_bottom = ignored_bottom.saturating_add(1);
+                    }
+                    let bottom = if uses_bottom { bottom.as_ref() } else { None };
                     let sides = opened.iter_mut().zip(tented).zip(mask_expansion);
-                    for ((open, side_tented), side_by) in sides {
+                    for (k, ((open, side_tented), side_by)) in sides.enumerate() {
+                        let (shape, size_x, size_y) = if k == 1 {
+                            bottom.copied().unwrap_or((*shape, *size_x, *size_y))
+                        } else {
+                            (*shape, *size_x, *size_y)
+                        };
                         let by = side_expansion(*side_by);
                         // The opening is the pad grown by `by` on every side (shrunk when it is
                         // negative), but never smaller than the drill, and never below zero
                         // size: a pad shrunk away has no opening.
                         let hole = drill.unwrap_or(0.0).max(0.0);
-                        let w = (*size_x + 2.0 * by).max(hole);
-                        let h = (*size_y + 2.0 * by).max(hole);
+                        let w = (size_x + 2.0 * by).max(hole);
+                        let h = (size_y + 2.0 * by).max(hole);
                         *open = if *side_tented == Some(true) || w <= 0.0 || h <= 0.0 {
                             None
                         } else {
                             // A rounded corner's radius grows by `by` too (not in proportion to
                             // the size).
-                            let open_shape = match *shape {
+                            let open_shape = match shape {
                                 PadShape::RoundedRectangle { radius_ratio } => {
-                                    let short = size_x.min(*size_y);
+                                    let short = size_x.min(size_y);
                                     PadShape::RoundedRectangle {
                                         radius_ratio: ((radius_ratio.clamp(0.0, 0.5) * short + by)
                                             / w.min(h))
@@ -1101,6 +1175,11 @@ fn overlays_within(
                             )
                         };
                     }
+                    bottom_shapes = bottom.map(|(shape, w, h)| {
+                        pad(*at, *shape, *w, *h, *rotation_deg)
+                            .into_iter()
+                            .collect::<Vec<_>>()
+                    });
                     (
                         *layer,
                         pad(*at, *shape, *size_x, *size_y, *rotation_deg)
@@ -1111,7 +1190,7 @@ fn overlays_within(
                     )
                 }
             };
-        if shapes.is_empty() {
+        if shapes.is_empty() && bottom_shapes.as_ref().is_none_or(Vec::is_empty) {
             if hole_counts.emptied == emptied_before {
                 unusable = unusable.saturating_add(1);
             }
@@ -1151,12 +1230,19 @@ fn overlays_within(
                 continue;
             }
         };
+        let mut empty_side = false;
         for side in sides {
             let f = match side {
                 Side::Top => &mut faces.0,
                 Side::Bottom => &mut faces.1,
             };
             let k = usize::from(*side == Side::Bottom);
+            let shapes = if k == 1 {
+                bottom_shapes.as_ref().unwrap_or(&shapes)
+            } else {
+                &shapes
+            };
+            empty_side |= shapes.is_empty();
             // A pad side with no opening is tented: its copper stays under the mask.
             let open = if bare {
                 opened.get(k).and_then(|o| o.as_ref())
@@ -1171,12 +1257,18 @@ fn overlays_within(
             target.polygons.extend(shapes.iter().cloned());
             if let Some(open) = open {
                 // A pad whose opening cannot be drawn is opened as the pad itself.
-                let opening = if open.is_empty() { &shapes } else { open };
+                let opening = if open.is_empty() { shapes } else { open };
                 f.opening.polygons.extend(opening.iter().cloned());
             }
         }
-        if let Some((at, d)) = drill {
-            holes.add(circle(at, d / 2.0), &mut unusable);
+        let bad_drill = drill.is_some_and(|(at, d)| {
+            let hole = circle(at, d / 2.0);
+            let bad = hole.is_none();
+            holes.polygons.extend(hole);
+            bad
+        });
+        if empty_side || bad_drill {
+            unusable = unusable.saturating_add(1);
         }
     }
     let (mut top, mut bottom) = faces;
@@ -1278,7 +1370,18 @@ fn overlays_within(
         }
     }
     for g in board.graphics.iter().take(MAX_ITEMS.saturating_sub(shown)) {
+        let emptied_before = hole_counts.emptied;
+        let budget_before = hole_counts.budget_dropped;
         let (l, shapes) = match g {
+            Graphic::Area {
+                layer,
+                contour,
+                holes,
+                ..
+            } => (
+                *layer,
+                drawn_region(contour, holes, &mut hole_budget, &mut hole_counts),
+            ),
             Graphic::Line {
                 layer,
                 from,
@@ -1302,17 +1405,54 @@ fn overlays_within(
         let pile = match board.layers.get(l).map(|x| (x.kind, x.side)) {
             Some((LayerKind::Silkscreen, Some(Side::Top))) => &mut top.silk,
             Some((LayerKind::Silkscreen, Some(Side::Bottom))) => &mut bottom.silk,
+            Some((LayerKind::Copper, Some(Side::Top))) => &mut top.masked,
+            Some((LayerKind::Copper, Some(Side::Bottom))) => &mut bottom.masked,
+            Some((LayerKind::Copper, None)) => {
+                let Some(pile) = inner_layers
+                    .iter()
+                    .position(|&i| i == l)
+                    .and_then(|k| inner_piles.get_mut(k))
+                else {
+                    inner = inner.saturating_add(1);
+                    continue;
+                };
+                pile
+            }
             _ => {
                 other_graphics = other_graphics.saturating_add(1);
                 continue;
             }
         };
-        if shapes.is_empty() {
+        if shapes.is_empty()
+            && emptied_before == hole_counts.emptied
+            && budget_before == hole_counts.budget_dropped
+        {
             unusable = unusable.saturating_add(1);
         }
         pile.polygons.extend(shapes);
     }
 
+    for opening in board.mask_openings.iter().take(MAX_ITEMS) {
+        let before = hole_counts.emptied;
+        let budget_before = hole_counts.budget_dropped;
+        let shapes = drawn_region(
+            &opening.contour,
+            &opening.holes,
+            &mut hole_budget,
+            &mut hole_counts,
+        );
+        if shapes.is_empty()
+            && before == hole_counts.emptied
+            && budget_before == hole_counts.budget_dropped
+        {
+            unusable = unusable.saturating_add(1);
+        }
+        let f = match opening.side {
+            Side::Top => &mut top,
+            Side::Bottom => &mut bottom,
+        };
+        f.opening.polygons.extend(shapes);
+    }
     let mut out = Vec::new();
     let mut notes = Vec::new();
     // The board's face for the solder mask: its outer contour, arcs included, minus its cutouts.
@@ -1369,7 +1509,7 @@ fn overlays_within(
             let mask_color = mask_file.as_ref().map_or(MASK_COLOR.to_string(), hex);
             let mask_opacity = mask_file
                 .as_ref()
-                .map(|c| c.opacity)
+                .and_then(|c| c.opacity)
                 .filter(|o| o.is_finite() && *o > 0.0 && *o <= 1.0)
                 .map_or(MASK_OPACITY, |o| o.max(MASK_OPACITY));
             let silk_color = silk_file.as_ref().map_or(SILKSCREEN_COLOR.to_string(), hex);
@@ -1626,22 +1766,50 @@ fn overlays_within(
             "message": format!("{guessed_tenting} via(s) drawn tented; the file doesn't say"),
         }));
     }
+    if ignored_bottom > 0 {
+        notes.push(json!({
+            "severity": "Info",
+            "message": format!("{ignored_bottom} single-face pad(s) have bottom geometry, which is ignored"),
+        }));
+    }
+    if hole_counts.budget_dropped > 0 {
+        notes.push(json!({
+            "severity": "Dropped",
+            "message": format!("{} drawn area(s) left out: the drawing budget of {drawing_budget} points is used up", hole_counts.budget_dropped),
+        }));
+    }
     for (count, what) in [
         (
             skipped,
-            "copper, silkscreen or text item(s) past the first 200000 were not drawn",
+            if extended_graphics {
+                "copper, graphic, mask opening or text item(s) past the first 200000 were not drawn"
+            } else {
+                "copper, silkscreen or text item(s) past the first 200000 were not drawn"
+            },
         ),
         (
             hole_counts.undrawn,
-            "hole(s) of copper regions could not be drawn and were left filled",
+            if extended_graphics {
+                "hole(s) of drawn areas could not be drawn and were left filled"
+            } else {
+                "hole(s) of copper regions could not be drawn and were left filled"
+            },
         ),
         (
             hole_counts.over,
-            "hole(s) past the first 10000 of a copper region were not cut from it",
+            if extended_graphics {
+                "hole(s) past the first 10000 of a drawn area were not cut from it"
+            } else {
+                "hole(s) past the first 10000 of a copper region were not cut from it"
+            },
         ),
         (
             hole_counts.solid,
-            "copper region(s) are drawn solid: the board's holes went past 200000 vertices",
+            if extended_graphics {
+                "drawn area(s) are drawn solid: the board's holes went past 200000 vertices"
+            } else {
+                "copper region(s) are drawn solid: the board's holes went past 200000 vertices"
+            },
         ),
         (
             inner,
@@ -1649,11 +1817,19 @@ fn overlays_within(
         ),
         (
             unusable,
-            "copper or silkscreen item(s) have unusable sizes or layers and were left out",
+            if extended_graphics {
+                "copper, graphic or mask opening item(s) have unusable sizes or layers and were left out"
+            } else {
+                "copper or silkscreen item(s) have unusable sizes or layers and were left out"
+            },
         ),
         (
             other_graphics,
-            "line(s) and arc(s) on layers other than the silkscreen are not drawn yet",
+            if extended_graphics {
+                "graphic(s) on layers other than copper and silkscreen are not drawn yet"
+            } else {
+                "line(s) and arc(s) on layers other than the silkscreen are not drawn yet"
+            },
         ),
         (
             texts.other_layers,

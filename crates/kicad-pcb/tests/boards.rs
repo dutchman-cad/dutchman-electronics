@@ -447,6 +447,7 @@ fn silkscreen_lines_arcs_circles_polygons_and_text() {
                 assert_eq!(*layer, silk);
                 arcs.push((*center, *radius, *start_deg, *end_deg, *width));
             }
+            Graphic::Area { .. } => panic!("the KiCad reader draws no filled areas yet"),
         }
     }
     // One line plus the polygon's three sides.

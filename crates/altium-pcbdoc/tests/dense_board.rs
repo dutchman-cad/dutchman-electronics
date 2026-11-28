@@ -107,7 +107,7 @@ fn its_bodies_have_their_colors_and_two_parts_carry_the_step_box(
             r,
             g,
             b,
-            opacity: 1.0,
+            opacity: Some(1.0),
         })
     };
     for (designator, want, height) in [
