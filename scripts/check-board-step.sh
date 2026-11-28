@@ -7,8 +7,8 @@
 # design it saved from it, sees one closed body whose box is the board's outline size by its
 # thickness to 0.001 mm, with no feature error. The CC0 boards of both formats share a 50 x 30 mm
 # outline (see their README.txt) of 1.6 mm thickness (Altium four-layer, four-layer-planes,
-# all-features and vias-blind-buried: 1.8122 mm; KiCad four-layer: 1.2 mm); the open-hardware
-# boards have the sizes KiCad gives, in their README.txt.
+# plane-polygon-connect, all-features and vias-blind-buried: 1.8122 mm; KiCad four-layer:
+# 1.2 mm); the open-hardware boards have the sizes KiCad gives, in their README.txt.
 # Each component model the package writes (model-*.step) must pass cadmpeg `check` and, on import
 # and on reopening its saved design, be as many closed bodies with a volume as the file has solids
 # (one for an extruded body; a STEP model the board embeds may hold several).
@@ -98,7 +98,7 @@ for board in "${boards[@]}"; do
   echo "== $name"
   # The outline's width and height, and the thickness, in mm.
   case "$name" in
-    altium-four-layer|altium-four-layer-planes|altium-all-features|altium-vias-blind-buried) width=50; height=30; thickness=1.8122 ;;
+    altium-four-layer|altium-four-layer-planes|altium-plane-polygon-connect|altium-all-features|altium-vias-blind-buried) width=50; height=30; thickness=1.8122 ;;
     kicad-four-layer|kicad-k10-four-layer) width=50; height=30; thickness=1.2 ;;
     kicad-text-justify) width=96; height=432; thickness=1.6 ;;
     kicad-text-strings) width=96; height=144; thickness=1.6 ;;
