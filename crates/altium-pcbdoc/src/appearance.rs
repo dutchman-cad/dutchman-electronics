@@ -255,11 +255,12 @@ fn colors(board: &Properties, notes: &mut Vec<Note>) -> Appearance {
     let mut unreadable = 0usize;
     let mut color = |name: &str| -> Option<Color> {
         let value = get(&format!("CFG3D.{name}COLOR"))?;
-        let opacity = match get(&format!("CFG3D.{name}COLOROPACITY")) {
-            None => Some(1.0),
-            Some(v) => v.parse::<f64>().ok(),
+        // A missing opacity is unknown, so the drawing's default applies (Altium 26.12.2 writes
+        // the key on every save, so no test board lacks it).
+        let found = match get(&format!("CFG3D.{name}COLOROPACITY")) {
+            None => colorref(value, Some(1.0)).map(|c| Color { opacity: None, ..c }),
+            Some(v) => colorref(value, v.parse::<f64>().ok()),
         };
-        let found = colorref(value, opacity);
         if found.is_none() {
             unreadable += 1;
         }
@@ -308,12 +309,32 @@ mod tests {
             (17, 85, 204, Some(0.6))
         );
         let silk = a.top_silkscreen.unwrap();
-        assert_eq!(
-            (silk.r, silk.g, silk.b, silk.opacity),
-            (255, 255, 0, Some(1.0))
-        );
+        assert_eq!((silk.r, silk.g, silk.b, silk.opacity), (255, 255, 0, None));
         assert_eq!((a.bottom_solder_mask, a.bottom_silkscreen), (None, None));
         assert!(notes.is_empty());
+    }
+
+    /// `#158`: a color with no `…OPACITY` key keeps its color with an unknown opacity, so the
+    /// drawing uses its own default (0.75 for the mask) rather than 1.0.
+    #[test]
+    fn a_missing_opacity_is_unknown() {
+        let mut notes = Vec::new();
+        let a = read(
+            &props(
+                "`CFG3D.TOPSOLDERMASKCOLOR=3307556`CFG3D.BOTSOLDERMASKCOLOR=3307556                 `CFG3D.BOTSOLDERMASKCOLOROPACITY=1.000000`CFG3D.TOPSILKSCREENCOLOR=16448250",
+            ),
+            &mut notes,
+        );
+        let top = a.top_solder_mask.unwrap();
+        assert_eq!((top.r, top.g, top.b, top.opacity), (36, 120, 50, None));
+        let bottom = a.bottom_solder_mask.unwrap();
+        assert_eq!(bottom.opacity, Some(1.0));
+        let silk = a.top_silkscreen.unwrap();
+        assert_eq!(
+            (silk.r, silk.g, silk.b, silk.opacity),
+            (250, 250, 250, None)
+        );
+        assert!(notes.is_empty(), "{notes:?}");
     }
 
     #[test]

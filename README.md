@@ -84,8 +84,10 @@ inside an opening leave islands of mask and ink; contours may wind either way.
 value, including zero. Unknown mask opacity uses 0.75; known mask opacity retains the
 0.75 floor. Unknown body opacity uses 1.0. We read silkscreen opacity but leave it unused;
 package silkscreen is always opaque and carries no opacity field. Without laminate negotiation, mask opacity remains 1.0.
-These are neutral model and drawing capabilities; readers currently fill the new shape
-and opening fields with defaults until they implement the corresponding file features.
+These are neutral model and drawing capabilities. The Altium reader fills them: regions and
+fills on an overlay layer as silkscreen areas, a top-middle-bottom pad's bottom size and shape,
+a solid region on Top or Bottom Solder as a mask opening, and a missing `…COLOROPACITY` as an
+unknown opacity; the KiCad reader still fills the new fields with defaults.
 The package schema remains `dutchman.parts/1`: areas and optional opacity use the existing
 manifest fields, with no new overlay kinds.
 
