@@ -1,0 +1,54 @@
+Original test board made for Dutchman Electronics. Released under CC0 1.0 (public domain): https://creativecommons.org/publicdomain/zero/1.0/
+
+k10-dnp: five resistors, each with one of KiCad's footprint flags (Do not populate and the three exclude flags), and a board variant that changes two of them, to tell not-fitted parts apart (issue #184).
+
+Made with KiCad 10.0.8 (file version 20260206) by fixtures/kicad/build_k10_boards.py. Every number and flag below was read back with KiCad's own scripting (pcbnew LoadBoard; FOOTPRINT GetAttributes, IsDNP, GetDNPForVariant, GetFieldValueForVariant, GetExcludedFromBOMForVariant and GetExcludedFromPosFilesForVariant). KiCad shows coordinates in millimeters with Y pointing down; the board's top-left corner is at page position (100, 100), and every number below is relative to that corner (so add 100 to x and y for the page position). The reader gives Y up: model x = 100 + X, model y = -(100 + Y).
+
+- Outline: rectangle (0,0) to (50,30) on Edge.Cuts, line width 0.1; two copper layers, 1.6 mm.
+- Every part is the same as k10-one-resistor's R1:
+  - footprint test:R_0603, value 10k, on the top (F.Cu), not turned;
+  - two surface-mount rectangle pads 0.9 x 0.95 on F.Cu, F.Mask and F.Paste, "1" 0.8 left of the origin and "2" 0.8 right of it;
+  - the 3D model "box-1608.step" (not stored in the board), offset (0,0,0), scale 1, rotation (0,0,0);
+  - its Reference on F.SilkS at the origin, 1.27 high.
+  Only the footprint flags differ.
+
+The parts and their flags. KiCad writes each footprint's flags in its `(attr ...)` list, after its kind `smd`:
+
+| part | at | flags in the file | IsDNP | KiCad's flag (FOOTPRINT attribute) |
+|---|---|---|---|---|
+| R1 | (10,10) | `(attr smd)` | no | none |
+| R2 | (20,10) | `(attr smd dnp)` | yes | Do not populate (FP_DNP) |
+| R3 | (30,10) | `(attr smd exclude_from_pos_files)` | no | Exclude from position files (FP_EXCLUDE_FROM_POS_FILES) |
+| R4 | (40,10) | `(attr smd exclude_from_bom)` | no | Exclude from bill of materials (FP_EXCLUDE_FROM_BOM) |
+| R5 | (10,20) | `(attr smd board_only)` | no | Not in schematic (FP_BOARD_ONLY) |
+
+KiCad 10 has no separate "exclude from board" flag on a footprint. The four flags above are all there is; board_only means the footprint has no symbol in the schematic.
+
+Pads, read back:
+- R1 (9.2,10) and (10.8,10);
+- R2 (19.2,10) and (20.8,10);
+- R3 (29.2,10) and (30.8,10);
+- R4 (39.2,10) and (40.8,10);
+- R5 (9.2,20) and (10.8,20).
+
+The variant LITE
+- The board lists it at the top level, after `setup`: `(variants (variant (name "LITE")))`. KiCad names the variants "< Default >" and "LITE"; the default has no entry of its own.
+- A footprint that differs in a variant holds a `(variant ...)` entry with only what differs:
+  - R1: `(variant (name "LITE") (dnp yes) (field (name "Value") (value "1k")))`. In LITE, R1 is not populated and its value is 1k.
+  - R2: `(variant (name "LITE") (dnp no))`. In LITE, R2 is populated, although its own flag says dnp.
+- R3, R4 and R5 have no variant entry. In LITE they keep their own flags: KiCad gives R3 excluded from position files and R4 excluded from the bill of materials in LITE too.
+- The board's plot settings carry KiCad's defaults for drawing not-populated parts on the Fab layers: `(hidednponfab no)`, `(sketchdnponfab yes)`, `(crossoutdnponfab yes)`.
+
+| part | default: populated | LITE: populated | LITE: value |
+|---|---|---|---|
+| R1 | yes | no | 1k |
+| R2 | no | yes | 10k |
+| R3 | yes | yes | 10k |
+| R4 | yes | yes | 10k |
+| R5 | yes | yes | 10k |
+
+What the reader does with this board today (no reader change in this commit):
+- all five parts are read and placed, with their pads and models, whatever their flags;
+- the board's `(variants ...)` list gets the note "1 board item(s) of kind "variants" (not read)" (Dropped);
+- the footprints' `(variant ...)` entries are passed over without a note;
+- the five Value fields are on F.Fab, which is not drawn (a note, as on other boards).
